@@ -1,0 +1,80 @@
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@master
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache RISC0 toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.risc0
+          key: ${{ runner.os }}-risc0-rzup-rust-1.91.1
+
+      - name: Install rzup
+        run: cargo install rzup --locked
+
+      - name: Install RISC0 rust toolchain
+        run: rzup install rust 1.91.1
+
+      - name: Run tests
+        run: make test
+
+  groth16:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@master
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache RISC0 toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.risc0
+          key: ${{ runner.os }}-risc0-rzup-rust-1.91.1
+
+      - name: Install rzup
+        run: cargo install rzup --locked
+
+      - name: Install RISC0 rust toolchain
+        run: rzup install rust 1.91.1
+
+      - name: Docker info
+        run: |
+          docker --version
+          docker info
+
+      - name: Run Groth16 proof test (ignored)
+        run: cargo test --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle -- --ignored --nocapture
+
