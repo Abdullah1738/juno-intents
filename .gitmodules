@@ -1,3 +1,6 @@
 [submodule "third_party/juno-cash/junocash"]
 	path = third_party/juno-cash/junocash
 	url = https://github.com/juno-cash/junocash
+[submodule "third_party/risc0/risc0-solana"]
+	path = third_party/risc0/risc0-solana
+	url = https://github.com/risc0/risc0-solana
