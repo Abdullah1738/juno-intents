@@ -10,7 +10,7 @@ const (
 	purposeIEPSpentReceiptID = "iep_spent_receipt_id"
 )
 
-func ReceiverTagForReceiverBytes(deploymentID DeploymentID, receiverBytes []byte) (ReceiverTag, error) {
+func ReceiverTagForReceiverBytes(deploymentID DeploymentID, fillID FillID, receiverBytes []byte) (ReceiverTag, error) {
 	if len(receiverBytes) != OrchardReceiverBytesLen {
 		return ReceiverTag{}, errInvalidOrchardReceiverBytesLen
 	}
@@ -18,6 +18,7 @@ func ReceiverTagForReceiverBytes(deploymentID DeploymentID, receiverBytes []byte
 	h := sha256.New()
 	h.Write(prefixBytes(purposeIEPReceiverTag))
 	h.Write(deploymentID[:])
+	h.Write(fillID[:])
 	h.Write(receiverBytes)
 	sum := h.Sum(nil)
 
@@ -46,6 +47,7 @@ type ReceiptPublicInputs struct {
 	Cmx          Cmx
 	Amount       Zatoshi
 	ReceiverTag  ReceiverTag
+	FillID       FillID
 }
 
 func (in ReceiptPublicInputs) FrElements() [][32]byte {
@@ -53,7 +55,7 @@ func (in ReceiptPublicInputs) FrElements() [][32]byte {
 	// - 32-byte values are split into two 128-bit limbs: (lo, hi).
 	// - Each limb is a field element encoded as 32-byte big-endian (left padded with zeros).
 	// - u64 values are encoded as a single field element (32-byte big-endian).
-	out := make([][32]byte, 0, 9)
+	out := make([][32]byte, 0, 11)
 
 	out = append(out, split32ToU128FrLimbs(in.DeploymentID[:])...)
 	out = append(out, split32ToU128FrLimbs(in.OrchardRoot[:])...)
@@ -62,6 +64,7 @@ func (in ReceiptPublicInputs) FrElements() [][32]byte {
 	out = append(out, frFromU64(uint64(in.Amount)))
 
 	out = append(out, split32ToU128FrLimbs(in.ReceiverTag[:])...)
+	out = append(out, split32ToU128FrLimbs(in.FillID[:])...)
 	return out
 }
 

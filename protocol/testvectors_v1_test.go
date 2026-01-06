@@ -33,8 +33,13 @@ func TestVectorsV1_Golden(t *testing.T) {
 	signingBytes := obs.SigningBytes(deploymentID)
 	candidateHash := obs.CandidateHash(deploymentID)
 
+	var fillID FillID
+	for i := 0; i < 32; i++ {
+		fillID[i] = byte(0x55 + i)
+	}
+
 	receiverBytes := repeatByte(0x42, OrchardReceiverBytesLen)
-	receiverTag, err := ReceiverTagForReceiverBytes(deploymentID, receiverBytes)
+	receiverTag, err := ReceiverTagForReceiverBytes(deploymentID, fillID, receiverBytes)
 	if err != nil {
 		t.Fatalf("ReceiverTagForReceiverBytes: %v", err)
 	}
@@ -48,6 +53,7 @@ func TestVectorsV1_Golden(t *testing.T) {
 		Cmx:          cmx,
 		Amount:       12345,
 		ReceiverTag:  receiverTag,
+		FillID:       fillID,
 	}
 	fr := inputs.FrElements()
 
@@ -64,7 +70,7 @@ func TestVectorsV1_Golden(t *testing.T) {
 		t.Fatalf("candidateHash: got %s want %s", got, want)
 	}
 
-	if got, want := receiverTag.Hex(), "20c35102852f9a1b2616f109e5a4a038115815c1233683c0fb9cfe0f4a48d297"; got != want {
+	if got, want := receiverTag.Hex(), "69d7d1fa1bc82047ac03d59200b1393eab9a8d5be89f226fb11fe6094881cb98"; got != want {
 		t.Fatalf("receiverTag: got %s want %s", got, want)
 	}
 
@@ -72,7 +78,7 @@ func TestVectorsV1_Golden(t *testing.T) {
 		t.Fatalf("spentReceiptID: got %s want %s", got, want)
 	}
 
-	if got, want := len(fr), 9; got != want {
+	if got, want := len(fr), 11; got != want {
 		t.Fatalf("fr element count: got %d want %d", got, want)
 	}
 
@@ -97,11 +103,17 @@ func TestVectorsV1_Golden(t *testing.T) {
 	if got, want := hex.EncodeToString(fr[6][:]), "0000000000000000000000000000000000000000000000000000000000003039"; got != want {
 		t.Fatalf("fr[6]: got %s want %s", got, want)
 	}
-	if got, want := hex.EncodeToString(fr[7][:]), "00000000000000000000000000000000115815c1233683c0fb9cfe0f4a48d297"; got != want {
+	if got, want := hex.EncodeToString(fr[7][:]), "00000000000000000000000000000000ab9a8d5be89f226fb11fe6094881cb98"; got != want {
 		t.Fatalf("fr[7]: got %s want %s", got, want)
 	}
-	if got, want := hex.EncodeToString(fr[8][:]), "0000000000000000000000000000000020c35102852f9a1b2616f109e5a4a038"; got != want {
+	if got, want := hex.EncodeToString(fr[8][:]), "0000000000000000000000000000000069d7d1fa1bc82047ac03d59200b1393e"; got != want {
 		t.Fatalf("fr[8]: got %s want %s", got, want)
+	}
+	if got, want := hex.EncodeToString(fr[9][:]), "0000000000000000000000000000000065666768696a6b6c6d6e6f7071727374"; got != want {
+		t.Fatalf("fr[9]: got %s want %s", got, want)
+	}
+	if got, want := hex.EncodeToString(fr[10][:]), "0000000000000000000000000000000055565758595a5b5c5d5e5f6061626364"; got != want {
+		t.Fatalf("fr[10]: got %s want %s", got, want)
 	}
 }
 

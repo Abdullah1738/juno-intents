@@ -41,6 +41,10 @@ type SolanaPubkey [32]byte
 
 func (k SolanaPubkey) Hex() string { return hex32([32]byte(k)) }
 
+type FillID [32]byte
+
+func (id FillID) Hex() string { return hex32([32]byte(id)) }
+
 type Zatoshi uint64
 
 const OrchardReceiverBytesLen = 43
