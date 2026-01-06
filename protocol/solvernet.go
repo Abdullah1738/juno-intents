@@ -26,6 +26,25 @@ type QuoteID [32]byte
 
 func (id QuoteID) Hex() string { return hex32([32]byte(id)) }
 
+// QuoteRequest is an unsigned RFQ message sent to a solver endpoint.
+//
+// It is intentionally minimal; the on-chain Fill is the binding commitment.
+type QuoteRequest struct {
+	DeploymentID DeploymentID
+	RFQNonce     [32]byte
+
+	Direction Direction
+	Mint      SolanaPubkey
+	NetAmount uint64
+}
+
+func (r QuoteRequest) Validate() error {
+	if r.Direction != DirectionA && r.Direction != DirectionB {
+		return errInvalidDirection
+	}
+	return nil
+}
+
 // SolverAnnouncement is a signed, off-chain advertisement that binds a quote
 // endpoint to a solver's on-chain identity without any on-chain registration.
 type SolverAnnouncement struct {

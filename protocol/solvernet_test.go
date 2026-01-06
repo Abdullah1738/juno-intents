@@ -72,3 +72,25 @@ func TestQuoteResponse_SigningBytes_Golden(t *testing.T) {
 		t.Fatalf("got %s want %s", got, want)
 	}
 }
+
+func TestDeriveQuoteID_Golden(t *testing.T) {
+	var deploymentID DeploymentID
+	for i := 0; i < 32; i++ {
+		deploymentID[i] = byte(0xAA - i)
+	}
+
+	var solverPubkey SolanaPubkey
+	for i := 0; i < 32; i++ {
+		solverPubkey[i] = byte(0x10 + i)
+	}
+
+	var nonce [32]byte
+	for i := 0; i < 32; i++ {
+		nonce[i] = byte(i)
+	}
+
+	quoteID := DeriveQuoteID(deploymentID, solverPubkey, nonce)
+	if got, want := quoteID.Hex(), "895dfe2b7bf1f317fe7935ee95a5ef51719b81bf16c23f0faf698f0453fe04b7"; got != want {
+		t.Fatalf("got %s want %s", got, want)
+	}
+}
