@@ -1,4 +1,9 @@
-.PHONY: test
+.PHONY: test test-go test-rust
 
-test:
+test: test-go test-rust
+
+test-go:
 	go test ./...
+
+test-rust:
+	cargo test --manifest-path risc0/receipt/Cargo.toml
