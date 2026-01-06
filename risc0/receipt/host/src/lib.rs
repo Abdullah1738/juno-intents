@@ -1,10 +1,29 @@
 use anyhow::Context;
-use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts, Receipt, VerifierContext};
+use risc0_zkvm::{
+    default_executor, default_prover, ExecutorEnv, ExitCode, ProverOpts, Receipt, VerifierContext,
+};
 
 use juno_receipt_methods::{RECEIPT_VERIFY_ELF, RECEIPT_VERIFY_ID};
 
 pub fn prove_receipt_journal(witness_bytes: Vec<u8>) -> anyhow::Result<Receipt> {
     prove_receipt_journal_with_opts(witness_bytes, &ProverOpts::default())
+}
+
+pub fn execute_receipt_journal(witness_bytes: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    let env = ExecutorEnv::builder()
+        .write(&witness_bytes)
+        .context("failed to write witness bytes")?
+        .build()
+        .context("failed to build executor env")?;
+
+    let executor = default_executor();
+    let session = executor.execute(env, RECEIPT_VERIFY_ELF).context("execute failed")?;
+
+    if session.exit_code != ExitCode::Halted(0) {
+        anyhow::bail!("unexpected exit code: {:?}", session.exit_code);
+    }
+
+    Ok(session.journal.bytes)
 }
 
 pub fn prove_receipt_journal_with_opts(
