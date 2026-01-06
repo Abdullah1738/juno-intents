@@ -1,0 +1,15 @@
+[package]
+name = "juno-intents-receipt-verifier"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+solana-program = "3.0.0"
+
+[dev-dependencies]
+hex = "0.4.3"
+
