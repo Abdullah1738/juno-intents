@@ -33,9 +33,11 @@ type QuoteRequest struct {
 	DeploymentID DeploymentID
 	RFQNonce     [32]byte
 
-	Direction Direction
-	Mint      SolanaPubkey
-	NetAmount uint64
+	Direction        Direction
+	Mint             SolanaPubkey
+	NetAmount        uint64
+	SolanaRecipient  SolanaPubkey
+	IntentExpirySlot uint64
 }
 
 func (r QuoteRequest) Validate() error {
