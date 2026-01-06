@@ -1,0 +1,22 @@
+tmp/
+AGENTS.md
+
+.DS_Store
+
+# Local/dev
+.env
+.env.*
+.local/
+
+# Rust
+target/
+
+# Node
+node_modules/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+
