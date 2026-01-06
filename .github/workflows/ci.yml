@@ -49,10 +49,13 @@ jobs:
       - name: Install rzup
         run: |
           if command -v rzup >/dev/null; then
-            echo "rzup already installed: $(rzup --version)"
-            exit 0
+            if rzup --version | grep -q "${{ env.RZUP_VERSION }}"; then
+              echo "rzup already installed: $(rzup --version)"
+              exit 0
+            fi
+            echo "rzup present but wrong version: $(rzup --version)"
           fi
-          cargo install rzup --version ${{ env.RZUP_VERSION }} --locked
+          cargo install rzup --version ${{ env.RZUP_VERSION }} --locked --force
 
       - name: Install RISC0 rust toolchain
         run: rzup install rust ${{ env.RISC0_RUST_TOOLCHAIN }}
@@ -91,10 +94,13 @@ jobs:
       - name: Install rzup
         run: |
           if command -v rzup >/dev/null; then
-            echo "rzup already installed: $(rzup --version)"
-            exit 0
+            if rzup --version | grep -q "${{ env.RZUP_VERSION }}"; then
+              echo "rzup already installed: $(rzup --version)"
+              exit 0
+            fi
+            echo "rzup present but wrong version: $(rzup --version)"
           fi
-          cargo install rzup --version ${{ env.RZUP_VERSION }} --locked
+          cargo install rzup --version ${{ env.RZUP_VERSION }} --locked --force
 
       - name: Install RISC0 rust toolchain
         run: rzup install rust ${{ env.RISC0_RUST_TOOLCHAIN }}
