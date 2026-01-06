@@ -37,6 +37,10 @@ type ReceiptZKVMProofBundleV1 struct {
 	Journal [protocol.ReceiptJournalBytesLenV1]byte
 
 	// Seal is the proof blob consumed by the Solana verifier for ProofSystem.
+	//
+	// For ZKVMProofSystemRisc0Groth16, Seal MUST be the Verifier Router "Seal" encoding:
+	//   selector(4) || pi_a_negated(64) || pi_b(128) || pi_c(64)
+	// where (pi_a, pi_b, pi_c) are the uncompressed Groth16 proof points on BN254.
 	Seal []byte
 }
 
@@ -130,4 +134,3 @@ func (b *ReceiptZKVMProofBundleV1) UnmarshalBinary(in []byte) error {
 	copy(b.Seal, in[offset:])
 	return nil
 }
-
