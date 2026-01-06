@@ -24,6 +24,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.91.1
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -54,6 +56,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.91.1
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -77,4 +81,3 @@ jobs:
 
       - name: Run Groth16 proof test (ignored)
         run: cargo test --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle -- --ignored --nocapture
-
