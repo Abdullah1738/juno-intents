@@ -69,6 +69,12 @@ pub fn prove_receipt_groth16_bundle_v1(
     witness_bytes: Vec<u8>,
     selector: [u8; 4],
 ) -> anyhow::Result<Vec<u8>> {
+    if !cfg!(target_arch = "x86_64") {
+        anyhow::bail!(
+            "risc0 groth16 proving is only supported on x86_64 hosts (docker-based shrink-wrap)"
+        );
+    }
+
     let opts = ProverOpts::groth16();
     let receipt = prove_receipt_journal_with_opts(witness_bytes, &opts)?;
 

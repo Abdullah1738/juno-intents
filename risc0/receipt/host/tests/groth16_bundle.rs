@@ -14,6 +14,11 @@ use orchard::{
 fn smoke_proves_groth16_bundle_v1() {
     // This test produces a Groth16 receipt (Docker required) and wraps it into the
     // ReceiptZKVMProofBundleV1 binary format for Solana settlement.
+    if !cfg!(target_arch = "x86_64") {
+        // ProverOpts::groth16() uses docker-based shrink-wrap which is only supported on x86_64.
+        return;
+    }
+
     const ORCHARD_RECEIVER_BYTES_LEN: usize = 43;
     const ORCHARD_MERKLE_DEPTH: usize = 32;
 
@@ -116,4 +121,3 @@ fn smoke_proves_groth16_bundle_v1() {
     let expected_journal = receipt_journal_from_witness_v1(&witness).expect("verify witness");
     assert_eq!(journal, expected_journal);
 }
-
