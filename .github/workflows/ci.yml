@@ -72,7 +72,7 @@ jobs:
         run: make test
 
   groth16:
-    runs-on: runs-on=${{ github.run_id }}/family=g4dn.16xlarge/image=ubuntu22-gpu-x64/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}/family=g4dn.16xlarge/image=ubuntu22-gpu-x64/lifecycle=spot/extras=s3-cache
     timeout-minutes: 120
     steps:
       - name: Checkout
