@@ -71,8 +71,26 @@ jobs:
       - name: Run tests
         run: make test
 
+  groth16_gate:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check Bonsai secrets
+        id: check
+        env:
+          BONSAI_API_URL: ${{ secrets.BONSAI_API_URL }}
+          BONSAI_API_KEY: ${{ secrets.BONSAI_API_KEY }}
+        run: |
+          if [[ -n "${BONSAI_API_URL}" && -n "${BONSAI_API_KEY}" ]]; then
+            echo "enabled=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "enabled=false" >> "${GITHUB_OUTPUT}"
+
   groth16:
-    if: ${{ secrets.BONSAI_API_URL != '' && secrets.BONSAI_API_KEY != '' }}
+    needs: groth16_gate
+    if: ${{ needs.groth16_gate.outputs.enabled == 'true' }}
     runs-on: runs-on=${{ github.run_id }}/family=m7i.16xlarge/image=ubuntu22-full-x64/spot=pco/extras=s3-cache
     timeout-minutes: 120
     steps:
