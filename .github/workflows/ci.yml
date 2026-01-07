@@ -128,4 +128,5 @@ jobs:
         run: docker pull ${{ env.RISC0_GROTH16_PROVER_IMAGE }}
 
       - name: Run Groth16 proof test (ignored)
-        run: cargo test --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle -- --ignored --nocapture
+        run: |
+          time cargo test --release --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle -- --ignored --nocapture
