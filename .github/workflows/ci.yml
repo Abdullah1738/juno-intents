@@ -73,7 +73,7 @@ jobs:
 
   groth16:
     runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/extras=s3-cache
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -87,6 +87,11 @@ jobs:
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: sccache version
+        run: |
+          which sccache
+          sccache --version
 
       - name: Runner specs
         run: |
@@ -136,9 +141,27 @@ jobs:
         run: docker pull ${{ env.RISC0_GROTH16_PROVER_IMAGE }}
 
       - name: Build Groth16 proof test (release)
+        timeout-minutes: 60
         run: |
-          time cargo test --release --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle --no-run
+          set -euo pipefail
+          (while sleep 60; do echo "[keepalive] $(date -u) still compiling..."; done) &
+          keepalive_pid=$!
+          trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
+          time cargo test --release --locked --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle --no-run
+          kill "${keepalive_pid}" >/dev/null 2>&1 || true
+          trap - EXIT
 
       - name: Run Groth16 proof test (release, ignored)
+        timeout-minutes: 60
         run: |
-          time cargo test --release --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle -- --ignored --nocapture
+          set -euo pipefail
+          (while sleep 60; do echo "[keepalive] $(date -u) still proving..."; done) &
+          keepalive_pid=$!
+          trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
+          time cargo test --release --locked --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle -- --ignored --nocapture
+          kill "${keepalive_pid}" >/dev/null 2>&1 || true
+          trap - EXIT
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats || true
