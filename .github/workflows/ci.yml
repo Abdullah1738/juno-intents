@@ -85,6 +85,9 @@ jobs:
         with:
           sccache: s3
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Runner specs
         run: |
           echo "nproc: $(nproc || true)"
