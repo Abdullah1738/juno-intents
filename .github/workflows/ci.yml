@@ -32,7 +32,8 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
+          cache-dependency-path: go.mod
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
@@ -71,13 +72,19 @@ jobs:
         run: make test
 
   groth16:
-    runs-on: ${{ vars.GROTH16_RUNS_ON || 'ubuntu-latest' }}
+    runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64
     timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Runner specs
+        run: |
+          echo "nproc: $(nproc || true)"
+          lscpu || true
+          free -h || true
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
