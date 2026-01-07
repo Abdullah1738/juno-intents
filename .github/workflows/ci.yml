@@ -72,13 +72,18 @@ jobs:
         run: make test
 
   groth16:
-    runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64
+    runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/extras=s3-cache
     timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: RunsOn cache
+        uses: runs-on/action@v2
+        with:
+          sccache: s3
 
       - name: Runner specs
         run: |
@@ -127,6 +132,10 @@ jobs:
       - name: Pull Groth16 prover image
         run: docker pull ${{ env.RISC0_GROTH16_PROVER_IMAGE }}
 
-      - name: Run Groth16 proof test (ignored)
+      - name: Build Groth16 proof test (release)
+        run: |
+          time cargo test --release --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle --no-run
+
+      - name: Run Groth16 proof test (release, ignored)
         run: |
           time cargo test --release --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle -- --ignored --nocapture

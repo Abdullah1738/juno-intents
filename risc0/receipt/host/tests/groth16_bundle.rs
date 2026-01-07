@@ -1,6 +1,8 @@
 use juno_receipt_host::prove_receipt_groth16_bundle_v1;
 use juno_receipt_logic::receipt_journal_from_witness_v1;
 
+use std::time::Instant;
+
 use orchard::{
     keys::{FullViewingKey, Scope, SpendingKey},
     note::{ExtractedNoteCommitment, Note, RandomSeed, Rho},
@@ -87,8 +89,13 @@ fn smoke_proves_groth16_bundle_v1() {
 
     // Selector used by the Verifier Router registry for Groth16 receipts.
     let selector = *b"JINT";
+    let t0 = Instant::now();
     let bundle_bytes =
         prove_receipt_groth16_bundle_v1(witness.clone(), selector).expect("prove bundle");
+    eprintln!(
+        "prove_receipt_groth16_bundle_v1 elapsed: {:?}",
+        t0.elapsed()
+    );
 
     // Basic decode checks (mirror Go and Solana parsing expectations).
     assert!(bundle_bytes.len() > 2 + 1 + 32 + 2 + 170 + 4);
