@@ -72,7 +72,8 @@ jobs:
         run: make test
 
   groth16:
-    runs-on: runs-on=${{ github.run_id }}/family=g4dn.16xlarge/image=ubuntu22-gpu-x64/spot=pco/extras=s3-cache
+    if: ${{ secrets.BONSAI_API_URL != '' && secrets.BONSAI_API_KEY != '' }}
+    runs-on: runs-on=${{ github.run_id }}/family=m7i.16xlarge/image=ubuntu22-full-x64/spot=pco/extras=s3-cache
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -98,7 +99,6 @@ jobs:
           echo "nproc: $(nproc || true)"
           lscpu || true
           free -h || true
-          nvidia-smi || true
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
@@ -133,9 +133,6 @@ jobs:
       - name: Install RISC0 rust toolchain
         run: rzup install rust ${{ env.RISC0_RUST_TOOLCHAIN }}
 
-      - name: Install RISC0 Groth16 component (GPU)
-        run: rzup install risc0-groth16
-
       - name: Build Groth16 proof test (release)
         timeout-minutes: 60
         run: |
@@ -143,20 +140,23 @@ jobs:
           (while sleep 60; do echo "[keepalive] $(date -u) still compiling..."; done) &
           keepalive_pid=$!
           trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
-          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_bundle --no-run
+          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features bonsai --test groth16_bundle --no-run
           kill "${keepalive_pid}" >/dev/null 2>&1 || true
           trap - EXIT
 
       - name: Run Groth16 proof test (release, ignored)
         timeout-minutes: 60
         env:
+          BONSAI_API_URL: ${{ secrets.BONSAI_API_URL }}
+          BONSAI_API_KEY: ${{ secrets.BONSAI_API_KEY }}
+          RISC0_PROVER: bonsai
           RUST_LOG: info
         run: |
           set -euo pipefail
           (while sleep 60; do echo "[keepalive] $(date -u) still proving..."; done) &
           keepalive_pid=$!
           trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
-          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_bundle -- --ignored --nocapture
+          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features bonsai --test groth16_bundle -- --ignored --nocapture
           kill "${keepalive_pid}" >/dev/null 2>&1 || true
           trap - EXIT
 

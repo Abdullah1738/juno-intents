@@ -2,6 +2,7 @@ use anyhow::Context;
 use risc0_zkvm::{
     default_executor, default_prover, ExecutorEnv, ExitCode, ProverOpts, Receipt, VerifierContext,
 };
+use std::time::Instant;
 
 use juno_receipt_methods::{RECEIPT_VERIFY_ELF, RECEIPT_VERIFY_ID};
 
@@ -23,6 +24,7 @@ pub fn prove_receipt_journal(witness_bytes: Vec<u8>) -> anyhow::Result<Receipt> 
 }
 
 pub fn execute_receipt_journal(witness_bytes: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    let t0 = Instant::now();
     let env = ExecutorEnv::builder()
         .write(&witness_bytes)
         .context("failed to write witness bytes")?
@@ -36,6 +38,7 @@ pub fn execute_receipt_journal(witness_bytes: Vec<u8>) -> anyhow::Result<Vec<u8>
         anyhow::bail!("unexpected exit code: {:?}", session.exit_code);
     }
 
+    tracing::info!("execute_receipt_journal elapsed: {:?}", t0.elapsed());
     Ok(session.journal.bytes)
 }
 
@@ -43,6 +46,7 @@ pub fn prove_receipt_journal_with_opts(
     witness_bytes: Vec<u8>,
     opts: &ProverOpts,
 ) -> anyhow::Result<Receipt> {
+    let t0 = Instant::now();
     let env = ExecutorEnv::builder()
         .write(&witness_bytes)
         .context("failed to write witness bytes")?
@@ -50,10 +54,14 @@ pub fn prove_receipt_journal_with_opts(
         .context("failed to build executor env")?;
 
     let prover = default_prover();
+    tracing::info!("risc0 prover selected: {}", prover.get_name());
+    let t_prove = Instant::now();
     let prove_info = prover
         .prove_with_opts(env, RECEIPT_VERIFY_ELF, opts)
         .context("prove failed")?;
+    tracing::info!("prove_with_opts elapsed: {:?}", t_prove.elapsed());
 
+    let t_verify = Instant::now();
     let verify_res = if opts.dev_mode() {
         let ctx = VerifierContext::default().with_dev_mode(true);
         prove_info.receipt.verify_with_context(&ctx, RECEIPT_VERIFY_ID)
@@ -61,6 +69,8 @@ pub fn prove_receipt_journal_with_opts(
         prove_info.receipt.verify(RECEIPT_VERIFY_ID)
     };
     verify_res.context("receipt verification failed")?;
+    tracing::info!("receipt verify elapsed: {:?}", t_verify.elapsed());
+    tracing::info!("prove_receipt_journal_with_opts total elapsed: {:?}", t0.elapsed());
 
     Ok(prove_info.receipt)
 }
@@ -69,12 +79,6 @@ pub fn prove_receipt_groth16_bundle_v1(
     witness_bytes: Vec<u8>,
     selector: [u8; 4],
 ) -> anyhow::Result<Vec<u8>> {
-    if !cfg!(target_arch = "x86_64") {
-        anyhow::bail!(
-            "risc0 groth16 proving is only supported on x86_64 hosts (docker-based shrink-wrap)"
-        );
-    }
-
     let opts = ProverOpts::groth16();
     let receipt = prove_receipt_journal_with_opts(witness_bytes, &opts)?;
 

@@ -6,12 +6,14 @@ publish = false
 
 [features]
 default = []
+bonsai = ["risc0-zkvm/bonsai"]
 cuda = ["risc0-zkvm/cuda"]
 
 [dependencies]
 anyhow = "1.0.86"
 juno-receipt-methods = { path = "../methods" }
 risc0-zkvm = { version = "3.0.4", default-features = false, features = ["prove"] }
+tracing = "0.1.44"
 
 [dev-dependencies]
 sha2 = "0.10.8"
