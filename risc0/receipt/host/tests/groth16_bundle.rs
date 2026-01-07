@@ -14,6 +14,11 @@ use orchard::{
 #[test]
 #[ignore]
 fn smoke_proves_groth16_bundle_v1() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_test_writer()
+        .try_init();
+
     // This test produces a Groth16 receipt (Docker required) and wraps it into the
     // ReceiptZKVMProofBundleV1 binary format for Solana settlement.
     if !cfg!(target_arch = "x86_64") {

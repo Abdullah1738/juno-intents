@@ -72,7 +72,7 @@ jobs:
         run: make test
 
   groth16:
-    runs-on: runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}/family=g4dn.16xlarge/image=ubuntu22-gpu-x64/extras=s3-cache
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -98,6 +98,7 @@ jobs:
           echo "nproc: $(nproc || true)"
           lscpu || true
           free -h || true
+          nvidia-smi || true
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
@@ -132,13 +133,8 @@ jobs:
       - name: Install RISC0 rust toolchain
         run: rzup install rust ${{ env.RISC0_RUST_TOOLCHAIN }}
 
-      - name: Docker info
-        run: |
-          docker --version
-          docker info
-
-      - name: Pull Groth16 prover image
-        run: docker pull ${{ env.RISC0_GROTH16_PROVER_IMAGE }}
+      - name: Install RISC0 Groth16 component (GPU)
+        run: rzup install risc0-groth16
 
       - name: Build Groth16 proof test (release)
         timeout-minutes: 60
@@ -147,18 +143,20 @@ jobs:
           (while sleep 60; do echo "[keepalive] $(date -u) still compiling..."; done) &
           keepalive_pid=$!
           trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
-          time cargo test --release --locked --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle --no-run
+          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_bundle --no-run
           kill "${keepalive_pid}" >/dev/null 2>&1 || true
           trap - EXIT
 
       - name: Run Groth16 proof test (release, ignored)
         timeout-minutes: 60
+        env:
+          RUST_LOG: info
         run: |
           set -euo pipefail
           (while sleep 60; do echo "[keepalive] $(date -u) still proving..."; done) &
           keepalive_pid=$!
           trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
-          time cargo test --release --locked --manifest-path risc0/receipt/Cargo.toml --test groth16_bundle -- --ignored --nocapture
+          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_bundle -- --ignored --nocapture
           kill "${keepalive_pid}" >/dev/null 2>&1 || true
           trap - EXIT
 
