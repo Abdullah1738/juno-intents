@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -17,7 +16,6 @@ import (
 	"time"
 
 	"github.com/Abdullah1738/juno-intents/offchain/helius"
-	"github.com/Abdullah1738/juno-intents/offchain/solanafees"
 	"github.com/Abdullah1738/juno-intents/offchain/solvernet"
 	"github.com/Abdullah1738/juno-intents/protocol"
 )
@@ -157,15 +155,6 @@ func cmdServe(argv []string) error {
 	}
 
 	solverPub := protocol.SolanaPubkey(pub)
-	ann := protocol.SolverAnnouncement{
-		DeploymentID: deploymentID,
-		SolverPubkey: solverPub,
-		QuoteURL:     quoteURL,
-	}
-	signedAnn, err := solvernet.NewSignedSolverAnnouncement(ann, priv)
-	if err != nil {
-		return err
-	}
 
 	hc, err := helius.ClientFromEnv()
 	if err != nil && !errors.Is(err, helius.ErrMissingAPIKey) {
@@ -183,100 +172,37 @@ func cmdServe(argv []string) error {
 		Recommended:   true,
 	}
 
-	strategy := solvernet.FixedPriceStrategy{
-		ZatoshiPerTokenUnit: priceZatPerUnit,
-		SpreadBps:           uint16(spreadBps),
+	solver := &solvernet.Solver{
+		DeploymentID: deploymentID,
+		SolverPubkey: solverPub,
+		QuoteURL:     quoteURL,
+		PrivKey:      priv,
+		Strategy: solvernet.FixedPriceStrategy{
+			ZatoshiPerTokenUnit: priceZatPerUnit,
+			SpreadBps:           uint16(spreadBps),
+		},
+		Helius: hc,
+		FillFeeProfile: solvernet.FeeProfile{
+			AccountKeys:      fillKeys,
+			ComputeUnitLimit: uint32(fillCULimit),
+			Signatures:       uint64(fillSigs),
+		},
+		SettleFeeProfile: solvernet.FeeProfile{
+			AccountKeys:      settleKeys,
+			ComputeUnitLimit: uint32(settleCULimit),
+			Signatures:       uint64(settleSigs),
+		},
+		PriorityOptions: *opts,
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/announcement", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, signedAnn)
-	})
-	mux.HandleFunc("/v1/quote", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		defer r.Body.Close()
-
-		var reqJSON solvernet.QuoteRequestJSON
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&reqJSON); err != nil {
-			http.Error(w, "invalid json", http.StatusBadRequest)
-			return
-		}
-		req, err := reqJSON.ToProtocol()
-		if err != nil {
-			http.Error(w, "invalid request", http.StatusBadRequest)
-			return
-		}
-		if req.DeploymentID != deploymentID {
-			http.Error(w, "deployment mismatch", http.StatusBadRequest)
-			return
-		}
-
-		quoteID := protocol.DeriveQuoteID(deploymentID, solverPub, req.RFQNonce)
-		junoRequired, err := strategy.QuoteRequiredZatoshi(req.NetAmount)
-		if err != nil {
-			http.Error(w, "quote error", http.StatusInternalServerError)
-			return
-		}
-
-		resp := protocol.QuoteResponse{
-			DeploymentID:          deploymentID,
-			SolverPubkey:          solverPub,
-			QuoteID:               quoteID,
-			Direction:             req.Direction,
-			Mint:                  req.Mint,
-			NetAmount:             req.NetAmount,
-			JunocashAmountRequired: protocol.Zatoshi(junoRequired),
-			FillExpirySlot:        req.IntentExpirySlot,
-		}
-
-		var hint *solvernet.FeeHint
-		if hc != nil {
-			h := &solvernet.FeeHint{}
-			if len(fillKeys) != 0 {
-				est, err := solanafees.EstimateFromHeliusByAccountKeys(
-					r.Context(),
-					hc,
-					fillKeys,
-					uint32(fillCULimit),
-					uint64(fillSigs),
-					opts,
-				)
-				if err == nil {
-					h.FillTx = &est
-				}
-			}
-			if len(settleKeys) != 0 {
-				est, err := solanafees.EstimateFromHeliusByAccountKeys(
-					r.Context(),
-					hc,
-					settleKeys,
-					uint32(settleCULimit),
-					uint64(settleSigs),
-					opts,
-				)
-				if err == nil {
-					h.SettleTx = &est
-				}
-			}
-			if h.FillTx != nil || h.SettleTx != nil {
-				hint = h
-			}
-		}
-
-		signed, err := solvernet.NewSignedQuoteResponse(resp, priv, hint)
-		if err != nil {
-			http.Error(w, "sign error", http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, signed)
-	})
+	handler, err := solver.Handler()
+	if err != nil {
+		return err
+	}
 
 	s := &http.Server{
 		Addr:              listenAddr,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	fmt.Fprintf(os.Stderr, "listening on %s\n", listenAddr)
@@ -349,28 +275,27 @@ func cmdRFQ(argv []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	client := &solvernet.Client{}
+
 	for _, u := range announcementURLs {
-		ann, err := fetchAnnouncement(ctx, u)
+		signedAnn, err := client.FetchAnnouncement(ctx, u)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", u, err)
 			continue
 		}
+		ann, _ := signedAnn.Verify()
 		if ann.DeploymentID != deploymentID {
 			fmt.Fprintf(os.Stderr, "skip %s: deployment mismatch\n", u)
 			continue
 		}
 
-		signed, err := fetchQuote(ctx, ann.QuoteURL, reqJSON)
+		signed, err := client.FetchQuote(ctx, ann.QuoteURL, reqJSON)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", ann.QuoteURL, err)
 			continue
 		}
 
-		q, err := signed.Verify()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "skip %s: invalid quote signature\n", ann.QuoteURL)
-			continue
-		}
+		q, _ := signed.Verify()
 		if q.SolverPubkey != ann.SolverPubkey {
 			fmt.Fprintf(os.Stderr, "skip %s: solver pubkey mismatch\n", ann.QuoteURL)
 			continue
@@ -403,58 +328,6 @@ func splitCSV(s string) []string {
 		out = append(out, part)
 	}
 	return out
-}
-
-func fetchAnnouncement(ctx context.Context, u string) (protocol.SolverAnnouncement, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return protocol.SolverAnnouncement{}, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return protocol.SolverAnnouncement{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return protocol.SolverAnnouncement{}, fmt.Errorf("http %d", resp.StatusCode)
-	}
-
-	var signed solvernet.SignedSolverAnnouncementJSON
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&signed); err != nil {
-		return protocol.SolverAnnouncement{}, err
-	}
-	return signed.Verify()
-}
-
-func fetchQuote(ctx context.Context, quoteURL string, req solvernet.QuoteRequestJSON) (solvernet.SignedQuoteResponseJSON, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return solvernet.SignedQuoteResponseJSON{}, err
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, quoteURL, bytes.NewReader(body))
-	if err != nil {
-		return solvernet.SignedQuoteResponseJSON{}, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return solvernet.SignedQuoteResponseJSON{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return solvernet.SignedQuoteResponseJSON{}, fmt.Errorf("http %d", resp.StatusCode)
-	}
-	var signed solvernet.SignedQuoteResponseJSON
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&signed); err != nil {
-		return solvernet.SignedQuoteResponseJSON{}, err
-	}
-	return signed, nil
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
 }
 
 func printJSON(w io.Writer, v any) error {
