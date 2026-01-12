@@ -72,7 +72,7 @@ jobs:
 
   groth16:
     if: ${{ github.event_name != 'pull_request' }}
-    runs-on: runs-on=${{ github.run_id }}/family=g5.4xlarge/image=ubuntu22-full-x64/spot=false/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}/family=g5.4xlarge/image=ubuntu22-gpu-x64/spot=false/extras=s3-cache
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -104,10 +104,6 @@ jobs:
         run: |
           set -euo pipefail
           nvidia-smi
-          if ! command -v nvcc >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends build-essential nvidia-cuda-toolkit
-          fi
           nvcc --version
 
       - name: Setup Rust
