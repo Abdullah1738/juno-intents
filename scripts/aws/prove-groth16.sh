@@ -14,34 +14,52 @@ RUST_TOOLCHAIN="${JUNO_RUST_TOOLCHAIN:-1.91.1}"
 RISC0_RUST_TOOLCHAIN="${JUNO_RISC0_RUST_TOOLCHAIN:-1.91.1}"
 RZUP_VERSION="${JUNO_RZUP_VERSION:-0.5.1}"
 RISC0_GROTH16_VERSION="${JUNO_RISC0_GROTH16_VERSION:-0.1.0}"
+MODE="${JUNO_PROVE_MODE:-all}"
 
 usage() {
   cat <<'USAGE' >&2
 Usage:
-  scripts/aws/prove-groth16.sh
+  scripts/aws/prove-groth16.sh [--mode synthetic|real|all]
 
 Environment:
   JUNO_AWS_REGION             (default: us-east-1)
   JUNO_RUNS_ON_STACK_NAME     (default: runs-on)
   JUNO_EC2_AMI_ID             (default: ami-06d69846519cd5d6f)
   JUNO_EC2_INSTANCE_TYPE      (default: g5.4xlarge)
+  JUNO_PROVE_MODE             (default: all)
 
 Notes:
   - All AWS calls use: --profile juno
   - The instance is ALWAYS terminated on exit (success/failure).
-  - This runs the synthetic Groth16 CUDA prove test (no wallet material).
+  - This runs Groth16 CUDA proving (synthetic and/or regtest witness).
 USAGE
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
-if [[ "${1:-}" != "" ]]; then
-  echo "unexpected argument: $1" >&2
-  usage
-  exit 2
-fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --mode)
+      MODE="${2:-}"
+      shift 2
+      ;;
+    *)
+      echo "unexpected argument: $1" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
+case "${MODE}" in
+  synthetic|real|all) ;;
+  *)
+    echo "invalid --mode: ${MODE}" >&2
+    usage
+    exit 2
+    ;;
+esac
 
 awsj() {
   aws --profile "${PROFILE}" --region "${REGION}" "$@"
@@ -139,7 +157,7 @@ if [[ "${ping}" != "Online" ]]; then
 fi
 
 echo "running prove command via SSM..." >&2
-export REGION INSTANCE_ID RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION
+export REGION INSTANCE_ID RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION MODE
 COMMAND_ID="$(
   python3 - <<'PY'
 import json
@@ -152,11 +170,16 @@ rust_toolchain = os.environ["RUST_TOOLCHAIN"]
 risc0_rust_toolchain = os.environ["RISC0_RUST_TOOLCHAIN"]
 rzup_version = os.environ["RZUP_VERSION"]
 risc0_groth16_version = os.environ["RISC0_GROTH16_VERSION"]
+mode = os.environ.get("MODE", "all")
 
 cmds = [
     "set -euo pipefail",
     "if ! command -v git >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends git; fi",
     "if ! command -v protoc >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler; fi",
+    "if ! command -v docker >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends docker.io; fi",
+    "sudo systemctl start docker || sudo service docker start || true",
+    "docker --version",
+    "docker ps >/dev/null",
     "if ! command -v cargo >/dev/null; then curl -sSf https://sh.rustup.rs | sh -s -- -y; fi",
     'export PATH=\"$HOME/.cargo/bin:$PATH\"',
     f"rustup toolchain install {rust_toolchain} || true",
@@ -167,8 +190,21 @@ cmds = [
     f"if ! command -v rzup >/dev/null || ! rzup --version | grep -q '{rzup_version}'; then cargo install rzup --version {rzup_version} --locked --force; fi",
     f"rzup install rust {risc0_rust_toolchain}",
     f"rzup install risc0-groth16 {risc0_groth16_version}",
-    "time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_bundle -- --ignored --nocapture",
 ]
+
+if mode in ("synthetic", "all"):
+    cmds.append(
+        "time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_bundle -- --ignored --nocapture"
+    )
+
+if mode in ("real", "all"):
+    cmds.extend(
+        [
+            'W="$(scripts/junocash/regtest/witness-hex.sh)"',
+            'export JUNO_RECEIPT_WITNESS_HEX="${W}"',
+            "time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_real_witness -- --ignored --nocapture",
+        ]
+    )
 
 payload = json.dumps({"commands": cmds})
 out = subprocess.check_output(
