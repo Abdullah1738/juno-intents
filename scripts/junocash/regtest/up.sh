@@ -17,6 +17,12 @@ fi
 docker rm -f "${NAME}" >/dev/null 2>&1 || true
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+USER_FLAG=()
+if [[ "${JUNO_REGTEST_DOCKER_USER:-}" != "" ]]; then
+  USER_FLAG=(--user "${JUNO_REGTEST_DOCKER_USER}")
+elif command -v id >/dev/null; then
+  USER_FLAG=(--user "$(id -u):$(id -g)")
+fi
 
 if [[ "${IMAGE}" == "juno-intents/junocash-regtest:ubuntu22" ]]; then
   docker build -t "${IMAGE}" -f "${script_dir}/Dockerfile" "${script_dir}" >/dev/null
@@ -24,6 +30,7 @@ fi
 
 docker run -d \
   --name "${NAME}" \
+  "${USER_FLAG[@]}" \
   -v "$(pwd)/${JUNOCASH_ROOT}:/opt/junocash:ro" \
   -v "$(pwd)/${DATA_DIR}:/data" \
   "${IMAGE}" \
