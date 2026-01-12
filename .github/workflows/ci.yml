@@ -113,12 +113,13 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends docker.io
           fi
-          if ! command -v db_dump >/dev/null; then
+          if ! command -v db_dump >/dev/null && ! command -v db5.3_dump >/dev/null; then
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends db5.3-util
           fi
           docker --version
-          db_dump --version
+          if command -v db_dump >/dev/null; then db_dump --version; fi
+          if command -v db5.3_dump >/dev/null; then db5.3_dump --version; fi
 
       - name: Install protoc
         run: |

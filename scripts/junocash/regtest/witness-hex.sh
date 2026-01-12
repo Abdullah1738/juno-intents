@@ -27,9 +27,19 @@ if [[ -z "${wallet}" ]]; then
   exit 1
 fi
 
-db_dump="${JUNO_DB_DUMP:-db_dump}"
+db_dump="${JUNO_DB_DUMP:-}"
 if [[ -x "/opt/homebrew/opt/berkeley-db/bin/db_dump" ]]; then
   db_dump="/opt/homebrew/opt/berkeley-db/bin/db_dump"
+fi
+if [[ -z "${db_dump}" ]]; then
+  if command -v db_dump >/dev/null; then
+    db_dump="db_dump"
+  elif command -v db5.3_dump >/dev/null; then
+    db_dump="db5.3_dump"
+  else
+    echo "db_dump not found; set JUNO_DB_DUMP to a compatible Berkeley DB dump tool" >&2
+    exit 1
+  fi
 fi
 
 cargo_bin="${CARGO:-cargo}"
@@ -38,4 +48,3 @@ ${cargo_bin} run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wal
   --junocash-cli scripts/junocash/regtest/cli.sh \
   --wallet "${wallet}" \
   --db-dump "${db_dump}"
-
