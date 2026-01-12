@@ -9,9 +9,9 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 borsh = "0.10.3"
-juno-intents-checkpoint-registry = { path = "../checkpoint-registry" }
+juno-intents-checkpoint-registry = { path = "../checkpoint-registry", features = ["no-entrypoint"] }
 solana-program = "2"
-spl-token = "8.0.0"
+spl-token = { version = "8.0.0", features = ["no-entrypoint"] }
 
 [dev-dependencies]
 anchor-lang = "0.31.1"
