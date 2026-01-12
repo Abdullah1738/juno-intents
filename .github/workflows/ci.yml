@@ -72,7 +72,7 @@ jobs:
 
   groth16:
     if: ${{ github.event_name != 'pull_request' }}
-    runs-on: runs-on=${{ github.run_id }}/family=g5.4xlarge/image=ubuntu22-gpu-x64/spot=false/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}/family=g5.16xlarge/image=ubuntu22-gpu-x64/spot=false/extras=s3-cache
     timeout-minutes: 120
     steps:
       - name: Checkout
