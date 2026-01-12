@@ -5,12 +5,10 @@ REPO="juno-cash/junocash"
 VERSION="${JUNO_JUNOCASH_VERSION:-0.9.8}"
 
 ASSET="junocash-${VERSION}-linux64.tar.gz"
-SUMS="SHA256SUMS"
 
 BASE_DIR="tmp/junocash"
 RELEASE_DIR="${BASE_DIR}/releases/v${VERSION}"
 TARBALL_PATH="${RELEASE_DIR}/${ASSET}"
-SUMS_PATH="${RELEASE_DIR}/${SUMS}"
 
 EXTRACT_BASE="${BASE_DIR}/v${VERSION}"
 EXTRACT_ROOT="${EXTRACT_BASE}/junocash-${VERSION}"
@@ -29,37 +27,32 @@ download_if_missing() {
 }
 
 download_if_missing \
-  "https://github.com/${REPO}/releases/download/v${VERSION}/${SUMS}" \
-  "${SUMS_PATH}"
-
-download_if_missing \
   "https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET}" \
   "${TARBALL_PATH}"
 
-expected_sha="$(python3 - <<PY
-import re
-from pathlib import Path
-asset = ${ASSET!r}
-for line in Path(${SUMS_PATH!r}).read_text().splitlines():
-    m = re.match(r'^([0-9a-fA-F]{64})\\s+\\*?(.+)$', line.strip())
-    if not m:
-        continue
-    sha, name = m.group(1).lower(), m.group(2).strip()
-    if name == asset:
-        print(sha)
-        raise SystemExit(0)
-raise SystemExit(1)
-PY)"
+expected_sha=""
+case "${ASSET}" in
+  junocash-0.9.8-linux64.tar.gz)
+    expected_sha="67aca81b97644525aaa997024b15815202a0ea68f378d9d0213b4a3cb2ed6960"
+    ;;
+esac
+if [[ -z "${expected_sha}" ]]; then
+  echo "no embedded sha256 for ${ASSET}; set JUNO_JUNOCASH_VERSION to a supported release" >&2
+  exit 1
+fi
 
-got_sha="$(python3 - <<PY
+got_sha="$(
+  TARBALL_PATH="${TARBALL_PATH}" python3 - <<'PY'
 import hashlib
 from pathlib import Path
+import os
 h = hashlib.sha256()
-with Path(${TARBALL_PATH!r}).open('rb') as f:
+with Path(os.environ["TARBALL_PATH"]).open('rb') as f:
     for chunk in iter(lambda: f.read(1024 * 1024), b''):
         h.update(chunk)
 print(h.hexdigest())
-PY)"
+PY
+)"
 
 if [[ "${got_sha}" != "${expected_sha}" ]]; then
   echo "junocash tarball sha mismatch:" >&2
@@ -80,4 +73,3 @@ if [[ ! -x "${EXTRACT_ROOT}/bin/junocashd" ]]; then
 fi
 
 echo "${EXTRACT_ROOT}"
-
