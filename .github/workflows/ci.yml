@@ -176,13 +176,17 @@ jobs:
           trap - EXIT
 
       - name: Run Groth16 real witness proof (release, ignored)
-        if: ${{ github.event_name == 'workflow_dispatch' && secrets.JUNO_RECEIPT_WITNESS_HEX != '' }}
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         timeout-minutes: 60
         env:
           RUST_LOG: info
           JUNO_RECEIPT_WITNESS_HEX: ${{ secrets.JUNO_RECEIPT_WITNESS_HEX }}
         run: |
           set -euo pipefail
+          if [ -z "${JUNO_RECEIPT_WITNESS_HEX:-}" ]; then
+            echo "JUNO_RECEIPT_WITNESS_HEX not set; skipping"
+            exit 0
+          fi
           (while sleep 60; do echo "[keepalive] $(date -u) still proving real witness..."; done) &
           keepalive_pid=$!
           trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
