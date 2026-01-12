@@ -17,7 +17,6 @@ env:
   RUST_TOOLCHAIN: 1.91.1
   RISC0_RUST_TOOLCHAIN: 1.91.1
   RZUP_VERSION: 0.5.1
-  RISC0_GROTH16_PROVER_IMAGE: risczero/risc0-groth16-prover:v2025-04-03.1
 
 jobs:
   test:
@@ -101,10 +100,15 @@ jobs:
           lscpu || true
           free -h || true
 
-      - name: Docker
+      - name: GPU prerequisites
         run: |
-          docker --version
-          docker pull "${{ env.RISC0_GROTH16_PROVER_IMAGE }}"
+          set -euo pipefail
+          nvidia-smi
+          if ! command -v nvcc >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends build-essential nvidia-cuda-toolkit
+          fi
+          nvcc --version
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
@@ -139,6 +143,9 @@ jobs:
       - name: Install RISC0 rust toolchain
         run: rzup install rust ${{ env.RISC0_RUST_TOOLCHAIN }}
 
+      - name: Install RISC0 Groth16 component
+        run: rzup install risc0-groth16 0.1.0
+
       - name: Build Groth16 proof test (release)
         timeout-minutes: 60
         run: |
@@ -146,7 +153,7 @@ jobs:
           (while sleep 60; do echo "[keepalive] $(date -u) still compiling..."; done) &
           keepalive_pid=$!
           trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
-          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --test groth16_bundle --no-run
+          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_bundle --no-run
           kill "${keepalive_pid}" >/dev/null 2>&1 || true
           trap - EXIT
 
@@ -159,7 +166,7 @@ jobs:
           (while sleep 60; do echo "[keepalive] $(date -u) still proving..."; done) &
           keepalive_pid=$!
           trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
-          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --test groth16_bundle -- --ignored --nocapture
+          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_bundle -- --ignored --nocapture
           kill "${keepalive_pid}" >/dev/null 2>&1 || true
           trap - EXIT
 

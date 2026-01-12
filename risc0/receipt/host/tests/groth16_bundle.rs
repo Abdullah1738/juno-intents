@@ -22,10 +22,13 @@ fn smoke_proves_groth16_bundle_v1() {
     // This test produces a Groth16 receipt and wraps it into the
     // ReceiptZKVMProofBundleV1 binary format for Solana settlement.
     //
-    // Local Groth16 shrink-wrap is currently only supported on x86_64 (Docker-based).
+    // This test is intended to exercise the CUDA-based Groth16 shrink-wrap prover.
     if !cfg!(target_arch = "x86_64") {
-        eprintln!("skipping groth16 prove: requires x86_64 host for docker-based shrink-wrap");
+        eprintln!("skipping groth16 prove: requires x86_64 host");
         return;
+    }
+    if !cfg!(feature = "cuda") {
+        panic!("groth16_bundle test requires --features cuda (no docker fallback)");
     }
 
     const ORCHARD_RECEIVER_BYTES_LEN: usize = 43;
