@@ -107,11 +107,6 @@ struct ListAddressesUnifiedAddressEntry {
     address: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct GetTransactionResp {
-    hex: String,
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -273,10 +268,11 @@ fn note_opening_from_tx(
     action_idx: u32,
 ) -> Result<([u8; 32], [u8; 43], u64, [u8; 32], [u8; 32])> {
     let txid_rpc = txid_to_rpc_hex(txid);
-    let raw = junocash_cli_string(args, &["gettransaction", &txid_rpc, "true"])?;
-    let tx: GetTransactionResp = serde_json::from_str(&raw).context("parse gettransaction JSON")?;
-
-    let tx_bytes = hex::decode(tx.hex.trim()).context("decode tx hex")?;
+    // `gettransaction` is disabled in newer JunoCash/zcashd builds; use raw tx bytes instead.
+    let raw_hex = junocash_cli_string(args, &["getrawtransaction", &txid_rpc, "0"])
+        .context("junocash-cli getrawtransaction")?;
+    let tx_hex = raw_hex.trim().trim_matches('"');
+    let tx_bytes = hex::decode(tx_hex).context("decode tx hex")?;
     let parsed = Transaction::read(Cursor::new(tx_bytes), BranchId::Nu5)
         .context("parse transaction bytes")?;
     let data = parsed.into_data();
