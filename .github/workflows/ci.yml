@@ -195,7 +195,7 @@ jobs:
             echo "EOF"
           } >> "${GITHUB_ENV}"
 
-      - name: Run Groth16 real witness proof (release, ignored)
+      - name: Prove Groth16 bundle from regtest witness (release)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         timeout-minutes: 60
         env:
@@ -206,12 +206,28 @@ jobs:
             echo "JUNO_RECEIPT_WITNESS_HEX not set; skipping"
             exit 0
           fi
-          (while sleep 60; do echo "[keepalive] $(date -u) still proving real witness..."; done) &
+          (while sleep 60; do echo "[keepalive] $(date -u) still proving real witness bundle..."; done) &
           keepalive_pid=$!
           trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
-          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_real_witness -- --ignored --nocapture
+          BUNDLE_HEX="$(time cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --bin prove_bundle_v1)"
           kill "${keepalive_pid}" >/dev/null 2>&1 || true
           trap - EXIT
+          {
+            echo "JUNO_RECEIPT_ZKVM_BUNDLE_HEX<<EOF"
+            echo "${BUNDLE_HEX}"
+            echo "EOF"
+          } >> "${GITHUB_ENV}"
+
+      - name: Verify Groth16 bundle on Solana (program-test, ignored)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          if [ -z "${JUNO_RECEIPT_ZKVM_BUNDLE_HEX:-}" ]; then
+            echo "JUNO_RECEIPT_ZKVM_BUNDLE_HEX not set; skipping"
+            exit 0
+          fi
+          cargo test --locked --manifest-path solana/Cargo.toml -p juno-intents-receipt-verifier --test e2e_risc0_groth16_bundle -- --ignored --nocapture
 
       - name: sccache stats
         if: always()
