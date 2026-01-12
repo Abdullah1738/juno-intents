@@ -43,4 +43,5 @@ cargo_bin="${CARGO:-cargo}"
 ${cargo_bin} run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wallet_witness_v1 -- \
   --junocash-cli scripts/junocash/regtest/cli.sh \
   --wallet "${wallet}" \
-  "${db_dump_flag[@]}"
+  "${db_dump_flag[@]}" \
+  "$@"
