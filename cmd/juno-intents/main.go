@@ -41,6 +41,8 @@ func run(argv []string) error {
 		return cmdWitness(argv[1:])
 	case "prove-ci":
 		return cmdProveCI(argv[1:])
+	case "pda":
+		return cmdPDA(argv[1:])
 	default:
 		return fmt.Errorf("unknown command: %s", argv[0])
 	}
@@ -52,10 +54,12 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  juno-intents witness [-- <wallet_witness_v1 args>]")
 	fmt.Fprintln(w, "  juno-intents prove-ci")
+	fmt.Fprintln(w, "  juno-intents pda --program-id <pubkey> --deployment-id <hex32> --intent-nonce <hex32> [--print <field>]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  witness   Generate a v1 receipt witness hex from your local junocash wallet (prints hex to stdout).")
 	fmt.Fprintln(w, "  prove-ci  Triggers a workflow_dispatch GPU prove run and watches it.")
+	fmt.Fprintln(w, "  pda       Prints the derived Intent/Fill PDAs for deterministic testing.")
 }
 
 func cmdWitness(argv []string) error {
