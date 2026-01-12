@@ -1,4 +1,4 @@
-.PHONY: test test-go test-rust test-solana
+.PHONY: test test-go test-rust test-solana witness prove-ci prove-aws
 
 test: test-go test-rust test-solana
 
@@ -10,3 +10,12 @@ test-rust:
 
 test-solana:
 	cargo test --manifest-path solana/Cargo.toml
+
+witness:
+	go run ./cmd/juno-intents witness
+
+prove-ci:
+	go run ./cmd/juno-intents prove-ci
+
+prove-aws:
+	scripts/aws/prove-groth16.sh
