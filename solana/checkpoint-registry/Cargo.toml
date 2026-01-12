@@ -1,0 +1,18 @@
+[package]
+name = "juno-intents-checkpoint-registry"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+borsh = "0.10.3"
+solana-program = "2"
+
+[dev-dependencies]
+solana-program-test = "2"
+solana-sdk = "2"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+
