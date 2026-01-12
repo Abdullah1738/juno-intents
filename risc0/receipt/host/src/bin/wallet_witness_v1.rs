@@ -108,8 +108,14 @@ struct ListAddressesUnifiedAddressEntry {
 }
 
 #[derive(Debug, Deserialize)]
-struct GetBlockRespV1 {
-    tx: Vec<String>,
+struct GetBlockTxRespV2 {
+    txid: String,
+    hex: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GetBlockRespV2 {
+    tx: Vec<GetBlockTxRespV2>,
 }
 
 fn main() -> Result<()> {
@@ -388,17 +394,13 @@ fn merkle_path_from_chain(
             .trim()
             .to_string();
 
-        let block_raw = junocash_cli_string(args, &["getblock", &bh, "1"])
+        let block_raw = junocash_cli_string(args, &["getblock", &bh, "2"])
             .context("junocash-cli getblock")?;
-        let block: GetBlockRespV1 = serde_json::from_str(&block_raw).context("parse getblock JSON")?;
+        let block: GetBlockRespV2 = serde_json::from_str(&block_raw).context("parse getblock JSON")?;
 
-        for txid_rpc in block.tx {
-            let cur_txid = txid_from_rpc_hex(&txid_rpc).context("parse txid")?;
-
-            let raw_hex = junocash_cli_string(args, &["getrawtransaction", &txid_rpc, "0"])
-                .context("junocash-cli getrawtransaction")?;
-            let tx_hex = raw_hex.trim().trim_matches('"');
-            let tx_bytes = hex::decode(tx_hex).context("decode tx hex")?;
+        for tx in block.tx {
+            let cur_txid = txid_from_rpc_hex(&tx.txid).context("parse txid")?;
+            let tx_bytes = hex::decode(tx.hex.trim()).context("decode tx hex")?;
 
             let parsed = Transaction::read(Cursor::new(tx_bytes), BranchId::Nu5)
                 .context("parse transaction bytes")?;
