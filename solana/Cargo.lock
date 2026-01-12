@@ -2457,14 +2457,19 @@ dependencies = [
 name = "juno-intents-intent-escrow"
 version = "0.1.0"
 dependencies = [
+ "anchor-lang",
  "borsh 0.10.4",
+ "groth_16_verifier",
  "hex",
  "juno-intents-checkpoint-registry",
+ "juno-intents-receipt-verifier",
+ "ownable",
  "solana-program",
  "solana-program-test",
  "solana-sdk",
  "spl-token",
  "tokio",
+ "verifier_router",
 ]
 
 [[package]]
