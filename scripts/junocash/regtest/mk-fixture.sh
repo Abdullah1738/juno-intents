@@ -57,7 +57,7 @@ jcli generate 1 >/dev/null
 
 echo "waiting for orchard note to be spendable..." >&2
 for _ in $(seq 1 60); do
-  if jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys; notes=json.load(sys.stdin); ok=any(n.get(\"pool\")==\"orchard\" and n.get(\"spendable\") and float(n.get(\"amount\",0))>0 for n in notes); sys.exit(0 if ok else 1)' >/dev/null
+  if jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys; notes=json.load(sys.stdin); ok=any(n.get("pool")=="orchard" and n.get("spendable") and float(n.get("amount",0))>0 for n in notes); sys.exit(0 if ok else 1)' >/dev/null
   then
     echo "fixture ready (txid=${txid})" >&2
     exit 0
