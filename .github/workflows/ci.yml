@@ -80,6 +80,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.mod
+
       - name: RunsOn cache
         uses: runs-on/action@v2
         with:
@@ -188,7 +195,11 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
-          W="$(scripts/junocash/regtest/witness-hex.sh)"
+          DEPLOYMENT_ID_HEX="$(printf '11%.0s' {1..32})"
+          INTENT_NONCE_HEX="$(printf '33%.0s' {1..32})"
+          IEP_PROGRAM_ID_HEX="$(printf 'a1%.0s' {1..32})"
+          FILL_ID_HEX="$(go run ./cmd/juno-intents pda --program-id "${IEP_PROGRAM_ID_HEX}" --deployment-id "${DEPLOYMENT_ID_HEX}" --intent-nonce "${INTENT_NONCE_HEX}" --print fill-id-hex)"
+          W="$(scripts/junocash/regtest/witness-hex.sh --deployment-id "${DEPLOYMENT_ID_HEX}" --fill-id "${FILL_ID_HEX}")"
           {
             echo "JUNO_RECEIPT_WITNESS_HEX<<EOF"
             echo "${W}"
@@ -228,6 +239,17 @@ jobs:
             exit 0
           fi
           cargo test --locked --manifest-path solana/Cargo.toml -p juno-intents-receipt-verifier --test e2e_risc0_groth16_bundle -- --ignored --nocapture
+
+      - name: Settle Groth16 bundle on Solana (program-test, ignored)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          if [ -z "${JUNO_RECEIPT_ZKVM_BUNDLE_HEX:-}" ]; then
+            echo "JUNO_RECEIPT_ZKVM_BUNDLE_HEX not set; skipping"
+            exit 0
+          fi
+          cargo test --locked --manifest-path solana/Cargo.toml -p juno-intents-intent-escrow --test e2e_risc0_groth16_settle -- --ignored --nocapture
 
       - name: sccache stats
         if: always()
