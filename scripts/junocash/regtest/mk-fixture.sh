@@ -26,38 +26,16 @@ for _ in $(seq 1 "${wait_secs}"); do
     printf '%s\n' "${res}" >&2
     exit 1
   fi
-  txid="$(printf '%s' "${res}" | python3 - <<'PY'
-import json, sys
-try:
-    items = json.load(sys.stdin)
-except json.JSONDecodeError as e:
-    raise SystemExit(3)
+  compact="$(printf '%s' "${res}" | tr -d ' \n\r\t')"
+  if [[ "${compact}" == "[]" ]]; then
+    sleep 1
+    continue
+  fi
 
-if not items:
-    raise SystemExit(1)
-it = items[0]
-status = it.get("status")
-if status == "success":
-    print(it["result"]["txid"])
-    raise SystemExit(0)
-err = it.get("error", {})
-msg = err.get("message") if isinstance(err, dict) else None
-sys.stderr.write(f"shield operation failed (status={status} message={msg})\\n")
-raise SystemExit(2)
-PY
-  )" && break || {
+  txid="$(printf '%s' "${res}" | python3 -c $'import json,sys\nitems=json.load(sys.stdin)\nit=items[0]\nstatus=it.get(\"status\")\nif status==\"success\":\n    print(it[\"result\"][\"txid\"])\n    sys.exit(0)\nerr=it.get(\"error\", {})\nmsg=err.get(\"message\") if isinstance(err, dict) else None\nprint(f\"shield operation failed (status={status} message={msg})\", file=sys.stderr)\nsys.exit(2)\n')" && break || {
     ec=$?
-    if [[ "${ec}" == "1" ]]; then
-      sleep 1
-      continue
-    fi
     if [[ "${ec}" == "2" ]]; then
       echo "shield operation failed; raw z_getoperationresult output:" >&2
-      printf '%s\n' "${res}" >&2
-      exit 1
-    fi
-    if [[ "${ec}" == "3" ]]; then
-      echo "z_getoperationresult returned non-JSON; raw output:" >&2
       printf '%s\n' "${res}" >&2
       exit 1
     fi
@@ -79,12 +57,7 @@ jcli generate 1 >/dev/null
 
 echo "waiting for orchard note to be spendable..." >&2
 for _ in $(seq 1 60); do
-  if jcli z_listunspent 1 9999999 false | python3 - <<'PY' >/dev/null
-import json, sys
-notes = json.load(sys.stdin)
-ok = any(n.get("pool") == "orchard" and n.get("spendable") and float(n.get("amount", 0)) > 0 for n in notes)
-raise SystemExit(0 if ok else 1)
-PY
+  if jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys; notes=json.load(sys.stdin); ok=any(n.get(\"pool\")==\"orchard\" and n.get(\"spendable\") and float(n.get(\"amount\",0))>0 for n in notes); sys.exit(0 if ok else 1)' >/dev/null
   then
     echo "fixture ready (txid=${txid})" >&2
     exit 0
