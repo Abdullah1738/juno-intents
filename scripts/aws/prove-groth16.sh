@@ -14,6 +14,7 @@ RUST_TOOLCHAIN="${JUNO_RUST_TOOLCHAIN:-1.91.1}"
 RISC0_RUST_TOOLCHAIN="${JUNO_RISC0_RUST_TOOLCHAIN:-1.91.1}"
 RZUP_VERSION="${JUNO_RZUP_VERSION:-0.5.1}"
 RISC0_GROTH16_VERSION="${JUNO_RISC0_GROTH16_VERSION:-0.1.0}"
+GO_VERSION="${JUNO_GO_VERSION:-1.22.6}"
 MODE="${JUNO_PROVE_MODE:-all}"
 
 usage() {
@@ -157,7 +158,7 @@ if [[ "${ping}" != "Online" ]]; then
 fi
 
 echo "running prove command via SSM..." >&2
-export REGION INSTANCE_ID RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION MODE
+export REGION INSTANCE_ID RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION GO_VERSION MODE
 COMMAND_ID="$(
   python3 - <<'PY'
 import json
@@ -170,18 +171,23 @@ rust_toolchain = os.environ["RUST_TOOLCHAIN"]
 risc0_rust_toolchain = os.environ["RISC0_RUST_TOOLCHAIN"]
 rzup_version = os.environ["RZUP_VERSION"]
 risc0_groth16_version = os.environ["RISC0_GROTH16_VERSION"]
+go_version = os.environ.get("GO_VERSION", "1.22.6")
 mode = os.environ.get("MODE", "all")
 
 cmds = [
     "set -euo pipefail",
     "if ! command -v git >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends git; fi",
+    "if ! command -v curl >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends curl; fi",
     "if ! command -v protoc >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler; fi",
     "if ! command -v docker >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends docker.io; fi",
     "sudo systemctl start docker || sudo service docker start || true",
     "docker --version",
     "docker ps >/dev/null",
+    f"if ! command -v go >/dev/null || ! go version | grep -q 'go{go_version}'; then curl -sSfL https://go.dev/dl/go{go_version}.linux-amd64.tar.gz -o /tmp/go.tgz && sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz; fi",
+    'export PATH="/usr/local/go/bin:$HOME/.cargo/bin:$PATH"',
+    "go version",
     "if ! command -v cargo >/dev/null; then curl -sSf https://sh.rustup.rs | sh -s -- -y; fi",
-    'export PATH=\"$HOME/.cargo/bin:$PATH\"',
+    'export PATH=\"$HOME/.cargo/bin:/usr/local/go/bin:$PATH\"',
     f"rustup toolchain install {rust_toolchain} || true",
     f"rustup default {rust_toolchain} || true",
     f"rustup toolchain install {risc0_rust_toolchain} || true",
@@ -200,9 +206,17 @@ if mode in ("synthetic", "all"):
 if mode in ("real", "all"):
     cmds.extend(
         [
-            'W="$(scripts/junocash/regtest/witness-hex.sh)"',
+            'DEPLOYMENT_ID_HEX="$(printf \'11%.0s\' {1..32})"',
+            'INTENT_NONCE_HEX="$(printf \'33%.0s\' {1..32})"',
+            'IEP_PROGRAM_ID_HEX="$(printf \'a1%.0s\' {1..32})"',
+            'FILL_ID_HEX="$(go run ./cmd/juno-intents pda --program-id "${IEP_PROGRAM_ID_HEX}" --deployment-id "${DEPLOYMENT_ID_HEX}" --intent-nonce "${INTENT_NONCE_HEX}" --print fill-id-hex)"',
+            'W="$(scripts/junocash/regtest/witness-hex.sh --deployment-id "${DEPLOYMENT_ID_HEX}" --fill-id "${FILL_ID_HEX}")"',
             'export JUNO_RECEIPT_WITNESS_HEX="${W}"',
             "time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_real_witness -- --ignored --nocapture",
+            'BUNDLE_HEX="$(cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --bin prove_bundle_v1)"',
+            'export JUNO_RECEIPT_ZKVM_BUNDLE_HEX="${BUNDLE_HEX}"',
+            "cargo test --locked --manifest-path solana/Cargo.toml -p juno-intents-receipt-verifier --test e2e_risc0_groth16_bundle -- --ignored --nocapture",
+            "cargo test --locked --manifest-path solana/Cargo.toml -p juno-intents-intent-escrow --test e2e_risc0_groth16_settle -- --ignored --nocapture",
         ]
     )
 
