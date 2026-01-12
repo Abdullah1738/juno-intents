@@ -10,7 +10,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math/bits"
 	"net/http"
 	"os"
 	"sort"
@@ -143,6 +142,9 @@ func cmdServe(argv []string) error {
 	if deploymentHex == "" || quoteURL == "" || priceZatPerUnit == 0 {
 		return errors.New("--deployment-id, --quote-url, and --price-zat-per-token-unit are required")
 	}
+	if spreadBps > 10_000 {
+		return errors.New("--spread-bps must be <= 10000")
+	}
 
 	deploymentID, err := protocol.ParseDeploymentIDHex(deploymentHex)
 	if err != nil {
@@ -181,6 +183,11 @@ func cmdServe(argv []string) error {
 		Recommended:   true,
 	}
 
+	strategy := solvernet.FixedPriceStrategy{
+		ZatoshiPerTokenUnit: priceZatPerUnit,
+		SpreadBps:           uint16(spreadBps),
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/announcement", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, signedAnn)
@@ -208,7 +215,7 @@ func cmdServe(argv []string) error {
 		}
 
 		quoteID := protocol.DeriveQuoteID(deploymentID, solverPub, req.RFQNonce)
-		junoRequired, err := fixedPriceQuote(req.NetAmount, priceZatPerUnit, uint16(spreadBps))
+		junoRequired, err := strategy.QuoteRequiredZatoshi(req.NetAmount)
 		if err != nil {
 			http.Error(w, "quote error", http.StatusInternalServerError)
 			return
@@ -384,23 +391,6 @@ func (m *multiString) String() string { return strings.Join(*m, ",") }
 func (m *multiString) Set(s string) error {
 	*m = append(*m, s)
 	return nil
-}
-
-func fixedPriceQuote(netAmount uint64, zatPerTokenUnit uint64, spreadBps uint16) (uint64, error) {
-	baseHi, baseLo := bits.Mul64(netAmount, zatPerTokenUnit)
-	if baseHi != 0 {
-		return 0, errors.New("overflow")
-	}
-	base := baseLo
-	if spreadBps == 0 {
-		return base, nil
-	}
-	mult := uint64(10_000 + spreadBps)
-	hi, lo := bits.Mul64(base, mult)
-	if hi != 0 {
-		return 0, errors.New("overflow")
-	}
-	return (lo + 10_000 - 1) / 10_000, nil
 }
 
 func splitCSV(s string) []string {

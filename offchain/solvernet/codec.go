@@ -15,6 +15,7 @@ var (
 	ErrInvalidPubkey     = errors.New("invalid pubkey")
 	ErrInvalidSignature  = errors.New("invalid signature")
 	ErrInvalidU64String  = errors.New("invalid u64 string")
+	ErrOverflow          = errors.New("overflow")
 )
 
 func encodeHex32(b [32]byte) string {
@@ -81,4 +82,3 @@ func parseU64String(s string) (uint64, error) {
 func formatU64String(v uint64) string {
 	return fmt.Sprintf("%d", v)
 }
-
