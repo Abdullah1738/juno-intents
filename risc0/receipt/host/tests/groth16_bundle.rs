@@ -23,17 +23,9 @@ fn smoke_proves_groth16_bundle_v1() {
     // ReceiptZKVMProofBundleV1 binary format for Solana settlement.
     //
     // Local Groth16 shrink-wrap is currently only supported on x86_64 (Docker-based).
-    // On other hosts, run with `--features bonsai` and set BONSAI_API_URL/BONSAI_API_KEY.
     if !cfg!(target_arch = "x86_64") {
-        let bonsai_configured =
-            cfg!(feature = "bonsai") && std::env::var("BONSAI_API_URL").is_ok()
-                && std::env::var("BONSAI_API_KEY").is_ok();
-        if !bonsai_configured {
-            eprintln!(
-                "skipping groth16 prove: requires x86_64 local prover or bonsai configuration"
-            );
-            return;
-        }
+        eprintln!("skipping groth16 prove: requires x86_64 host for docker-based shrink-wrap");
+        return;
     }
 
     const ORCHARD_RECEIVER_BYTES_LEN: usize = 43;

@@ -6,7 +6,6 @@ publish = false
 
 [features]
 default = []
-bonsai = ["risc0-zkvm/bonsai"]
 cuda = ["risc0-zkvm/cuda"]
 
 [dependencies]
