@@ -119,7 +119,7 @@ jobs:
           fi
           docker --version
           if command -v db_dump >/dev/null; then db_dump --version; fi
-          if command -v db5.3_dump >/dev/null; then db5.3_dump --version; fi
+          if command -v db5.3_dump >/dev/null; then db5.3_dump -V; fi
 
       - name: Install protoc
         run: |
