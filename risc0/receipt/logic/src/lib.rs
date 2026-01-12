@@ -33,6 +33,14 @@ pub enum ReceiptVerifyError {
     NonCanonicalOrchardRoot,
 }
 
+impl std::fmt::Display for ReceiptVerifyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for ReceiptVerifyError {}
+
 fn prefix_bytes(purpose: &str) -> Vec<u8> {
     // ASCII(domain) || 0x00 || ASCII(purpose) || 0x00 || u16_le(version)
     let mut out = Vec::with_capacity(DOMAIN_SEPARATOR.len() + 1 + purpose.len() + 1 + 2);
@@ -172,4 +180,3 @@ pub fn receipt_journal_from_witness_v1(witness: &[u8]) -> Result<Vec<u8>, Receip
 
     Ok(journal)
 }
-

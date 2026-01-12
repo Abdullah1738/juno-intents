@@ -175,6 +175,21 @@ jobs:
           kill "${keepalive_pid}" >/dev/null 2>&1 || true
           trap - EXIT
 
+      - name: Run Groth16 real witness proof (release, ignored)
+        if: ${{ github.event_name == 'workflow_dispatch' && secrets.JUNO_RECEIPT_WITNESS_HEX != '' }}
+        timeout-minutes: 60
+        env:
+          RUST_LOG: info
+          JUNO_RECEIPT_WITNESS_HEX: ${{ secrets.JUNO_RECEIPT_WITNESS_HEX }}
+        run: |
+          set -euo pipefail
+          (while sleep 60; do echo "[keepalive] $(date -u) still proving real witness..."; done) &
+          keepalive_pid=$!
+          trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
+          time cargo test --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --test groth16_real_witness -- --ignored --nocapture
+          kill "${keepalive_pid}" >/dev/null 2>&1 || true
+          trap - EXIT
+
       - name: sccache stats
         if: always()
         run: sccache --show-stats || true
