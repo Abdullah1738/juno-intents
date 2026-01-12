@@ -107,6 +107,11 @@ struct ListAddressesUnifiedAddressEntry {
     address: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct GetBlockRespV1 {
+    tx: Vec<String>,
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -143,8 +148,17 @@ fn main() -> Result<()> {
             .context("extract note opening from tx")?;
 
     let (orchard_root, merkle_index, merkle_siblings) =
-        merkle_path_from_wallet(&wallet_path, &db_dump, &selected_txid, selected_action)
-            .context("extract merkle path from wallet")?;
+        match merkle_path_from_wallet(&wallet_path, &db_dump, &selected_txid, selected_action) {
+            Ok(v) => v,
+            Err(err) => {
+                eprintln!(
+                    "wallet merkle path extraction failed; falling back to chain scan: {:#}",
+                    err
+                );
+                merkle_path_from_chain(&args, &selected_txid, selected_action)
+                    .context("extract merkle path from chain")?
+            }
+        };
 
     let deployment_id = match args.deployment_id.as_deref() {
         Some(hex32) => parse_hex_32(hex32).context("parse --deployment-id")?,
@@ -344,6 +358,92 @@ fn merkle_path_from_wallet(
     let root = tree
         .root(0)
         .ok_or_else(|| anyhow!("wallet tree has no root at checkpoint depth 0"))?;
+
+    let mut siblings = [[0u8; 32]; ORCHARD_MERKLE_DEPTH];
+    for (i, sib) in auth_path.iter().enumerate() {
+        siblings[i] = sib.to_bytes();
+    }
+
+    Ok((root.to_bytes(), merkle_index_u32, siblings))
+}
+
+fn merkle_path_from_chain(
+    args: &Args,
+    txid: &TxId,
+    action_idx: u32,
+) -> Result<([u8; 32], u32, [[u8; 32]; ORCHARD_MERKLE_DEPTH])> {
+    let tip_height: u32 = junocash_cli_string(args, &["getblockcount"])
+        .context("junocash-cli getblockcount")?
+        .trim()
+        .parse()
+        .context("parse getblockcount")?;
+
+    let mut tree: bridgetree::BridgeTree<MerkleHashOrchard, u32, ORCHARD_MERKLE_DEPTH_U8> =
+        bridgetree::BridgeTree::new(1);
+    let mut marked_pos: Option<incrementalmerkletree::Position> = None;
+
+    for height in 0..=tip_height {
+        let bh = junocash_cli_string(args, &["getblockhash", &height.to_string()])
+            .context("junocash-cli getblockhash")?
+            .trim()
+            .to_string();
+
+        let block_raw = junocash_cli_string(args, &["getblock", &bh, "1"])
+            .context("junocash-cli getblock")?;
+        let block: GetBlockRespV1 = serde_json::from_str(&block_raw).context("parse getblock JSON")?;
+
+        for txid_rpc in block.tx {
+            let cur_txid = txid_from_rpc_hex(&txid_rpc).context("parse txid")?;
+
+            let raw_hex = junocash_cli_string(args, &["getrawtransaction", &txid_rpc, "0"])
+                .context("junocash-cli getrawtransaction")?;
+            let tx_hex = raw_hex.trim().trim_matches('"');
+            let tx_bytes = hex::decode(tx_hex).context("decode tx hex")?;
+
+            let parsed = Transaction::read(Cursor::new(tx_bytes), BranchId::Nu5)
+                .context("parse transaction bytes")?;
+            let data = parsed.into_data();
+            let Some(bundle) = data.orchard_bundle() else {
+                continue;
+            };
+
+            for (i, action) in bundle.actions().iter().enumerate() {
+                let leaf = MerkleHashOrchard::from_cmx(action.cmx());
+                if !tree.append(leaf) {
+                    bail!("orchard note commitment tree overflow");
+                }
+
+                if cur_txid == *txid && i as u32 == action_idx {
+                    if marked_pos.is_some() {
+                        bail!("duplicate (txid, action) match while scanning chain");
+                    }
+                    marked_pos = tree.mark();
+                }
+            }
+        }
+    }
+
+    let position = marked_pos.ok_or_else(|| anyhow!("target orchard action not found when scanning chain"))?;
+
+    let merkle_index_u64: u64 = position.into();
+    let merkle_index_u32: u32 = merkle_index_u64
+        .try_into()
+        .map_err(|_| anyhow!("note position exceeds u32: {}", merkle_index_u64))?;
+
+    let auth_path = tree
+        .witness(position, 0)
+        .map_err(|e| anyhow!("witness unavailable at depth 0: {e:?}"))?;
+    if auth_path.len() != ORCHARD_MERKLE_DEPTH {
+        bail!(
+            "unexpected orchard auth path len: got {}, want {}",
+            auth_path.len(),
+            ORCHARD_MERKLE_DEPTH
+        );
+    }
+
+    let root = tree
+        .root(0)
+        .ok_or_else(|| anyhow!("chain-derived tree has no root at checkpoint depth 0"))?;
 
     let mut siblings = [[0u8; 32]; ORCHARD_MERKLE_DEPTH];
     for (i, sib) in auth_path.iter().enumerate() {
