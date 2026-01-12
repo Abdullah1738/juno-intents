@@ -1,4 +1,4 @@
-.PHONY: test test-go test-rust test-solana witness prove-ci prove-aws
+.PHONY: test test-go test-rust test-solana witness prove-ci prove-aws regtest-up regtest-down regtest-witness
 
 test: test-go test-rust test-solana
 
@@ -19,3 +19,12 @@ prove-ci:
 
 prove-aws:
 	scripts/aws/prove-groth16.sh
+
+regtest-up:
+	scripts/junocash/regtest/up.sh
+
+regtest-down:
+	scripts/junocash/regtest/down.sh
+
+regtest-witness:
+	scripts/junocash/regtest/witness-hex.sh
