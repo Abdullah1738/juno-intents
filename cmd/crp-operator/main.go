@@ -39,6 +39,8 @@ func run(argv []string) error {
 		return cmdSubmit(argv[1:])
 	case "finalize":
 		return cmdFinalize(argv[1:])
+	case "deployments":
+		return cmdDeployments(argv[1:])
 	case "run":
 		return cmdRun(argv[1:])
 	default:
@@ -52,6 +54,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  crp-operator submit --crp-program-id <base58> --deployment-id <hex32> --height <u64> --block-hash <hex32> --orchard-root <hex32> --prev-hash <hex32> [--payer-keypair <path>] [--operator-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
 	fmt.Fprintln(w, "  crp-operator finalize --crp-program-id <base58> --deployment-id <hex32> --height <u64> --orchard-root <hex32> --operator-keypair <path> [--operator-keypair <path>...] [--payer-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
+	fmt.Fprintln(w, "  crp-operator deployments --crp-program-id <base58>")
 	fmt.Fprintln(w, "  crp-operator run --crp-program-id <base58> --deployment-id <hex32> --start-height <u64> --finalize-operator-keypair <path> [--junocash-cli <path>] [--junocash-cli-arg <arg>...] [--lag <u64>] [--poll-interval <duration>] [--payer-keypair <path>] [--submit-operator-keypair <path>] [--cu-limit-submit <u32>] [--cu-limit-finalize <u32>] [--priority-level <level>] [--dry-run] [--once]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Environment:")
@@ -426,6 +429,60 @@ func cmdFinalize(argv []string) error {
 		return err
 	}
 	fmt.Println(sigStr)
+	return nil
+}
+
+func cmdDeployments(argv []string) error {
+	fs := flag.NewFlagSet("deployments", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	var crpProgramStr string
+	fs.StringVar(&crpProgramStr, "crp-program-id", "", "CRP program id (base58)")
+
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if crpProgramStr == "" {
+		return errors.New("--crp-program-id is required")
+	}
+
+	crpProgram, err := solana.ParsePubkey(crpProgramStr)
+	if err != nil {
+		return fmt.Errorf("parse --crp-program-id: %w", err)
+	}
+
+	rpc, err := solanarpc.ClientFromEnv()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	const crpConfigLenV1 = 1101
+	accounts, err := rpc.ProgramAccountsByDataSizeBase64(ctx, crpProgram.Base58(), crpConfigLenV1)
+	if err != nil {
+		return err
+	}
+	if len(accounts) == 0 {
+		return errors.New("no CRP config accounts found (wrong program id or no deployments?)")
+	}
+
+	for _, a := range accounts {
+		cfg, err := decodeCrpConfigV1(a.Data)
+		if err != nil {
+			return fmt.Errorf("decode config %s: %w", a.Pubkey, err)
+		}
+		fmt.Printf("deployment_id=%s config=%s threshold=%d conflict_threshold=%d delay_slots=%d operators=%d paused=%v\n",
+			hex.EncodeToString(cfg.DeploymentID[:]),
+			a.Pubkey,
+			cfg.Threshold,
+			cfg.ConflictThreshold,
+			cfg.FinalizationDelaySlots,
+			cfg.OperatorCount,
+			cfg.Paused,
+		)
+	}
 	return nil
 }
 

@@ -210,3 +210,62 @@ func (c *Client) Slot(ctx context.Context) (uint64, error) {
 	}
 	return resp, nil
 }
+
+type ProgramAccount struct {
+	Pubkey string
+	Data   []byte
+}
+
+func (c *Client) ProgramAccountsByDataSizeBase64(ctx context.Context, programID string, dataSize uint64) ([]ProgramAccount, error) {
+	programID = strings.TrimSpace(programID)
+	if programID == "" {
+		return nil, errors.New("program id required")
+	}
+	if dataSize == 0 {
+		return nil, errors.New("dataSize required")
+	}
+
+	type resultItem struct {
+		Pubkey  string `json:"pubkey"`
+		Account struct {
+			Data []any `json:"data"`
+		} `json:"account"`
+	}
+
+	var resp []resultItem
+	params := []any{
+		programID,
+		map[string]any{
+			"encoding": "base64",
+			"filters": []any{
+				map[string]any{"dataSize": dataSize},
+			},
+		},
+	}
+	if err := c.rpcCall(ctx, "getProgramAccounts", params, &resp); err != nil {
+		return nil, err
+	}
+
+	out := make([]ProgramAccount, 0, len(resp))
+	for _, it := range resp {
+		if strings.TrimSpace(it.Pubkey) == "" {
+			return nil, errors.New("missing pubkey in getProgramAccounts response")
+		}
+		if len(it.Account.Data) < 1 {
+			return nil, errors.New("missing account data in getProgramAccounts response")
+		}
+		s, ok := it.Account.Data[0].(string)
+		if !ok || strings.TrimSpace(s) == "" {
+			return nil, errors.New("unexpected account data encoding")
+		}
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ProgramAccount{
+			Pubkey: it.Pubkey,
+			Data:   b,
+		})
+	}
+	return out, nil
+}
