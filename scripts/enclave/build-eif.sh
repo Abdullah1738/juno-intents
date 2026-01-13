@@ -41,7 +41,7 @@ print(m.get("PCR0") or m.get("pcr0") or "")
 PY
 )"
 if [[ -z "${pcr0}" ]]; then
-  pcr0="$(printf '%s\n' "${DESCRIBE_OUT}" | sed -nE 's/.*PCR0[^0-9a-fA-F]*([0-9a-fA-F]{96}).*/\\1/p' | head -n 1 || true)"
+  pcr0="$(printf '%s\n' "${DESCRIBE_OUT}" | sed -nE 's/.*PCR0[^0-9a-fA-F]*([0-9a-fA-F]{96}).*/\1/p' | head -n 1 || true)"
 fi
 if [[ -n "${pcr0}" ]]; then
   echo "pcr0=${pcr0}" >&2
