@@ -44,9 +44,6 @@ func cmdPDA(argv []string) error {
 	if deploymentHex == "" {
 		return fmt.Errorf("--deployment-id is required")
 	}
-	if intentHex == "" {
-		return fmt.Errorf("--intent-nonce is required")
-	}
 
 	programID, err := parsePubkey(programIDStr)
 	if err != nil {
@@ -56,10 +53,6 @@ func cmdPDA(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("parse --deployment-id: %w", err)
 	}
-	intentNonce, err := parseHex32(intentHex)
-	if err != nil {
-		return fmt.Errorf("parse --intent-nonce: %w", err)
-	}
 
 	config, _, err := findProgramAddress(
 		[][]byte{[]byte("config"), deploymentID[:]},
@@ -68,29 +61,71 @@ func cmdPDA(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("derive config pda: %w", err)
 	}
-	intent, _, err := findProgramAddress(
-		[][]byte{[]byte("intent"), deploymentID[:], intentNonce[:]},
-		programID,
-	)
-	if err != nil {
-		return fmt.Errorf("derive intent pda: %w", err)
-	}
-	fill, _, err := findProgramAddress(
-		[][]byte{[]byte("fill"), intent[:]},
-		programID,
-	)
-	if err != nil {
-		return fmt.Errorf("derive fill pda: %w", err)
-	}
 
 	switch printField {
 	case "config":
 		fmt.Println(base58.Encode(config[:]))
 	case "intent":
+		if intentHex == "" {
+			return fmt.Errorf("--intent-nonce is required for --print intent")
+		}
+		intentNonce, err := parseHex32(intentHex)
+		if err != nil {
+			return fmt.Errorf("parse --intent-nonce: %w", err)
+		}
+		intent, _, err := findProgramAddress(
+			[][]byte{[]byte("intent"), deploymentID[:], intentNonce[:]},
+			programID,
+		)
+		if err != nil {
+			return fmt.Errorf("derive intent pda: %w", err)
+		}
 		fmt.Println(base58.Encode(intent[:]))
 	case "fill":
+		if intentHex == "" {
+			return fmt.Errorf("--intent-nonce is required for --print fill")
+		}
+		intentNonce, err := parseHex32(intentHex)
+		if err != nil {
+			return fmt.Errorf("parse --intent-nonce: %w", err)
+		}
+		intent, _, err := findProgramAddress(
+			[][]byte{[]byte("intent"), deploymentID[:], intentNonce[:]},
+			programID,
+		)
+		if err != nil {
+			return fmt.Errorf("derive intent pda: %w", err)
+		}
+		fill, _, err := findProgramAddress(
+			[][]byte{[]byte("fill"), intent[:]},
+			programID,
+		)
+		if err != nil {
+			return fmt.Errorf("derive fill pda: %w", err)
+		}
 		fmt.Println(base58.Encode(fill[:]))
 	case "fill-id-hex":
+		if intentHex == "" {
+			return fmt.Errorf("--intent-nonce is required for --print fill-id-hex")
+		}
+		intentNonce, err := parseHex32(intentHex)
+		if err != nil {
+			return fmt.Errorf("parse --intent-nonce: %w", err)
+		}
+		intent, _, err := findProgramAddress(
+			[][]byte{[]byte("intent"), deploymentID[:], intentNonce[:]},
+			programID,
+		)
+		if err != nil {
+			return fmt.Errorf("derive intent pda: %w", err)
+		}
+		fill, _, err := findProgramAddress(
+			[][]byte{[]byte("fill"), intent[:]},
+			programID,
+		)
+		if err != nil {
+			return fmt.Errorf("derive fill pda: %w", err)
+		}
 		fmt.Println(hex.EncodeToString(fill[:]))
 	default:
 		return fmt.Errorf("invalid --print: %s", printField)

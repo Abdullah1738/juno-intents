@@ -45,6 +45,10 @@ func run(argv []string) error {
 		return cmdSetWitnessSecret(argv[1:])
 	case "prove-ci":
 		return cmdProveCI(argv[1:])
+	case "init-crp":
+		return cmdInitCRP(argv[1:])
+	case "init-iep":
+		return cmdInitIEP(argv[1:])
 	case "pda":
 		return cmdPDA(argv[1:])
 	default:
@@ -60,6 +64,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  juno-intents witness-ci [-- <wallet_witness_v1 args>]")
 	fmt.Fprintln(w, "  juno-intents set-witness-secret [-- <wallet_witness_v1 args>]")
 	fmt.Fprintln(w, "  juno-intents prove-ci [--witness-source regtest|secret]")
+	fmt.Fprintln(w, "  juno-intents init-crp --crp-program-id <pubkey> --deployment-id <hex32> --admin <pubkey> --threshold <u8> --conflict-threshold <u8> --finalization-delay-slots <u64> --operator <pubkey> [--operator <pubkey>...] [--payer-keypair <path>] [--dry-run]")
+	fmt.Fprintln(w, "  juno-intents init-iep --iep-program-id <pubkey> --deployment-id <hex32> --admin <pubkey> --fee-bps <u16> --fee-collector <pubkey> --checkpoint-registry-program <pubkey> --receipt-verifier-program <pubkey> [--payer-keypair <path>] [--dry-run]")
 	fmt.Fprintln(w, "  juno-intents pda --program-id <pubkey> --deployment-id <hex32> --intent-nonce <hex32> [--print <field>]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
@@ -67,6 +73,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  witness-ci Generate a v1 receipt witness hex for the deterministic e2e Fill PDA (prints hex to stdout).")
 	fmt.Fprintln(w, "  set-witness-secret Generate a v1 receipt witness hex for e2e and write it to the JUNO_RECEIPT_WITNESS_HEX GitHub Actions secret.")
 	fmt.Fprintln(w, "  prove-ci  Triggers a workflow_dispatch GPU prove run and watches it.")
+	fmt.Fprintln(w, "  init-crp  Initializes a CRP config PDA (one-time deploy step).")
+	fmt.Fprintln(w, "  init-iep  Initializes an IEP config PDA (one-time deploy step).")
 	fmt.Fprintln(w, "  pda       Prints the derived Intent/Fill PDAs for deterministic testing.")
 }
 
