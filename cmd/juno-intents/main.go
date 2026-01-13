@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	defaultWorkflowFile = "ci.yml"
+	defaultWorkflowFile = "groth16.yml"
 	defaultBranch       = "main"
 )
 
