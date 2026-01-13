@@ -6,6 +6,7 @@ use solana_program::instruction::{AccountMeta, Instruction};
 use solana_program_test::{processor, ProgramTest};
 use solana_sdk::{
     account::Account,
+    ed25519_instruction::new_ed25519_instruction_with_signature,
     signature::{Keypair, Signer},
     system_instruction, system_program,
     transaction::Transaction,
@@ -15,7 +16,8 @@ use verifier_router::state::{VerifierEntry, VerifierRouter};
 use verifier_router as risc0_verifier_router;
 
 use juno_intents_checkpoint_registry::{
-    checkpoint_pda as crp_checkpoint_pda, config_pda as crp_config_pda, CrpInstruction,
+    checkpoint_pda as crp_checkpoint_pda, config_pda as crp_config_pda, height_pda as crp_height_pda,
+    observation_signing_bytes_v1, CrpInstruction,
 };
 use juno_intents_intent_escrow::{
     config_pda as iep_config_pda, fill_pda as iep_fill_pda, intent_pda as iep_intent_pda,
@@ -162,6 +164,12 @@ fn crp_ix(program_id: solana_sdk::pubkey::Pubkey, accounts: Vec<AccountMeta>, da
         accounts,
         data: data.try_to_vec().expect("borsh encode"),
     }
+}
+
+fn ed25519_ix(signer: &Keypair, msg: &[u8]) -> Instruction {
+    let sig: [u8; 64] = signer.sign_message(msg).into();
+    let pk = signer.pubkey().to_bytes();
+    new_ed25519_instruction_with_signature(msg, &sig, &pk)
 }
 
 fn create_mint_instructions(
@@ -367,6 +375,8 @@ async fn settles_real_risc0_groth16_bundle_v1() {
 
     // Initialize CRP.
     let (crp_config, _bump) = crp_config_pda(&crp_program_id, &journal.deployment_id);
+    let op1 = Keypair::new();
+    let op2 = Keypair::new();
     let init_crp = crp_ix(
         crp_program_id,
         vec![
@@ -376,6 +386,10 @@ async fn settles_real_risc0_groth16_bundle_v1() {
         ],
         CrpInstruction::Initialize {
             deployment_id: journal.deployment_id,
+            threshold: 1,
+            conflict_threshold: 2,
+            finalization_delay_slots: 0,
+            operators: vec![op1.pubkey(), op2.pubkey()],
         },
     );
     let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
@@ -390,24 +404,58 @@ async fn settles_real_risc0_groth16_bundle_v1() {
     // Finalize checkpoint for this Orchard root.
     let (crp_checkpoint, _bump) =
         crp_checkpoint_pda(&crp_program_id, &crp_config, &journal.orchard_root);
-    let set_cp = crp_ix(
+    let block_hash = [0x23u8; 32];
+    let prev_hash = [0x24u8; 32];
+    let obs_msg = observation_signing_bytes_v1(
+        &journal.deployment_id,
+        1,
+        &block_hash,
+        &journal.orchard_root,
+        &prev_hash,
+    );
+    let ed_ix = ed25519_ix(&op1, obs_msg.as_ref());
+    let submit_ix = crp_ix(
+        crp_program_id,
+        vec![
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new_readonly(crp_config, false),
+            AccountMeta::new(crp_checkpoint, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_program::sysvar::instructions::ID, false),
+        ],
+        CrpInstruction::SubmitObservation {
+            height: 1,
+            block_hash,
+            orchard_root: journal.orchard_root,
+            prev_hash,
+        },
+    );
+    let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ed_ix, submit_ix],
+        Some(&payer.pubkey()),
+        &[&payer],
+        recent_blockhash,
+    );
+    banks_client.process_transaction(tx).await.unwrap();
+
+    let (crp_height, _bump) = crp_height_pda(&crp_program_id, &crp_config, 1);
+    let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
+    let ed_ix = ed25519_ix(&op1, obs_msg.as_ref());
+    let finalize_ix = crp_ix(
         crp_program_id,
         vec![
             AccountMeta::new(payer.pubkey(), true),
             AccountMeta::new(crp_config, false),
             AccountMeta::new(crp_checkpoint, false),
+            AccountMeta::new(crp_height, false),
             AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_program::sysvar::instructions::ID, false),
         ],
-        CrpInstruction::SetCheckpoint {
-            height: 1,
-            block_hash: [0x23u8; 32],
-            orchard_root: journal.orchard_root,
-            prev_hash: [0x24u8; 32],
-        },
+        CrpInstruction::FinalizeCheckpoint { sig_count: 1 },
     );
-    let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
-        &[set_cp],
+        &[ed_ix, finalize_ix],
         Some(&payer.pubkey()),
         &[&payer],
         recent_blockhash,
@@ -556,4 +604,3 @@ async fn settles_real_risc0_groth16_bundle_v1() {
     // Spent receipt marker exists.
     assert!(banks_client.get_account(spent).await.unwrap().is_some());
 }
-
