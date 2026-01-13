@@ -30,16 +30,19 @@ echo "building EIF: ${OUT_EIF}" >&2
 nitro-cli build-enclave --docker-uri "${IMAGE_TAG}" --output-file "${OUT_EIF}"
 
 echo "describing EIF..." >&2
-DESCRIBE_JSON="$(nitro-cli describe-eif --eif-path "${OUT_EIF}")"
-printf '%s\n' "${DESCRIBE_JSON}"
+DESCRIBE_OUT="$(nitro-cli describe-eif --eif-path "${OUT_EIF}" 2>&1)"
+printf '%s\n' "${DESCRIBE_OUT}"
 
-pcr0="$(python3 - <<'PY' <<<"${DESCRIBE_JSON}" 2>/dev/null || true
+pcr0="$(python3 - <<'PY' <<<"${DESCRIBE_OUT}" 2>/dev/null || true
 import json,sys
 obj=json.load(sys.stdin)
 m=obj.get("Measurements") or obj.get("measurements") or {}
 print(m.get("PCR0") or m.get("pcr0") or "")
 PY
 )"
+if [[ -z "${pcr0}" ]]; then
+  pcr0="$(printf '%s\n' "${DESCRIBE_OUT}" | sed -nE 's/.*PCR0[^0-9a-fA-F]*([0-9a-fA-F]{96}).*/\\1/p' | head -n 1 || true)"
+fi
 if [[ -n "${pcr0}" ]]; then
   echo "pcr0=${pcr0}" >&2
 fi
