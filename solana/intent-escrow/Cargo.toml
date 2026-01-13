@@ -7,6 +7,10 @@ publish = false
 [lib]
 crate-type = ["cdylib", "lib"]
 
+[features]
+default = []
+no-entrypoint = []
+
 [dependencies]
 borsh = "0.10.3"
 juno-intents-checkpoint-registry = { path = "../checkpoint-registry", features = ["no-entrypoint"] }
@@ -16,10 +20,10 @@ spl-token = { version = "8.0.0", features = ["no-entrypoint"] }
 [dev-dependencies]
 anchor-lang = "0.31.1"
 hex = "0.4.3"
-juno-intents-receipt-verifier = { path = "../receipt-verifier" }
+juno-intents-receipt-verifier = { path = "../receipt-verifier", features = ["no-entrypoint"] }
 ownable = { path = "../../third_party/risc0/risc0-solana/solana-ownable/ownable" }
-groth_16_verifier = { path = "../../third_party/risc0/risc0-solana/solana-verifier/programs/groth_16_verifier" }
+groth_16_verifier = { path = "../../third_party/risc0/risc0-solana/solana-verifier/programs/groth_16_verifier", features = ["no-entrypoint"] }
 solana-program-test = "2"
 solana-sdk = "2"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
-verifier_router = { path = "../../third_party/risc0/risc0-solana/solana-verifier/programs/verifier_router" }
+verifier_router = { path = "../../third_party/risc0/risc0-solana/solana-verifier/programs/verifier_router", features = ["no-entrypoint"] }

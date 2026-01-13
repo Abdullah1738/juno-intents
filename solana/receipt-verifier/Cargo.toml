@@ -7,6 +7,10 @@ publish = false
 [lib]
 crate-type = ["cdylib", "lib"]
 
+[features]
+default = []
+no-entrypoint = []
+
 [dependencies]
 solana-program = "2"
 

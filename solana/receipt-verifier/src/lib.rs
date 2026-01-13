@@ -1,8 +1,9 @@
 #![allow(unexpected_cfgs)]
 
+#[cfg(not(feature = "no-entrypoint"))]
+use solana_program::entrypoint;
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
-    entrypoint,
     entrypoint::ProgramResult,
     hash::hashv,
     instruction::{AccountMeta, Instruction},
@@ -29,6 +30,7 @@ const VERIFIER_ROUTER_VERIFY_DISCRIMINATOR: [u8; 8] = [
     0x85, 0xa1, 0x8d, 0x30, 0x78, 0xc6, 0x58, 0x96,
 ];
 
+#[cfg(not(feature = "no-entrypoint"))]
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
