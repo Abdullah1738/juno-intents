@@ -169,7 +169,14 @@ jobs:
           (while sleep 60; do echo "[keepalive] $(date -u) still proving real witness bundle..."; done) &
           keepalive_pid=$!
           trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
-          BUNDLE_HEX="$(time cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --bin prove_bundle_v1)"
+          RAW_OUT="$(time cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --bin prove_bundle_v1)"
+          BUNDLE_HEX="$(printf '%s\n' "${RAW_OUT}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
+          if [ -z "${BUNDLE_HEX}" ]; then
+            echo "failed to extract bundle hex from prove_bundle_v1 output" >&2
+            echo "first lines:" >&2
+            printf '%s\n' "${RAW_OUT}" | head -n 20 >&2 || true
+            exit 1
+          fi
           kill "${keepalive_pid}" >/dev/null 2>&1 || true
           trap - EXIT
           {
