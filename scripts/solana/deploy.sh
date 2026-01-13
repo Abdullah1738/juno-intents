@@ -320,7 +320,6 @@ echo "initializing IEP config..." >&2
 SOLANA_RPC_URL="${RPC_URL}" go run ./cmd/juno-intents init-iep \
   --iep-program-id "${IEP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
-  --admin "${ADMIN_PUBKEY}" \
   --fee-bps "${FEE_BPS}" \
   --fee-collector "${FEE_COLLECTOR_PUBKEY}" \
   --checkpoint-registry-program "${CRP_PROGRAM_ID}" \

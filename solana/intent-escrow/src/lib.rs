@@ -37,7 +37,7 @@ const INTENT_VERSION_V1: u8 = 1;
 const FILL_VERSION_V1: u8 = 1;
 const SPENT_RECEIPT_VERSION_V1: u8 = 1;
 
-const CONFIG_LEN_V1: usize = 1 + 32 + 32 + 2 + 32 + 32 + 32 + 1;
+const CONFIG_LEN_V1: usize = 1 + 32 + 2 + 32 + 32 + 32;
 const INTENT_LEN_V1: usize = 1 + 1 + 32 + 32 + 32 + 32 + 8 + 2 + 8 + 8 + 32;
 const FILL_LEN_V1: usize = 1 + 1 + 32 + 32 + 32 + 8 + 32;
 const SPENT_RECEIPT_LEN_V1: usize = 1 + 32 + 32;
@@ -62,13 +62,11 @@ const FILL_STATUS_REFUNDED: u8 = 3;
 pub enum IepInstruction {
     Initialize {
         deployment_id: [u8; 32],
-        admin: Pubkey,
         fee_bps: u16,
         fee_collector: Pubkey,
         checkpoint_registry_program: Pubkey,
         receipt_verifier_program: Pubkey,
     },
-    SetPaused { paused: bool },
     CreateIntent {
         intent_nonce: [u8; 32],
         mint: Pubkey,
@@ -89,12 +87,10 @@ pub enum IepInstruction {
 pub struct IepConfigV1 {
     pub version: u8,
     pub deployment_id: [u8; 32],
-    pub admin: Pubkey,
     pub fee_bps: u16,
     pub fee_collector: Pubkey,
     pub checkpoint_registry_program: Pubkey,
     pub receipt_verifier_program: Pubkey,
-    pub paused: bool,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq, Eq)]
@@ -176,7 +172,6 @@ pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: 
     match ix {
         IepInstruction::Initialize {
             deployment_id,
-            admin,
             fee_bps,
             fee_collector,
             checkpoint_registry_program,
@@ -185,13 +180,11 @@ pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: 
             program_id,
             accounts,
             deployment_id,
-            admin,
             fee_bps,
             fee_collector,
             checkpoint_registry_program,
             receipt_verifier_program,
         ),
-        IepInstruction::SetPaused { paused } => process_set_paused(program_id, accounts, paused),
         IepInstruction::CreateIntent {
             intent_nonce,
             mint,
@@ -221,7 +214,6 @@ fn process_initialize(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     deployment_id: [u8; 32],
-    admin: Pubkey,
     fee_bps: u16,
     fee_collector: Pubkey,
     checkpoint_registry_program: Pubkey,
@@ -266,46 +258,11 @@ fn process_initialize(
     let cfg = IepConfigV1 {
         version: CONFIG_VERSION_V1,
         deployment_id,
-        admin,
         fee_bps,
         fee_collector,
         checkpoint_registry_program,
         receipt_verifier_program,
-        paused: false,
     };
-    cfg.serialize(&mut &mut config_ai.data.borrow_mut()[..])
-        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
-}
-
-fn process_set_paused(program_id: &Pubkey, accounts: &[AccountInfo], paused: bool) -> ProgramResult {
-    // Accounts:
-    // 0. admin (signer)
-    // 1. config (PDA, writable)
-    let mut iter = accounts.iter();
-    let admin = next_account_info(&mut iter)?;
-    let config_ai = next_account_info(&mut iter)?;
-
-    if !admin.is_signer {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-    if config_ai.owner != program_id {
-        return Err(IepError::InvalidConfigOwner.into());
-    }
-
-    let mut cfg = IepConfigV1::try_from_slice(&config_ai.data.borrow())
-        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if cfg.version != CONFIG_VERSION_V1 {
-        return Err(IepError::InvalidAccountData.into());
-    }
-    let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
-    if expected_config != *config_ai.key {
-        return Err(IepError::InvalidConfigPda.into());
-    }
-    if cfg.admin != *admin.key {
-        return Err(IepError::Unauthorized.into());
-    }
-
-    cfg.paused = paused;
     cfg.serialize(&mut &mut config_ai.data.borrow_mut()[..])
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
 }
@@ -351,9 +308,6 @@ fn process_create_intent(
     let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
     if expected_config != *config_ai.key {
         return Err(IepError::InvalidConfigPda.into());
-    }
-    if cfg.paused {
-        return Err(IepError::Paused.into());
     }
 
     let (expected_intent, bump) = intent_pda(program_id, &cfg.deployment_id, &intent_nonce);
@@ -475,9 +429,6 @@ fn process_fill_intent(
     let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
     if expected_config != *config_ai.key {
         return Err(IepError::InvalidConfigPda.into());
-    }
-    if cfg.paused {
-        return Err(IepError::Paused.into());
     }
 
     let mut intent = IepIntentV1::try_from_slice(&intent_ai.data.borrow())
@@ -652,9 +603,6 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
     let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
     if expected_config != *config_ai.key {
         return Err(IepError::InvalidConfigPda.into());
-    }
-    if cfg.paused {
-        return Err(IepError::Paused.into());
     }
     if cfg.receipt_verifier_program != *receipt_verifier_program.key {
         return Err(ProgramError::IncorrectProgramId);

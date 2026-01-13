@@ -16,8 +16,8 @@ func TestEncodeCrpSubmitObservation_Golden(t *testing.T) {
 	if len(got) != 1+8+32+32+32 {
 		t.Fatalf("len=%d", len(got))
 	}
-	if got[0] != 3 {
-		t.Fatalf("variant=%d, want 3", got[0])
+	if got[0] != 2 {
+		t.Fatalf("variant=%d, want 2", got[0])
 	}
 }
 
@@ -26,8 +26,8 @@ func TestEncodeCrpFinalize_Golden(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("len=%d", len(got))
 	}
-	if got[0] != 4 || got[1] != 7 {
-		t.Fatalf("bytes=%x, want 04 07", got)
+	if got[0] != 3 || got[1] != 7 {
+		t.Fatalf("bytes=%x, want 03 07", got)
 	}
 }
 

@@ -28,7 +28,7 @@ fn ed25519_ix(signer: &Keypair, msg: &[u8]) -> Instruction {
 }
 
 #[tokio::test]
-async fn init_and_set_checkpoint_then_pause() {
+async fn init_and_halt_on_conflict() {
     let program_id = solana_sdk::pubkey::Pubkey::new_unique();
     let mut pt = ProgramTest::new(
         "juno_intents_checkpoint_registry",
@@ -79,85 +79,85 @@ async fn init_and_set_checkpoint_then_pause() {
     assert_eq!(cfg.operator_count, 2);
     assert!(!cfg.paused);
 
-    // Submit an observation (creates an unfinalized checkpoint).
-    let orchard_root = [0x02u8; 32];
-    let block_hash = [0x03u8; 32];
-    let prev_hash = [0x04u8; 32];
-    let (checkpoint, _bump) = checkpoint_pda(&program_id, &config, &orchard_root);
-    let obs_msg = observation_signing_bytes_v1(&deployment_id, 42, &block_hash, &orchard_root, &prev_hash);
+    let height = 42u64;
+    let orchard_root_a = [0x02u8; 32];
+    let orchard_root_b = [0x03u8; 32];
+    let block_hash_a = [0x04u8; 32];
+    let block_hash_b = [0x05u8; 32];
+    let prev_hash_a = [0x06u8; 32];
+    let prev_hash_b = [0x07u8; 32];
+
+    // Submit two conflicting observations at the same height.
+    let (checkpoint_a, _bump) = checkpoint_pda(&program_id, &config, &orchard_root_a);
+    let (checkpoint_b, _bump) = checkpoint_pda(&program_id, &config, &orchard_root_b);
+    let msg_a = observation_signing_bytes_v1(&deployment_id, height, &block_hash_a, &orchard_root_a, &prev_hash_a);
+    let msg_b = observation_signing_bytes_v1(&deployment_id, height, &block_hash_b, &orchard_root_b, &prev_hash_b);
 
     let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
-    let ed_ix = ed25519_ix(&op1, obs_msg.as_ref());
-    let submit_ix = ix(
-        program_id,
-        vec![
-            AccountMeta::new(payer.pubkey(), true),
-            AccountMeta::new(config, false),
-            AccountMeta::new(checkpoint, false),
-            AccountMeta::new_readonly(system_program::ID, false),
-            AccountMeta::new_readonly(solana_program::sysvar::instructions::ID, false),
-        ],
-        CrpInstruction::SubmitObservation {
-            height: 42,
-            block_hash,
-            orchard_root,
-            prev_hash,
-        },
-    );
     let tx = Transaction::new_signed_with_payer(
-        &[ed_ix, submit_ix],
+        &[
+            ed25519_ix(&op1, msg_a.as_ref()),
+            ix(
+                program_id,
+                vec![
+                    AccountMeta::new(payer.pubkey(), true),
+                    AccountMeta::new(config, false),
+                    AccountMeta::new(checkpoint_a, false),
+                    AccountMeta::new_readonly(system_program::ID, false),
+                    AccountMeta::new_readonly(solana_program::sysvar::instructions::ID, false),
+                ],
+                CrpInstruction::SubmitObservation {
+                    height,
+                    block_hash: block_hash_a,
+                    orchard_root: orchard_root_a,
+                    prev_hash: prev_hash_a,
+                },
+            ),
+            ed25519_ix(&op2, msg_b.as_ref()),
+            ix(
+                program_id,
+                vec![
+                    AccountMeta::new(payer.pubkey(), true),
+                    AccountMeta::new(config, false),
+                    AccountMeta::new(checkpoint_b, false),
+                    AccountMeta::new_readonly(system_program::ID, false),
+                    AccountMeta::new_readonly(solana_program::sysvar::instructions::ID, false),
+                ],
+                CrpInstruction::SubmitObservation {
+                    height,
+                    block_hash: block_hash_b,
+                    orchard_root: orchard_root_b,
+                    prev_hash: prev_hash_b,
+                },
+            ),
+        ],
         Some(&payer.pubkey()),
         &[&payer],
         recent_blockhash,
     );
     banks_client.process_transaction(tx).await.unwrap();
 
-    // Finalize the checkpoint (requires threshold signatures).
-    let (height_rec, _bump) = height_pda(&program_id, &config, 42);
+    // Mark the height as conflicted (halts the registry irreversibly).
+    let (height_rec, _bump) = height_pda(&program_id, &config, height);
     let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
-    let ed1 = ed25519_ix(&op1, obs_msg.as_ref());
-    let ed2 = ed25519_ix(&op2, obs_msg.as_ref());
-    let finalize_ix = ix(
-        program_id,
-        vec![
-            AccountMeta::new(payer.pubkey(), true),
-            AccountMeta::new(config, false),
-            AccountMeta::new(checkpoint, false),
-            AccountMeta::new(height_rec, false),
-            AccountMeta::new_readonly(system_program::ID, false),
-            AccountMeta::new_readonly(solana_program::sysvar::instructions::ID, false),
-        ],
-        CrpInstruction::FinalizeCheckpoint { sig_count: 2 },
-    );
     let tx = Transaction::new_signed_with_payer(
-        &[ed1, ed2, finalize_ix],
-        Some(&payer.pubkey()),
-        &[&payer],
-        recent_blockhash,
-    );
-    banks_client.process_transaction(tx).await.unwrap();
-
-    let cp_ai = banks_client.get_account(checkpoint).await.unwrap().unwrap();
-    let cp = CrpCheckpointV1::try_from_slice(&cp_ai.data).unwrap();
-    assert_eq!(cp.version, 1);
-    assert_eq!(cp.height, 42);
-    assert_eq!(cp.block_hash, block_hash);
-    assert_eq!(cp.orchard_root, orchard_root);
-    assert_eq!(cp.prev_hash, prev_hash);
-    assert!(cp.finalized);
-
-    // Pause.
-    let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
-    let pause_ix = ix(
-        program_id,
-        vec![
-            AccountMeta::new(payer.pubkey(), true),
-            AccountMeta::new(config, false),
+        &[
+            ed25519_ix(&op1, msg_a.as_ref()),
+            ed25519_ix(&op2, msg_b.as_ref()),
+            ix(
+                program_id,
+                vec![
+                    AccountMeta::new(payer.pubkey(), true),
+                    AccountMeta::new(config, false),
+                    AccountMeta::new_readonly(checkpoint_a, false),
+                    AccountMeta::new_readonly(checkpoint_b, false),
+                    AccountMeta::new(height_rec, false),
+                    AccountMeta::new_readonly(system_program::ID, false),
+                    AccountMeta::new_readonly(solana_program::sysvar::instructions::ID, false),
+                ],
+                CrpInstruction::MarkConflict { sig_count: 2 },
+            ),
         ],
-        CrpInstruction::SetPaused { paused: true },
-    );
-    let tx = Transaction::new_signed_with_payer(
-        &[pause_ix],
         Some(&payer.pubkey()),
         &[&payer],
         recent_blockhash,
@@ -168,6 +168,7 @@ async fn init_and_set_checkpoint_then_pause() {
     let orchard_root2 = [0x05u8; 32];
     let (checkpoint2, _bump) = checkpoint_pda(&program_id, &config, &orchard_root2);
     let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
+    let msg2 = observation_signing_bytes_v1(&deployment_id, 43, &[0x06u8; 32], &orchard_root2, &[0x07u8; 32]);
     let submit_ix = ix(
         program_id,
         vec![
@@ -185,7 +186,7 @@ async fn init_and_set_checkpoint_then_pause() {
         },
     );
     let tx = Transaction::new_signed_with_payer(
-        &[submit_ix],
+        &[ed25519_ix(&op1, msg2.as_ref()), submit_ix],
         Some(&payer.pubkey()),
         &[&payer],
         recent_blockhash,

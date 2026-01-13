@@ -51,13 +51,7 @@ pub enum CrpInstruction {
         finalization_delay_slots: u64,
         operators: Vec<Pubkey>,
     },
-    SetPaused { paused: bool },
-    SetOperators {
-        threshold: u8,
-        conflict_threshold: u8,
-        finalization_delay_slots: u64,
-        operators: Vec<Pubkey>,
-    },
+    SetOperators { operators: Vec<Pubkey> },
     SubmitObservation {
         height: u64,
         block_hash: [u8; 32],
@@ -151,20 +145,7 @@ pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: 
             finalization_delay_slots,
             operators,
         ),
-        CrpInstruction::SetPaused { paused } => process_set_paused(program_id, accounts, paused),
-        CrpInstruction::SetOperators {
-            threshold,
-            conflict_threshold,
-            finalization_delay_slots,
-            operators,
-        } => process_set_operators(
-            program_id,
-            accounts,
-            threshold,
-            conflict_threshold,
-            finalization_delay_slots,
-            operators,
-        ),
+        CrpInstruction::SetOperators { operators } => process_set_operators(program_id, accounts, operators),
         CrpInstruction::SubmitObservation {
             height,
             block_hash,
@@ -236,41 +217,7 @@ fn process_initialize(
         .map_err(|_| ProgramError::from(CrpError::InvalidAccountData))
 }
 
-fn process_set_paused(program_id: &Pubkey, accounts: &[AccountInfo], paused: bool) -> ProgramResult {
-    // Accounts:
-    // 0. admin (signer)
-    // 1. config (PDA, writable)
-    let mut iter = accounts.iter();
-    let admin = next_account_info(&mut iter)?;
-    let config_ai = next_account_info(&mut iter)?;
-
-    if !admin.is_signer {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-    if config_ai.owner != program_id {
-        return Err(CrpError::InvalidConfigOwner.into());
-    }
-
-    let mut cfg = CrpConfigV1::try_from_slice(&config_ai.data.borrow())
-        .map_err(|_| ProgramError::from(CrpError::InvalidAccountData))?;
-    validate_config_pda(program_id, config_ai, &cfg)?;
-    if cfg.admin != *admin.key {
-        return Err(CrpError::Unauthorized.into());
-    }
-
-    cfg.paused = paused;
-    cfg.serialize(&mut &mut config_ai.data.borrow_mut()[..])
-        .map_err(|_| ProgramError::from(CrpError::InvalidAccountData))
-}
-
-fn process_set_operators(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    threshold: u8,
-    conflict_threshold: u8,
-    finalization_delay_slots: u64,
-    operators: Vec<Pubkey>,
-) -> ProgramResult {
+fn process_set_operators(program_id: &Pubkey, accounts: &[AccountInfo], operators: Vec<Pubkey>) -> ProgramResult {
     // Accounts:
     // 0. admin (signer)
     // 1. config (PDA, writable)
@@ -293,10 +240,7 @@ fn process_set_operators(
     }
 
     let (operator_count, operator_array) =
-        validate_and_fill_operator_set(threshold, conflict_threshold, &operators)?;
-    cfg.threshold = threshold;
-    cfg.conflict_threshold = conflict_threshold;
-    cfg.finalization_delay_slots = finalization_delay_slots;
+        validate_and_fill_operator_set(cfg.threshold, cfg.conflict_threshold, &operators)?;
     cfg.operator_count = operator_count;
     cfg.operators = operator_array;
 

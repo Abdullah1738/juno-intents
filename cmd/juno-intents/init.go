@@ -149,7 +149,6 @@ func cmdInitIEP(argv []string) error {
 	var (
 		iepProgramStr string
 		deploymentHex string
-		adminStr      string
 		feeBps        uint
 		feeCollector  string
 		crpProgramStr string
@@ -161,7 +160,6 @@ func cmdInitIEP(argv []string) error {
 
 	fs.StringVar(&iepProgramStr, "iep-program-id", "", "IEP program id (base58)")
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
-	fs.StringVar(&adminStr, "admin", "", "Admin pubkey (base58)")
 	fs.UintVar(&feeBps, "fee-bps", 0, "Protocol fee bps (u16)")
 	fs.StringVar(&feeCollector, "fee-collector", "", "Fee collector pubkey (base58)")
 	fs.StringVar(&crpProgramStr, "checkpoint-registry-program", "", "CRP program id (base58)")
@@ -172,7 +170,7 @@ func cmdInitIEP(argv []string) error {
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
-	if iepProgramStr == "" || deploymentHex == "" || adminStr == "" || feeCollector == "" || crpProgramStr == "" || verifierStr == "" {
+	if iepProgramStr == "" || deploymentHex == "" || feeCollector == "" || crpProgramStr == "" || verifierStr == "" {
 		return errors.New("missing required args (see --help)")
 	}
 	if feeBps > 65_535 {
@@ -186,10 +184,6 @@ func cmdInitIEP(argv []string) error {
 	deploymentID, err := protocol.ParseDeploymentIDHex(strings.TrimPrefix(strings.TrimSpace(deploymentHex), "0x"))
 	if err != nil {
 		return fmt.Errorf("parse --deployment-id: %w", err)
-	}
-	admin, err := solana.ParsePubkey(adminStr)
-	if err != nil {
-		return fmt.Errorf("parse --admin: %w", err)
 	}
 	feeCollectorPK, err := solana.ParsePubkey(feeCollector)
 	if err != nil {
@@ -221,7 +215,7 @@ func cmdInitIEP(argv []string) error {
 			{Pubkey: cfgPDA, IsSigner: false, IsWritable: true},
 			{Pubkey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
 		},
-		Data: encodeIepInitialize([32]byte(deploymentID), admin, uint16(feeBps), feeCollectorPK, crpProgram, verifierProgram),
+		Data: encodeIepInitialize([32]byte(deploymentID), uint16(feeBps), feeCollectorPK, crpProgram, verifierProgram),
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -290,17 +284,15 @@ func encodeCrpInitialize(
 
 func encodeIepInitialize(
 	deploymentID [32]byte,
-	admin solana.Pubkey,
 	feeBps uint16,
 	feeCollector solana.Pubkey,
 	checkpointRegistryProgram solana.Pubkey,
 	receiptVerifierProgram solana.Pubkey,
 ) []byte {
 	// Borsh enum variant index (u8) for Initialize is 0.
-	out := make([]byte, 0, 1+32+32+2+32+32+32)
+	out := make([]byte, 0, 1+32+2+32+32+32)
 	out = append(out, 0)
 	out = append(out, deploymentID[:]...)
-	out = append(out, admin[:]...)
 
 	var tmp2 [2]byte
 	binary.LittleEndian.PutUint16(tmp2[:], feeBps)

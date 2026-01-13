@@ -555,9 +555,9 @@ func u64LE(v uint64) []byte {
 }
 
 func encodeCrpSubmitObservation(height uint64, blockHash [32]byte, orchardRoot [32]byte, prevHash [32]byte) []byte {
-	// Borsh enum variant index (u8) for SubmitObservation is 3.
+	// Borsh enum variant index (u8) for SubmitObservation is 2.
 	out := make([]byte, 0, 1+8+32+32+32)
-	out = append(out, 3)
+	out = append(out, 2)
 	out = append(out, u64LE(height)...)
 	out = append(out, blockHash[:]...)
 	out = append(out, orchardRoot[:]...)
@@ -566,8 +566,8 @@ func encodeCrpSubmitObservation(height uint64, blockHash [32]byte, orchardRoot [
 }
 
 func encodeCrpFinalize(sigCount uint8) []byte {
-	// Borsh enum variant index (u8) for FinalizeCheckpoint is 4.
-	return []byte{4, sigCount}
+	// Borsh enum variant index (u8) for FinalizeCheckpoint is 3.
+	return []byte{3, sigCount}
 }
 
 type crpCheckpointV1 struct {

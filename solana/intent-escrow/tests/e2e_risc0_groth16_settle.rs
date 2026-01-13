@@ -474,7 +474,6 @@ async fn settles_real_risc0_groth16_bundle_v1() {
         ],
         IepInstruction::Initialize {
             deployment_id: journal.deployment_id,
-            admin: payer.pubkey(),
             fee_bps: 25, // 0.25%
             fee_collector: fee_owner.pubkey(),
             checkpoint_registry_program: crp_program_id,
