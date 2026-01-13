@@ -5,4 +5,5 @@ go 1.22
 require (
 	filippo.io/edwards25519 v1.1.0
 	github.com/mr-tron/base58 v1.2.0
+	golang.org/x/sys v0.30.0
 )
