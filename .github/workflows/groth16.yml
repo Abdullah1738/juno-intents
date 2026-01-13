@@ -2,6 +2,15 @@ name: groth16
 
 on:
   workflow_dispatch:
+    inputs:
+      witness_source:
+        description: "Receipt witness source: regtest (generate) or secret (JUNO_RECEIPT_WITNESS_HEX)"
+        required: false
+        default: "regtest"
+        type: choice
+        options:
+          - regtest
+          - secret
 
 concurrency:
   group: groth16-${{ github.ref }}
@@ -141,7 +150,11 @@ jobs:
       - name: Set witness (secret or regtest)
         run: |
           set -euo pipefail
-          if [ -n "${JUNO_RECEIPT_WITNESS_HEX:-}" ]; then
+          if [ "${{ github.event.inputs.witness_source }}" = "secret" ]; then
+            if [ -z "${JUNO_RECEIPT_WITNESS_HEX:-}" ]; then
+              echo "witness_source=secret but JUNO_RECEIPT_WITNESS_HEX is not set" >&2
+              exit 1
+            fi
             echo "using JUNO_RECEIPT_WITNESS_HEX from secrets"
             exit 0
           fi
