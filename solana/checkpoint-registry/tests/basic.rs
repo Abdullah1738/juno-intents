@@ -9,8 +9,7 @@ use solana_sdk::{
 };
 
 use juno_intents_checkpoint_registry::{
-    checkpoint_pda, config_pda, height_pda, observation_signing_bytes_v1, CrpCheckpointV1, CrpConfigV1, CrpError,
-    CrpInstruction,
+    checkpoint_pda, config_pda, height_pda, observation_signing_bytes_v1, CrpConfigV1, CrpError, CrpInstruction,
 };
 
 fn ix(program_id: solana_sdk::pubkey::Pubkey, accounts: Vec<AccountMeta>, data: CrpInstruction) -> Instruction {
