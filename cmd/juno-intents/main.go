@@ -39,6 +39,10 @@ func run(argv []string) error {
 	switch argv[0] {
 	case "witness":
 		return cmdWitness(argv[1:])
+	case "witness-ci":
+		return cmdWitnessCI(argv[1:])
+	case "set-witness-secret":
+		return cmdSetWitnessSecret(argv[1:])
 	case "prove-ci":
 		return cmdProveCI(argv[1:])
 	case "pda":
@@ -53,11 +57,15 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  juno-intents witness [-- <wallet_witness_v1 args>]")
-	fmt.Fprintln(w, "  juno-intents prove-ci")
+	fmt.Fprintln(w, "  juno-intents witness-ci [-- <wallet_witness_v1 args>]")
+	fmt.Fprintln(w, "  juno-intents set-witness-secret [-- <wallet_witness_v1 args>]")
+	fmt.Fprintln(w, "  juno-intents prove-ci [--witness-source regtest|secret]")
 	fmt.Fprintln(w, "  juno-intents pda --program-id <pubkey> --deployment-id <hex32> --intent-nonce <hex32> [--print <field>]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  witness   Generate a v1 receipt witness hex from your local junocash wallet (prints hex to stdout).")
+	fmt.Fprintln(w, "  witness-ci Generate a v1 receipt witness hex for the deterministic e2e Fill PDA (prints hex to stdout).")
+	fmt.Fprintln(w, "  set-witness-secret Generate a v1 receipt witness hex for e2e and write it to the JUNO_RECEIPT_WITNESS_HEX GitHub Actions secret.")
 	fmt.Fprintln(w, "  prove-ci  Triggers a workflow_dispatch GPU prove run and watches it.")
 	fmt.Fprintln(w, "  pda       Prints the derived Intent/Fill PDAs for deterministic testing.")
 }
@@ -80,18 +88,70 @@ func cmdWitness(argv []string) error {
 	return nil
 }
 
+func cmdWitnessCI(argv []string) error {
+	fs := flag.NewFlagSet("witness-ci", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var cargo string
+	fs.StringVar(&cargo, "cargo", "cargo", "Path to cargo")
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+
+	pass := fs.Args()
+	witnessArgs := append(e2eWalletWitnessArgs(), pass...)
+	witnessHex, err := generateWitnessHex(cargo, witnessArgs)
+	if err != nil {
+		return err
+	}
+	fmt.Println(witnessHex)
+	return nil
+}
+
+func cmdSetWitnessSecret(argv []string) error {
+	fs := flag.NewFlagSet("set-witness-secret", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	var (
+		gh    string
+		cargo string
+		repo  string
+	)
+	fs.StringVar(&gh, "gh", "gh", "Path to GitHub CLI")
+	fs.StringVar(&cargo, "cargo", "cargo", "Path to cargo")
+	fs.StringVar(&repo, "repo", "", "Override target repo for secret set (OWNER/REPO)")
+
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+
+	pass := fs.Args()
+	witnessArgs := append(e2eWalletWitnessArgs(), pass...)
+	witnessHex, err := generateWitnessHex(cargo, witnessArgs)
+	if err != nil {
+		return err
+	}
+
+	if err := ghSecretSet(gh, repo, "JUNO_RECEIPT_WITNESS_HEX", witnessHex); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "updated secret JUNO_RECEIPT_WITNESS_HEX (len=%d)\n", len(witnessHex))
+	return nil
+}
+
 func cmdProveCI(argv []string) error {
 	fs := flag.NewFlagSet("prove-ci", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
 	var (
-		gh       string
-		workflow string
-		branch   string
+		gh            string
+		workflow      string
+		branch        string
+		witnessSource string
 	)
 	fs.StringVar(&gh, "gh", "gh", "Path to GitHub CLI")
 	fs.StringVar(&workflow, "workflow", defaultWorkflowFile, "Workflow file name (e.g. ci.yml)")
 	fs.StringVar(&branch, "branch", defaultBranch, "Git ref to dispatch (e.g. main)")
+	fs.StringVar(&witnessSource, "witness-source", "regtest", "Witness source input for groth16.yml: regtest or secret")
 
 	if err := fs.Parse(argv); err != nil {
 		return err
@@ -100,7 +160,11 @@ func cmdProveCI(argv []string) error {
 		return fmt.Errorf("unexpected args: %v", fs.Args())
 	}
 
-	if err := ghWorkflowDispatch(gh, workflow, branch); err != nil {
+	if workflow == defaultWorkflowFile && witnessSource != "regtest" && witnessSource != "secret" {
+		return fmt.Errorf("invalid --witness-source: %q (want regtest or secret)", witnessSource)
+	}
+
+	if err := ghWorkflowDispatch(gh, workflow, branch, witnessSource); err != nil {
 		return err
 	}
 
@@ -140,8 +204,12 @@ func generateWitnessHex(cargo string, walletWitnessArgs []string) (string, error
 	return witnessHex, nil
 }
 
-func ghWorkflowDispatch(gh, workflow, branch string) error {
-	cmd := exec.Command(gh, "workflow", "run", workflow, "--ref", branch)
+func ghWorkflowDispatch(gh, workflow, branch, witnessSource string) error {
+	args := []string{"workflow", "run", workflow, "--ref", branch}
+	if workflow == defaultWorkflowFile && witnessSource != "" {
+		args = append(args, "-f", "witness_source="+witnessSource)
+	}
+	cmd := exec.Command(gh, args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -198,5 +266,61 @@ func ghRunWatch(gh string, runID int64) error {
 	cmd := exec.Command(gh, "run", "watch", strconv.FormatInt(runID, 10), "--interval", "30")
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func repeatByte32(b byte) [32]byte {
+	var out [32]byte
+	for i := range out {
+		out[i] = b
+	}
+	return out
+}
+
+func e2eWalletWitnessArgs() []string {
+	// Keep this in sync with:
+	// - solana/intent-escrow/tests/e2e_risc0_groth16_settle.rs
+	iepProgramID := repeatByte32(0xA1)
+	deploymentID := repeatByte32(0x11)
+	intentNonce := repeatByte32(0x33)
+
+	_, _, err := findProgramAddress(
+		[][]byte{[]byte("config"), deploymentID[:]},
+		iepProgramID,
+	)
+	if err != nil {
+		panic(err)
+	}
+	intent, _, err := findProgramAddress(
+		[][]byte{[]byte("intent"), deploymentID[:], intentNonce[:]},
+		iepProgramID,
+	)
+	if err != nil {
+		panic(err)
+	}
+	fill, _, err := findProgramAddress(
+		[][]byte{[]byte("fill"), intent[:]},
+		iepProgramID,
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	return []string{
+		"--deployment-id", fmt.Sprintf("%x", deploymentID),
+		"--fill-id", fmt.Sprintf("%x", fill),
+	}
+}
+
+func ghSecretSet(gh, repo, name, value string) error {
+	args := []string{"secret", "set", name, "-a", "actions"}
+	if repo != "" {
+		args = append(args, "-R", repo)
+	}
+
+	cmd := exec.Command(gh, args...)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = strings.NewReader(value)
 	return cmd.Run()
 }

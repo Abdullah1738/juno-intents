@@ -1,4 +1,4 @@
-.PHONY: test test-go test-rust test-solana witness prove-ci prove-aws prove-aws-real prove-aws-synthetic regtest-up regtest-down regtest-witness
+.PHONY: test test-go test-rust test-solana witness witness-ci set-witness-secret prove-ci prove-ci-secret prove-aws prove-aws-real prove-aws-synthetic regtest-up regtest-down regtest-witness
 
 test: test-go test-rust test-solana
 
@@ -14,8 +14,17 @@ test-solana:
 witness:
 	go run ./cmd/juno-intents witness
 
+witness-ci:
+	go run ./cmd/juno-intents witness-ci
+
+set-witness-secret:
+	go run ./cmd/juno-intents set-witness-secret
+
 prove-ci:
 	go run ./cmd/juno-intents prove-ci
+
+prove-ci-secret:
+	go run ./cmd/juno-intents prove-ci --witness-source secret
 
 prove-aws:
 	scripts/aws/prove-groth16.sh
