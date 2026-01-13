@@ -171,9 +171,13 @@ cmds = [
     "sudo dnf install -y git docker python3",
     "sudo systemctl enable --now docker",
     "docker --version",
-    # Nitro CLI (package name differs across repos/versions).
-    "sudo dnf install -y aws-nitro-enclaves-cli || sudo dnf install -y nitro-enclaves-cli",
+    # Nitro CLI (package names differ across repos/versions).
+    "sudo dnf install -y aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel || sudo dnf install -y aws-nitro-enclaves-cli",
+    "sudo dnf install -y nitro-enclaves-cli nitro-enclaves-cli-devel || sudo dnf install -y nitro-enclaves-cli || true",
     "nitro-cli --version || true",
+    "nitro-cli build-enclave --help || true",
+    "ls -la /usr/share/nitro_enclaves || true",
+    "find /usr/share/nitro_enclaves -maxdepth 3 -type f | head -n 200 || true",
     f"rm -rf juno-intents && git clone https://github.com/{repo}.git juno-intents",
     "cd juno-intents",
     f"git checkout {ref}",
@@ -243,4 +247,3 @@ PY
 if [[ -n "${PY_OUT}" ]]; then
   echo "PCR0=${PY_OUT}" >&2
 fi
-
