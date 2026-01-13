@@ -52,10 +52,10 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "crp-operator: CheckpointRegistry operator tooling")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  crp-operator submit --crp-program-id <base58> --deployment-id <hex32> --height <u64> --block-hash <hex32> --orchard-root <hex32> --prev-hash <hex32> [--payer-keypair <path>] [--operator-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
-	fmt.Fprintln(w, "  crp-operator finalize --crp-program-id <base58> --deployment-id <hex32> --height <u64> --orchard-root <hex32> --operator-keypair <path> [--operator-keypair <path>...] [--payer-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
-	fmt.Fprintln(w, "  crp-operator deployments --crp-program-id <base58>")
-	fmt.Fprintln(w, "  crp-operator run --crp-program-id <base58> --deployment-id <hex32> --start-height <u64> --finalize-operator-keypair <path> [--junocash-cli <path>] [--junocash-cli-arg <arg>...] [--lag <u64>] [--poll-interval <duration>] [--payer-keypair <path>] [--submit-operator-keypair <path>] [--cu-limit-submit <u32>] [--cu-limit-finalize <u32>] [--priority-level <level>] [--dry-run] [--once]")
+	fmt.Fprintln(w, "  crp-operator submit   [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --height <u64> --block-hash <hex32> --orchard-root <hex32> --prev-hash <hex32> [--payer-keypair <path>] [--operator-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
+	fmt.Fprintln(w, "  crp-operator finalize [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --height <u64> --orchard-root <hex32> --operator-keypair <path> [--operator-keypair <path>...] [--payer-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
+	fmt.Fprintln(w, "  crp-operator deployments [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58>")
+	fmt.Fprintln(w, "  crp-operator run [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --start-height <u64> --finalize-operator-keypair <path> [--junocash-cli <path>] [--junocash-cli-arg <arg>...] [--lag <u64>] [--poll-interval <duration>] [--payer-keypair <path>] [--submit-operator-keypair <path>] [--cu-limit-submit <u32>] [--cu-limit-finalize <u32>] [--priority-level <level>] [--dry-run] [--once]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Environment:")
 	fmt.Fprintln(w, "  SOLANA_RPC_URL or HELIUS_RPC_URL or HELIUS_API_KEY/HELIUS_CLUSTER")
@@ -66,6 +66,9 @@ func cmdSubmit(argv []string) error {
 	fs.SetOutput(io.Discard)
 
 	var (
+		deploymentFile string
+		deploymentName string
+
 		crpProgramStr string
 		deploymentHex string
 		height        uint64
@@ -81,6 +84,8 @@ func cmdSubmit(argv []string) error {
 		dryRun        bool
 	)
 
+	fs.StringVar(&deploymentName, "deployment", "", "Deployment name from deployments.json (fills --crp-program-id/--deployment-id)")
+	fs.StringVar(&deploymentFile, "deployment-file", "deployments.json", "Deployments registry file path")
 	fs.StringVar(&crpProgramStr, "crp-program-id", "", "CRP program id (base58)")
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
 	fs.Uint64Var(&height, "height", 0, "JunoCash height")
@@ -95,6 +100,9 @@ func cmdSubmit(argv []string) error {
 	fs.BoolVar(&dryRun, "dry-run", false, "If set, prints the base64 tx instead of sending it")
 
 	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if err := applyDeploymentRegistryDefaults(deploymentFile, deploymentName, &crpProgramStr, &deploymentHex); err != nil {
 		return err
 	}
 	if crpProgramStr == "" || deploymentHex == "" || blockHashHex == "" || orchardHex == "" || prevHashHex == "" {
@@ -241,6 +249,9 @@ func cmdFinalize(argv []string) error {
 	fs.SetOutput(io.Discard)
 
 	var (
+		deploymentFile string
+		deploymentName string
+
 		crpProgramStr string
 		deploymentHex string
 		height        uint64
@@ -255,6 +266,8 @@ func cmdFinalize(argv []string) error {
 		dryRun        bool
 	)
 
+	fs.StringVar(&deploymentName, "deployment", "", "Deployment name from deployments.json (fills --crp-program-id/--deployment-id)")
+	fs.StringVar(&deploymentFile, "deployment-file", "deployments.json", "Deployments registry file path")
 	fs.StringVar(&crpProgramStr, "crp-program-id", "", "CRP program id (base58)")
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
 	fs.Uint64Var(&height, "height", 0, "JunoCash height")
@@ -267,6 +280,9 @@ func cmdFinalize(argv []string) error {
 	fs.BoolVar(&dryRun, "dry-run", false, "If set, prints the base64 tx instead of sending it")
 
 	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if err := applyDeploymentRegistryDefaults(deploymentFile, deploymentName, &crpProgramStr, &deploymentHex); err != nil {
 		return err
 	}
 	if crpProgramStr == "" || deploymentHex == "" || orchardHex == "" || len(operatorPaths) == 0 {
@@ -436,10 +452,19 @@ func cmdDeployments(argv []string) error {
 	fs := flag.NewFlagSet("deployments", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
-	var crpProgramStr string
+	var (
+		deploymentFile string
+		deploymentName string
+		crpProgramStr  string
+	)
+	fs.StringVar(&deploymentName, "deployment", "", "Deployment name from deployments.json (fills --crp-program-id)")
+	fs.StringVar(&deploymentFile, "deployment-file", "deployments.json", "Deployments registry file path")
 	fs.StringVar(&crpProgramStr, "crp-program-id", "", "CRP program id (base58)")
 
 	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if err := applyDeploymentRegistryDefaults(deploymentFile, deploymentName, &crpProgramStr, nil); err != nil {
 		return err
 	}
 	if crpProgramStr == "" {
@@ -655,6 +680,9 @@ func cmdRun(argv []string) error {
 	fs.SetOutput(io.Discard)
 
 	var (
+		deploymentFile string
+		deploymentName string
+
 		crpProgramStr string
 		deploymentHex string
 
@@ -676,6 +704,8 @@ func cmdRun(argv []string) error {
 		once            bool
 	)
 
+	fs.StringVar(&deploymentName, "deployment", "", "Deployment name from deployments.json (fills --crp-program-id/--deployment-id)")
+	fs.StringVar(&deploymentFile, "deployment-file", "deployments.json", "Deployments registry file path")
 	fs.StringVar(&crpProgramStr, "crp-program-id", "", "CRP program id (base58)")
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
 	fs.StringVar(&junocashPath, "junocash-cli", "junocash-cli", "Path to junocash-cli")
@@ -693,6 +723,9 @@ func cmdRun(argv []string) error {
 	fs.BoolVar(&once, "once", false, "If set, runs one poll cycle and exits")
 
 	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if err := applyDeploymentRegistryDefaults(deploymentFile, deploymentName, &crpProgramStr, &deploymentHex); err != nil {
 		return err
 	}
 	if crpProgramStr == "" || deploymentHex == "" {
