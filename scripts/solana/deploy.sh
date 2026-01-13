@@ -18,9 +18,6 @@ CRP_CONFLICT_THRESHOLD="2"
 CRP_FINALIZATION_DELAY_SLOTS="0"
 CRP_OPERATORS=()
 
-UPGRADE_MODE="set" # set (default) | final
-NEW_UPGRADE_AUTHORITY_PUBKEY=""
-
 SKIP_BUILD="false"
 PUSH="false"
 
@@ -36,7 +33,6 @@ Usage:
     [--rpc-url <url>] \
     [--fee-bps <u16>] \
     [--threshold <u8>] [--conflict-threshold <u8>] [--finalization-delay-slots <u64>] \
-    [--upgrade final|set] [--new-upgrade-authority <pubkey>] \
     [--refund-to <pubkey>] \
     [--name <string>] \
     [--skip-build] \
@@ -46,7 +42,7 @@ Notes:
   - Creates a fresh disposable payer keypair under tmp/ and deletes it on success.
   - Uses Solana CLI for build+deploy; uses Go tooling for program initialization.
   - Records deployment outputs into deployments.json (tracked). You should review before pushing.
-  - Default: sets program upgrade authority to --admin (upgradeable). Use --upgrade final to lock programs.
+  - Programs are ALWAYS deployed immutable (upgrade authority set to --final).
 USAGE
 }
 
@@ -80,10 +76,6 @@ while [[ $# -gt 0 ]]; do
       CRP_CONFLICT_THRESHOLD="${2:-}"; shift 2 ;;
     --finalization-delay-slots)
       CRP_FINALIZATION_DELAY_SLOTS="${2:-}"; shift 2 ;;
-    --upgrade)
-      UPGRADE_MODE="${2:-}"; shift 2 ;;
-    --new-upgrade-authority)
-      NEW_UPGRADE_AUTHORITY_PUBKEY="${2:-}"; shift 2 ;;
     --skip-build)
       SKIP_BUILD="true"; shift 1 ;;
     --push)
@@ -124,17 +116,6 @@ if [[ -z "${FEE_COLLECTOR_PUBKEY}" ]]; then
 fi
 if [[ "${#CRP_OPERATORS[@]}" -lt 2 ]]; then
   echo "need at least two --operator pubkeys (CRP conflict threshold requires >=2 operators)" >&2
-  exit 2
-fi
-if [[ "${UPGRADE_MODE}" != "final" && "${UPGRADE_MODE}" != "set" ]]; then
-  echo "--upgrade must be final|set" >&2
-  exit 2
-fi
-if [[ "${UPGRADE_MODE}" == "set" && -z "${NEW_UPGRADE_AUTHORITY_PUBKEY}" ]]; then
-  NEW_UPGRADE_AUTHORITY_PUBKEY="${ADMIN_PUBKEY}"
-fi
-if [[ "${UPGRADE_MODE}" == "set" && -z "${NEW_UPGRADE_AUTHORITY_PUBKEY}" ]]; then
-  echo "--new-upgrade-authority is required when --upgrade set (or provide --admin)" >&2
   exit 2
 fi
 
@@ -256,7 +237,7 @@ else
   echo "warning: could not parse solana rent output; using conservative default: 5 SOL" >&2
 fi
 
-need_sol="$(python3 - <<PY\nneed=${need_lamports}\nprint(f\"{need/1e9:.4f}\")\nPY\n)"
+need_sol="$(python3 -c 'import sys; need=int(sys.argv[1]); print(f"{need/1e9:.4f}")' "${need_lamports}")"
 echo "estimated required balance: ~${need_sol} SOL (${need_lamports} lamports)" >&2
 
 get_balance_lamports() {
@@ -315,17 +296,10 @@ solana -u "${RPC_URL}" program deploy "${RV_SO}" \
   --program-id "${RV_KEYPAIR}" \
   --upgrade-authority "${PAYER_KEYPAIR}"
 
-if [[ "${UPGRADE_MODE}" == "final" ]]; then
-  echo "finalizing program upgrade authorities..." >&2
-  solana -u "${RPC_URL}" program set-upgrade-authority "${CRP_PROGRAM_ID}" --final --keypair "${PAYER_KEYPAIR}"
-  solana -u "${RPC_URL}" program set-upgrade-authority "${IEP_PROGRAM_ID}" --final --keypair "${PAYER_KEYPAIR}"
-  solana -u "${RPC_URL}" program set-upgrade-authority "${RV_PROGRAM_ID}" --final --keypair "${PAYER_KEYPAIR}"
-else
-  echo "setting program upgrade authority: ${NEW_UPGRADE_AUTHORITY_PUBKEY}" >&2
-  solana -u "${RPC_URL}" program set-upgrade-authority "${CRP_PROGRAM_ID}" --new-upgrade-authority "${NEW_UPGRADE_AUTHORITY_PUBKEY}" --keypair "${PAYER_KEYPAIR}"
-  solana -u "${RPC_URL}" program set-upgrade-authority "${IEP_PROGRAM_ID}" --new-upgrade-authority "${NEW_UPGRADE_AUTHORITY_PUBKEY}" --keypair "${PAYER_KEYPAIR}"
-  solana -u "${RPC_URL}" program set-upgrade-authority "${RV_PROGRAM_ID}" --new-upgrade-authority "${NEW_UPGRADE_AUTHORITY_PUBKEY}" --keypair "${PAYER_KEYPAIR}"
-fi
+echo "finalizing program upgrade authorities (immutable)..." >&2
+solana -u "${RPC_URL}" program set-upgrade-authority "${CRP_PROGRAM_ID}" --final --keypair "${PAYER_KEYPAIR}"
+solana -u "${RPC_URL}" program set-upgrade-authority "${IEP_PROGRAM_ID}" --final --keypair "${PAYER_KEYPAIR}"
+solana -u "${RPC_URL}" program set-upgrade-authority "${RV_PROGRAM_ID}" --final --keypair "${PAYER_KEYPAIR}"
 
 echo "initializing CRP config..." >&2
 INIT_CRP_ARGS=(
@@ -377,9 +351,7 @@ export DEPLOY_RECORD_FEE_COLLECTOR="${FEE_COLLECTOR_PUBKEY}"
 export DEPLOY_RECORD_CRP_THRESHOLD="${CRP_THRESHOLD}"
 export DEPLOY_RECORD_CRP_CONFLICT_THRESHOLD="${CRP_CONFLICT_THRESHOLD}"
 export DEPLOY_RECORD_CRP_DELAY_SLOTS="${CRP_FINALIZATION_DELAY_SLOTS}"
-export DEPLOY_RECORD_CRP_OPERATORS_JSON="$(python3 - "${CRP_OPERATORS[@]}" <<'PY'\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\nPY\n)"
-export DEPLOY_RECORD_UPGRADE_MODE="${UPGRADE_MODE}"
-export DEPLOY_RECORD_NEW_UPGRADE_AUTHORITY="${NEW_UPGRADE_AUTHORITY_PUBKEY}"
+export DEPLOY_RECORD_CRP_OPERATORS_JSON="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "${CRP_OPERATORS[@]}")"
 
 python3 - <<'PY'
 import json
@@ -412,8 +384,7 @@ entry = {
     "crp_conflict_threshold": int(os.environ["DEPLOY_RECORD_CRP_CONFLICT_THRESHOLD"]),
     "crp_finalization_delay_slots": int(os.environ["DEPLOY_RECORD_CRP_DELAY_SLOTS"]),
     "crp_operators": json.loads(os.environ["DEPLOY_RECORD_CRP_OPERATORS_JSON"]),
-    "upgrade_mode": os.environ["DEPLOY_RECORD_UPGRADE_MODE"],
-    "new_upgrade_authority": os.environ["DEPLOY_RECORD_NEW_UPGRADE_AUTHORITY"],
+    "upgrade_mode": "final",
 }
 
 reg.setdefault("deployments", [])
