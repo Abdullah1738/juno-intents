@@ -203,3 +203,10 @@ func (c *Client) AccountDataBase64(ctx context.Context, pubkey string) ([]byte, 
 	return b, nil
 }
 
+func (c *Client) Slot(ctx context.Context) (uint64, error) {
+	var resp uint64
+	if err := c.rpcCall(ctx, "getSlot", []any{map[string]any{"commitment": "processed"}}, &resp); err != nil {
+		return 0, err
+	}
+	return resp, nil
+}

@@ -62,3 +62,41 @@ func TestDecodeCrpCheckpointV1_Golden(t *testing.T) {
 	}
 }
 
+func TestDecodeCrpConfigV1_Golden(t *testing.T) {
+	const wantLen = 1 + 32 + 32 + 1 + 1 + 8 + 1 + (32 * 32) + 1
+	b := make([]byte, wantLen)
+	b[0] = 1 // version
+	for i := 0; i < 32; i++ {
+		b[1+i] = 0x11  // deployment id
+		b[33+i] = 0x22 // admin
+	}
+	b[65] = 3 // threshold
+	b[66] = 5 // conflict threshold
+	// finalization_delay_slots = 9
+	b[67] = 9
+	b[75] = 2 // operator_count
+	// operators start at 76
+	off := 76
+	for i := 0; i < 32; i++ {
+		b[off+i] = 0x44
+		b[off+32+i] = 0x55
+	}
+	// paused
+	b[wantLen-1] = 0
+
+	out, err := decodeCrpConfigV1(b)
+	if err != nil {
+		t.Fatalf("decodeCrpConfigV1: %v", err)
+	}
+	if out.Version != 1 || out.Threshold != 3 || out.ConflictThreshold != 5 || out.FinalizationDelaySlots != 9 || out.OperatorCount != 2 || out.Paused {
+		t.Fatalf("unexpected decoded fields: %+v", out)
+	}
+	for i := 0; i < 32; i++ {
+		if out.DeploymentID[i] != 0x11 || out.Admin[i] != 0x22 {
+			t.Fatalf("id mismatch at %d", i)
+		}
+		if out.Operators[0][i] != 0x44 || out.Operators[1][i] != 0x55 {
+			t.Fatalf("operator mismatch at %d", i)
+		}
+	}
+}

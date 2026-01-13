@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Abdullah1738/juno-intents/offchain/helius"
+	"github.com/Abdullah1738/juno-intents/offchain/junocashcli"
 	"github.com/Abdullah1738/juno-intents/offchain/solana"
 	"github.com/Abdullah1738/juno-intents/offchain/solanarpc"
 	"github.com/Abdullah1738/juno-intents/offchain/solvernet"
@@ -37,6 +39,8 @@ func run(argv []string) error {
 		return cmdSubmit(argv[1:])
 	case "finalize":
 		return cmdFinalize(argv[1:])
+	case "run":
+		return cmdRun(argv[1:])
 	default:
 		return fmt.Errorf("unknown command: %s", argv[0])
 	}
@@ -48,6 +52,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  crp-operator submit --crp-program-id <base58> --deployment-id <hex32> --height <u64> --block-hash <hex32> --orchard-root <hex32> --prev-hash <hex32> [--payer-keypair <path>] [--operator-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
 	fmt.Fprintln(w, "  crp-operator finalize --crp-program-id <base58> --deployment-id <hex32> --height <u64> --orchard-root <hex32> --operator-keypair <path> [--operator-keypair <path>...] [--payer-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
+	fmt.Fprintln(w, "  crp-operator run --crp-program-id <base58> --deployment-id <hex32> --start-height <u64> --finalize-operator-keypair <path> [--junocash-cli <path>] [--junocash-cli-arg <arg>...] [--lag <u64>] [--poll-interval <duration>] [--payer-keypair <path>] [--submit-operator-keypair <path>] [--cu-limit-submit <u32>] [--cu-limit-finalize <u32>] [--priority-level <level>] [--dry-run] [--once]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Environment:")
 	fmt.Fprintln(w, "  SOLANA_RPC_URL or HELIUS_RPC_URL or HELIUS_API_KEY/HELIUS_CLUSTER")
@@ -163,8 +168,9 @@ func cmdSubmit(argv []string) error {
 	defer cancel()
 
 	var microLamports uint64
+	var feeKeys []string
 	if hc, err := helius.ClientFromEnv(); err == nil {
-		keys := []string{
+		feeKeys = []string{
 			solana.Pubkey(payerPub).Base58(),
 			cfg.Base58(),
 			checkpoint.Base58(),
@@ -174,7 +180,7 @@ func cmdSubmit(argv []string) error {
 			solana.Pubkey(crpProgram).Base58(),
 		}
 		est, err := hc.GetPriorityFeeEstimateByAccountKeys(ctx, helius.PriorityFeeEstimateByAccountKeysRequest{
-			AccountKeys: keys,
+			AccountKeys: feeKeys,
 			Options: &helius.PriorityFeeOptions{
 				PriorityLevel: helius.PriorityLevel(priorityLevel),
 				Recommended:   true,
@@ -213,6 +219,9 @@ func cmdSubmit(argv []string) error {
 	}
 
 	if dryRun {
+		if microLamports != 0 {
+			fmt.Fprintf(os.Stderr, "priority_fee: cu_limit=%d microLamports=%d keys=%s\n", cuLimit, microLamports, strings.Join(feeKeys, ","))
+		}
 		fmt.Println(base64Std(tx))
 		return nil
 	}
@@ -344,8 +353,9 @@ func cmdFinalize(argv []string) error {
 
 	// Optional: estimate priority fee via Helius.
 	var microLamports uint64
+	var feeKeys []string
 	if hc, err := helius.ClientFromEnv(); err == nil {
-		keys := []string{
+		feeKeys = []string{
 			solana.Pubkey(payerPub).Base58(),
 			cfg.Base58(),
 			checkpoint.Base58(),
@@ -356,7 +366,7 @@ func cmdFinalize(argv []string) error {
 			solana.Pubkey(crpProgram).Base58(),
 		}
 		est, err := hc.GetPriorityFeeEstimateByAccountKeys(ctx, helius.PriorityFeeEstimateByAccountKeysRequest{
-			AccountKeys: keys,
+			AccountKeys: feeKeys,
 			Options: &helius.PriorityFeeOptions{
 				PriorityLevel: helius.PriorityLevel(priorityLevel),
 				Recommended:   true,
@@ -405,6 +415,9 @@ func cmdFinalize(argv []string) error {
 	}
 
 	if dryRun {
+		if microLamports != 0 {
+			fmt.Fprintf(os.Stderr, "priority_fee: cu_limit=%d microLamports=%d keys=%s\n", cuLimit, microLamports, strings.Join(feeKeys, ","))
+		}
 		fmt.Println(base64Std(tx))
 		return nil
 	}
@@ -503,6 +516,41 @@ func decodeCrpCheckpointV1(b []byte) (crpCheckpointV1, error) {
 	return out, nil
 }
 
+type crpConfigV1 struct {
+	Version              uint8
+	DeploymentID         [32]byte
+	Admin                [32]byte
+	Threshold            uint8
+	ConflictThreshold    uint8
+	FinalizationDelaySlots uint64
+	OperatorCount        uint8
+	Operators            [32][32]byte
+	Paused               bool
+}
+
+func decodeCrpConfigV1(b []byte) (crpConfigV1, error) {
+	const wantLen = 1 + 32 + 32 + 1 + 1 + 8 + 1 + (32 * 32) + 1
+	if len(b) < wantLen {
+		return crpConfigV1{}, fmt.Errorf("config too short: %d < %d", len(b), wantLen)
+	}
+
+	var out crpConfigV1
+	out.Version = b[0]
+	copy(out.DeploymentID[:], b[1:33])
+	copy(out.Admin[:], b[33:65])
+	out.Threshold = b[65]
+	out.ConflictThreshold = b[66]
+	out.FinalizationDelaySlots = binary.LittleEndian.Uint64(b[67:75])
+	out.OperatorCount = b[75]
+	off := 76
+	for i := 0; i < 32; i++ {
+		copy(out.Operators[i][:], b[off:off+32])
+		off += 32
+	}
+	out.Paused = b[wantLen-1] != 0
+	return out, nil
+}
+
 func base64Std(b []byte) string {
 	const enc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 	return base64Encode(enc, b)
@@ -545,3 +593,453 @@ func base64Encode(encoding string, src []byte) string {
 	return string(dst)
 }
 
+func cmdRun(argv []string) error {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	var (
+		crpProgramStr string
+		deploymentHex string
+
+		junocashPath string
+		junocashArgs multiString
+
+		startHeight uint64
+		lag         uint64
+		pollInterval time.Duration
+
+		payerPath        string
+		submitOperatorPath string
+		finalizeOperatorPaths multiString
+
+		cuLimitSubmit   uint
+		cuLimitFinalize uint
+		priorityLevel   string
+		dryRun          bool
+		once            bool
+	)
+
+	fs.StringVar(&crpProgramStr, "crp-program-id", "", "CRP program id (base58)")
+	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
+	fs.StringVar(&junocashPath, "junocash-cli", "junocash-cli", "Path to junocash-cli")
+	fs.Var(&junocashArgs, "junocash-cli-arg", "Extra argument passed to junocash-cli (repeatable)")
+	fs.Uint64Var(&startHeight, "start-height", 0, "First JunoCash height to observe")
+	fs.Uint64Var(&lag, "lag", 10, "Only publish checkpoints at heights <= tip-lag (reorg safety)")
+	fs.DurationVar(&pollInterval, "poll-interval", 10*time.Second, "Poll interval (e.g. 5s, 30s)")
+	fs.StringVar(&payerPath, "payer-keypair", solvernet.DefaultSolanaKeypairPath(), "Payer Solana keypair path (Solana CLI JSON format)")
+	fs.StringVar(&submitOperatorPath, "submit-operator-keypair", solvernet.DefaultSolanaKeypairPath(), "Submitter operator keypair (ed25519; Solana CLI JSON format)")
+	fs.Var(&finalizeOperatorPaths, "finalize-operator-keypair", "Finalizer operator keypair (repeatable; Solana CLI JSON format)")
+	fs.UintVar(&cuLimitSubmit, "cu-limit-submit", 200_000, "Compute unit limit for SubmitObservation tx")
+	fs.UintVar(&cuLimitFinalize, "cu-limit-finalize", 250_000, "Compute unit limit for FinalizeCheckpoint tx")
+	fs.StringVar(&priorityLevel, "priority-level", string(helius.PriorityMedium), "Priority level (Min/Low/Medium/High/VeryHigh/UnsafeMax)")
+	fs.BoolVar(&dryRun, "dry-run", false, "If set, prints base64 txs instead of sending them")
+	fs.BoolVar(&once, "once", false, "If set, runs one poll cycle and exits")
+
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if crpProgramStr == "" || deploymentHex == "" {
+		return errors.New("--crp-program-id and --deployment-id are required")
+	}
+	if pollInterval <= 0 {
+		return errors.New("--poll-interval must be > 0")
+	}
+	if lag == 0 {
+		return errors.New("--lag must be > 0 (reorg safety)")
+	}
+	if len(finalizeOperatorPaths) == 0 {
+		return errors.New("at least one --finalize-operator-keypair is required")
+	}
+
+	crpProgram, err := solana.ParsePubkey(crpProgramStr)
+	if err != nil {
+		return fmt.Errorf("parse --crp-program-id: %w", err)
+	}
+	deploymentID, err := protocol.ParseDeploymentIDHex(strings.TrimPrefix(strings.TrimSpace(deploymentHex), "0x"))
+	if err != nil {
+		return fmt.Errorf("parse --deployment-id: %w", err)
+	}
+
+	payerPriv, payerPub, err := solvernet.LoadSolanaKeypair(payerPath)
+	if err != nil {
+		return fmt.Errorf("load payer keypair: %w", err)
+	}
+	submitterPriv, submitterPub, err := solvernet.LoadSolanaKeypair(submitOperatorPath)
+	if err != nil {
+		return fmt.Errorf("load submitter keypair: %w", err)
+	}
+
+	var finalizePrivs []ed25519.PrivateKey
+	for _, p := range finalizeOperatorPaths {
+		opPriv, _, err := solvernet.LoadSolanaKeypair(p)
+		if err != nil {
+			return fmt.Errorf("load finalizer keypair %q: %w", p, err)
+		}
+		finalizePrivs = append(finalizePrivs, opPriv)
+	}
+
+	jc := junocashcli.New(junocashPath, []string(junocashArgs))
+
+	rpc, err := solanarpc.ClientFromEnv()
+	if err != nil {
+		return err
+	}
+
+	cfgPDA, _, err := solana.FindProgramAddress([][]byte{[]byte("config"), deploymentID[:]}, solana.Pubkey(crpProgram))
+	if err != nil {
+		return fmt.Errorf("derive config pda: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	cfgRaw, err := rpc.AccountDataBase64(ctx, cfgPDA.Base58())
+	if err != nil {
+		return fmt.Errorf("fetch config: %w", err)
+	}
+	cfg, err := decodeCrpConfigV1(cfgRaw)
+	if err != nil {
+		return fmt.Errorf("decode config: %w", err)
+	}
+	if cfg.Paused {
+		return errors.New("crp config is paused")
+	}
+	if cfg.DeploymentID != deploymentID {
+		return errors.New("crp deployment_id mismatch")
+	}
+	if cfg.Threshold == 0 {
+		return errors.New("crp config threshold=0")
+	}
+	if uint8(len(finalizePrivs)) < cfg.Threshold {
+		return fmt.Errorf("need at least %d finalize keypairs, got %d", cfg.Threshold, len(finalizePrivs))
+	}
+
+	var heliusClient *helius.Client
+	if hc, err := helius.ClientFromEnv(); err == nil {
+		heliusClient = hc
+	}
+
+	type pendingCheckpoint struct {
+		Height      uint64
+		OrchardRoot [32]byte
+	}
+	var pending []pendingCheckpoint
+
+	nextHeight := startHeight
+
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+
+		tip, err := jc.BlockCount(ctx)
+		if err != nil {
+			cancel()
+			return err
+		}
+		if tip <= lag {
+			cancel()
+			if once {
+				return nil
+			}
+			time.Sleep(pollInterval)
+			continue
+		}
+		maxHeight := tip - lag
+
+		for nextHeight <= maxHeight {
+			bh, err := jc.BlockHash(ctx, nextHeight)
+			if err != nil {
+				cancel()
+				return err
+			}
+			blk, err := jc.Block(ctx, bh)
+			if err != nil {
+				cancel()
+				return err
+			}
+			if blk.Hash == "" {
+				cancel()
+				return errors.New("junocash getblock returned empty hash")
+			}
+			if blk.FinalOrchardRoot == "" {
+				cancel()
+				return errors.New("junocash getblock returned empty finalorchardroot (NU5 inactive?)")
+			}
+			if blk.PreviousBlockHash == "" && nextHeight != 0 {
+				cancel()
+				return errors.New("junocash getblock returned empty previousblockhash")
+			}
+
+			blockHash, err := parseHex32(blk.Hash)
+			if err != nil {
+				cancel()
+				return fmt.Errorf("parse block hash: %w", err)
+			}
+			orchardRoot, err := parseHex32(blk.FinalOrchardRoot)
+			if err != nil {
+				cancel()
+				return fmt.Errorf("parse finalorchardroot: %w", err)
+			}
+
+			var prevHash [32]byte
+			if nextHeight != 0 {
+				prevHash, err = parseHex32(blk.PreviousBlockHash)
+				if err != nil {
+					cancel()
+					return fmt.Errorf("parse previousblockhash: %w", err)
+				}
+			}
+
+			obs := protocol.CheckpointObservation{
+				Height:      nextHeight,
+				BlockHash:   protocol.JunoBlockHash(blockHash),
+				OrchardRoot: protocol.OrchardRoot(orchardRoot),
+				PrevHash:    protocol.JunoBlockHash(prevHash),
+			}
+			signingBytes := obs.SigningBytes(deploymentID)
+			sig := ed25519.Sign(ed25519.PrivateKey(submitterPriv), signingBytes)
+			var sig64 [64]byte
+			copy(sig64[:], sig)
+
+			checkpoint, _, err := solana.FindProgramAddress(
+				[][]byte{[]byte("checkpoint"), cfgPDA[:], orchardRoot[:]},
+				solana.Pubkey(crpProgram),
+			)
+			if err != nil {
+				cancel()
+				return fmt.Errorf("derive checkpoint pda: %w", err)
+			}
+
+			feeKeys := []string{
+				solana.Pubkey(payerPub).Base58(),
+				cfgPDA.Base58(),
+				checkpoint.Base58(),
+				solana.SystemProgramID.Base58(),
+				solana.InstructionsSysvarID.Base58(),
+				solana.Ed25519ProgramID.Base58(),
+				solana.Pubkey(crpProgram).Base58(),
+			}
+
+			var microLamports uint64
+			if heliusClient != nil {
+				est, err := heliusClient.GetPriorityFeeEstimateByAccountKeys(ctx, helius.PriorityFeeEstimateByAccountKeysRequest{
+					AccountKeys: feeKeys,
+					Options: &helius.PriorityFeeOptions{
+						PriorityLevel: helius.PriorityLevel(priorityLevel),
+						Recommended:   true,
+					},
+				})
+				if err == nil {
+					microLamports = est.MicroLamports
+				}
+			}
+
+			var ixs []solana.Instruction
+			if cuLimitSubmit != 0 {
+				ixs = append(ixs, solana.ComputeBudgetSetComputeUnitLimit(uint32(cuLimitSubmit)))
+			}
+			if microLamports != 0 {
+				ixs = append(ixs, solana.ComputeBudgetSetComputeUnitPrice(microLamports))
+			}
+			ixs = append(ixs,
+				solana.Ed25519VerifyInstruction(sig64, solana.Pubkey(submitterPub), signingBytes),
+				solana.Instruction{
+					ProgramID: solana.Pubkey(crpProgram),
+					Accounts: []solana.AccountMeta{
+						{Pubkey: solana.Pubkey(payerPub), IsSigner: true, IsWritable: true},
+						{Pubkey: cfgPDA, IsSigner: false, IsWritable: false},
+						{Pubkey: checkpoint, IsSigner: false, IsWritable: true},
+						{Pubkey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
+						{Pubkey: solana.InstructionsSysvarID, IsSigner: false, IsWritable: false},
+					},
+					Data: encodeCrpSubmitObservation(nextHeight, blockHash, orchardRoot, prevHash),
+				},
+			)
+
+			bhSol, err := rpc.LatestBlockhash(ctx)
+			if err != nil {
+				cancel()
+				return err
+			}
+			tx, err := solana.BuildAndSignLegacyTransaction(
+				bhSol,
+				solana.Pubkey(payerPub),
+				map[solana.Pubkey]ed25519.PrivateKey{solana.Pubkey(payerPub): payerPriv},
+				ixs,
+			)
+			if err != nil {
+				cancel()
+				return err
+			}
+
+			fmt.Fprintf(os.Stderr, "submit height=%d orchard_root=%x\n", nextHeight, orchardRoot)
+			if dryRun {
+				if microLamports != 0 {
+					fmt.Fprintf(os.Stderr, "priority_fee: cu_limit=%d microLamports=%d keys=%s\n", cuLimitSubmit, microLamports, strings.Join(feeKeys, ","))
+				}
+				fmt.Println(base64Std(tx))
+			} else {
+				sigStr, err := rpc.SendTransaction(ctx, tx, false)
+				if err != nil {
+					cancel()
+					return err
+				}
+				fmt.Fprintf(os.Stderr, "tx %s\n", sigStr)
+			}
+
+			pending = append(pending, pendingCheckpoint{Height: nextHeight, OrchardRoot: orchardRoot})
+			nextHeight++
+		}
+
+		curSlot, err := rpc.Slot(ctx)
+		if err != nil {
+			cancel()
+			return err
+		}
+
+		for i := 0; i < len(pending); {
+			p := pending[i]
+
+			checkpoint, _, err := solana.FindProgramAddress(
+				[][]byte{[]byte("checkpoint"), cfgPDA[:], p.OrchardRoot[:]},
+				solana.Pubkey(crpProgram),
+			)
+			if err != nil {
+				cancel()
+				return err
+			}
+			cpRaw, err := rpc.AccountDataBase64(ctx, checkpoint.Base58())
+			if err != nil {
+				i++
+				continue
+			}
+			cp, err := decodeCrpCheckpointV1(cpRaw)
+			if err != nil {
+				cancel()
+				return err
+			}
+			if cp.Finalized {
+				pending = append(pending[:i], pending[i+1:]...)
+				continue
+			}
+			if curSlot < cp.FirstSeenSlot+cfg.FinalizationDelaySlots {
+				i++
+				continue
+			}
+
+			heightRec, _, err := solana.FindProgramAddress(
+				[][]byte{[]byte("height"), cfgPDA[:], u64LE(cp.Height)},
+				solana.Pubkey(crpProgram),
+			)
+			if err != nil {
+				cancel()
+				return err
+			}
+
+			obs := protocol.CheckpointObservation{
+				Height:      cp.Height,
+				BlockHash:   protocol.JunoBlockHash(cp.BlockHash),
+				OrchardRoot: protocol.OrchardRoot(cp.OrchardRoot),
+				PrevHash:    protocol.JunoBlockHash(cp.PrevHash),
+			}
+			signingBytes := obs.SigningBytes(deploymentID)
+
+			var edIxs []solana.Instruction
+			for _, priv := range finalizePrivs[:cfg.Threshold] {
+				pub := priv.Public().(ed25519.PublicKey)
+				var pk [32]byte
+				copy(pk[:], pub)
+				sig := ed25519.Sign(priv, signingBytes)
+				var sig64 [64]byte
+				copy(sig64[:], sig)
+				edIxs = append(edIxs, solana.Ed25519VerifyInstruction(sig64, solana.Pubkey(pk), signingBytes))
+			}
+
+			feeKeys := []string{
+				solana.Pubkey(payerPub).Base58(),
+				cfgPDA.Base58(),
+				checkpoint.Base58(),
+				heightRec.Base58(),
+				solana.SystemProgramID.Base58(),
+				solana.InstructionsSysvarID.Base58(),
+				solana.Ed25519ProgramID.Base58(),
+				solana.Pubkey(crpProgram).Base58(),
+			}
+
+			var microLamports uint64
+			if heliusClient != nil {
+				est, err := heliusClient.GetPriorityFeeEstimateByAccountKeys(ctx, helius.PriorityFeeEstimateByAccountKeysRequest{
+					AccountKeys: feeKeys,
+					Options: &helius.PriorityFeeOptions{
+						PriorityLevel: helius.PriorityLevel(priorityLevel),
+						Recommended:   true,
+					},
+				})
+				if err == nil {
+					microLamports = est.MicroLamports
+				}
+			}
+
+			var ixs []solana.Instruction
+			if cuLimitFinalize != 0 {
+				ixs = append(ixs, solana.ComputeBudgetSetComputeUnitLimit(uint32(cuLimitFinalize)))
+			}
+			if microLamports != 0 {
+				ixs = append(ixs, solana.ComputeBudgetSetComputeUnitPrice(microLamports))
+			}
+			ixs = append(ixs, edIxs...)
+			ixs = append(ixs, solana.Instruction{
+				ProgramID: solana.Pubkey(crpProgram),
+				Accounts: []solana.AccountMeta{
+					{Pubkey: solana.Pubkey(payerPub), IsSigner: true, IsWritable: true},
+					{Pubkey: cfgPDA, IsSigner: false, IsWritable: true},
+					{Pubkey: checkpoint, IsSigner: false, IsWritable: true},
+					{Pubkey: heightRec, IsSigner: false, IsWritable: true},
+					{Pubkey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
+					{Pubkey: solana.InstructionsSysvarID, IsSigner: false, IsWritable: false},
+				},
+				Data: encodeCrpFinalize(uint8(len(edIxs))),
+			})
+
+			bhSol, err := rpc.LatestBlockhash(ctx)
+			if err != nil {
+				cancel()
+				return err
+			}
+			tx, err := solana.BuildAndSignLegacyTransaction(
+				bhSol,
+				solana.Pubkey(payerPub),
+				map[solana.Pubkey]ed25519.PrivateKey{solana.Pubkey(payerPub): payerPriv},
+				ixs,
+			)
+			if err != nil {
+				cancel()
+				return err
+			}
+
+			fmt.Fprintf(os.Stderr, "finalize height=%d orchard_root=%x\n", cp.Height, cp.OrchardRoot)
+			if dryRun {
+				if microLamports != 0 {
+					fmt.Fprintf(os.Stderr, "priority_fee: cu_limit=%d microLamports=%d keys=%s\n", cuLimitFinalize, microLamports, strings.Join(feeKeys, ","))
+				}
+				fmt.Println(base64Std(tx))
+			} else {
+				sigStr, err := rpc.SendTransaction(ctx, tx, false)
+				if err != nil {
+					cancel()
+					return err
+				}
+				fmt.Fprintf(os.Stderr, "tx %s\n", sigStr)
+			}
+
+			// Remove from pending after we attempt finalization.
+			pending = append(pending[:i], pending[i+1:]...)
+		}
+
+		cancel()
+
+		if once {
+			return nil
+		}
+		time.Sleep(pollInterval)
+	}
+}
