@@ -62,6 +62,7 @@ const FILL_STATUS_REFUNDED: u8 = 3;
 pub enum IepInstruction {
     Initialize {
         deployment_id: [u8; 32],
+        admin: Pubkey,
         fee_bps: u16,
         fee_collector: Pubkey,
         checkpoint_registry_program: Pubkey,
@@ -175,6 +176,7 @@ pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: 
     match ix {
         IepInstruction::Initialize {
             deployment_id,
+            admin,
             fee_bps,
             fee_collector,
             checkpoint_registry_program,
@@ -183,6 +185,7 @@ pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: 
             program_id,
             accounts,
             deployment_id,
+            admin,
             fee_bps,
             fee_collector,
             checkpoint_registry_program,
@@ -218,6 +221,7 @@ fn process_initialize(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     deployment_id: [u8; 32],
+    admin: Pubkey,
     fee_bps: u16,
     fee_collector: Pubkey,
     checkpoint_registry_program: Pubkey,
@@ -262,7 +266,7 @@ fn process_initialize(
     let cfg = IepConfigV1 {
         version: CONFIG_VERSION_V1,
         deployment_id,
-        admin: *payer.key,
+        admin,
         fee_bps,
         fee_collector,
         checkpoint_registry_program,

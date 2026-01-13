@@ -260,6 +260,7 @@ async fn settle_transfers_net_and_fee_and_marks_spent() {
         ],
         CrpInstruction::Initialize {
             deployment_id,
+            admin: payer.pubkey(),
             threshold: 1,
             conflict_threshold: 2,
             finalization_delay_slots: 0,
@@ -340,6 +341,7 @@ async fn settle_transfers_net_and_fee_and_marks_spent() {
         ],
         IepInstruction::Initialize {
             deployment_id,
+            admin: payer.pubkey(),
             fee_bps: 25, // 0.25%
             fee_collector: fee_owner.pubkey(),
             checkpoint_registry_program: crp_program_id,

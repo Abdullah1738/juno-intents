@@ -45,6 +45,7 @@ const ED25519_SIGNATURE_LEN: usize = 64;
 pub enum CrpInstruction {
     Initialize {
         deployment_id: [u8; 32],
+        admin: Pubkey,
         threshold: u8,
         conflict_threshold: u8,
         finalization_delay_slots: u64,
@@ -135,6 +136,7 @@ pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: 
     match ix {
         CrpInstruction::Initialize {
             deployment_id,
+            admin,
             threshold,
             conflict_threshold,
             finalization_delay_slots,
@@ -143,6 +145,7 @@ pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: 
             program_id,
             accounts,
             deployment_id,
+            admin,
             threshold,
             conflict_threshold,
             finalization_delay_slots,
@@ -177,6 +180,7 @@ fn process_initialize(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     deployment_id: [u8; 32],
+    admin: Pubkey,
     threshold: u8,
     conflict_threshold: u8,
     finalization_delay_slots: u64,
@@ -220,7 +224,7 @@ fn process_initialize(
     let cfg = CrpConfigV1 {
         version: CONFIG_VERSION_V1,
         deployment_id,
-        admin: *payer.key,
+        admin,
         threshold,
         conflict_threshold,
         finalization_delay_slots,

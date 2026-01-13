@@ -54,6 +54,7 @@ async fn init_and_set_checkpoint_then_pause() {
         ],
         CrpInstruction::Initialize {
             deployment_id,
+            admin: payer.pubkey(),
             threshold: 2,
             conflict_threshold: 2,
             finalization_delay_slots: 0,
