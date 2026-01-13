@@ -18,7 +18,7 @@ CRP_CONFLICT_THRESHOLD="2"
 CRP_FINALIZATION_DELAY_SLOTS="0"
 CRP_OPERATORS=()
 
-UPGRADE_MODE="final" # final | set
+UPGRADE_MODE="set" # set (default) | final
 NEW_UPGRADE_AUTHORITY_PUBKEY=""
 
 SKIP_BUILD="false"
@@ -46,6 +46,7 @@ Notes:
   - Creates a fresh disposable payer keypair under tmp/ and deletes it on success.
   - Uses Solana CLI for build+deploy; uses Go tooling for program initialization.
   - Records deployment outputs into deployments.json (tracked). You should review before pushing.
+  - Default: sets program upgrade authority to --admin (upgradeable). Use --upgrade final to lock programs.
 USAGE
 }
 
@@ -130,7 +131,10 @@ if [[ "${UPGRADE_MODE}" != "final" && "${UPGRADE_MODE}" != "set" ]]; then
   exit 2
 fi
 if [[ "${UPGRADE_MODE}" == "set" && -z "${NEW_UPGRADE_AUTHORITY_PUBKEY}" ]]; then
-  echo "--new-upgrade-authority is required when --upgrade set" >&2
+  NEW_UPGRADE_AUTHORITY_PUBKEY="${ADMIN_PUBKEY}"
+fi
+if [[ "${UPGRADE_MODE}" == "set" && -z "${NEW_UPGRADE_AUTHORITY_PUBKEY}" ]]; then
+  echo "--new-upgrade-authority is required when --upgrade set (or provide --admin)" >&2
   exit 2
 fi
 
