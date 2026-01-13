@@ -1,0 +1,16 @@
+.git/
+.github/
+.terraform/
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+
+tmp/
+target/
+solana/target/
+risc0/receipt/target/
+
+node_modules/
+dist/
+build/
+
