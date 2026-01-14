@@ -271,7 +271,12 @@ func (d vsockDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, er
 	default:
 	}
 
-	conn, err := vsock.Dial(unix.VMADDR_CID_HOST, d.port)
+	// From within Nitro enclaves, the parent instance is commonly reachable at CID=3.
+	// Keep a fallback to the Linux VMADDR_CID_HOST constant for portability.
+	conn, err := vsock.Dial(3, d.port)
+	if err != nil {
+		conn, err = vsock.Dial(unix.VMADDR_CID_HOST, d.port)
+	}
 	if err != nil {
 		return nil, err
 	}
