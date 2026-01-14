@@ -258,8 +258,15 @@ rent_rv="$(estimate_rent_exempt "$((rv_bytes + 2048))")"
 
 need_lamports="0"
 if [[ -n "${rent_crp}" && -n "${rent_iep}" && -n "${rent_rv}" ]]; then
-  # Conservative estimate: 3x rent per program (buffer + programdata + slack) + 0.2 SOL fees.
-  need_lamports="$(( (3 * rent_crp) + (3 * rent_iep) + (3 * rent_rv) + 200000000 ))"
+  # Estimate peak required balance:
+  #   - sum(rent): permanent programdata rent for all 3 programs
+  #   - max(rent): temporary upgradeable buffer rent for the largest program during deploy
+  #   - +0.5 SOL: fee + slop buffer
+  sum_rent="$((rent_crp + rent_iep + rent_rv))"
+  max_rent="${rent_crp}"
+  if [[ "${rent_iep}" -gt "${max_rent}" ]]; then max_rent="${rent_iep}"; fi
+  if [[ "${rent_rv}" -gt "${max_rent}" ]]; then max_rent="${rent_rv}"; fi
+  need_lamports="$(( sum_rent + max_rent + 500000000 ))"
 else
   # Fallback if 'solana rent' output parsing fails.
   need_lamports="$(( 5 * 1000000000 ))"
