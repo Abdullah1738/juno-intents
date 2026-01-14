@@ -213,44 +213,24 @@ PY
 }
 
 wait_ssm() {
-  python3 - "$@" <<'PY'
-import os
-import subprocess
-import sys
-import time
-
-region = os.environ["REGION"]
-instance_id = os.environ["INSTANCE_ID"]
-command_id = sys.argv[1]
-
-for _ in range(600):
-    status = subprocess.check_output(
-        [
-            "aws",
-            "--profile",
-            "juno",
-            "--region",
-            region,
-            "ssm",
-            "get-command-invocation",
-            "--command-id",
-            command_id,
-            "--instance-id",
-            instance_id,
-            "--query",
-            "Status",
-            "--output",
-            "text",
-        ],
-        text=True,
-    ).strip()
-    if status in ("Success", "Cancelled", "TimedOut", "Failed"):
-        print(status)
-        return
-    time.sleep(2)
-
-print("TimedOut")
-PY
+  local command_id="$1"
+  local status="InProgress"
+  for _ in $(seq 1 600); do
+    status="$(awsj ssm get-command-invocation \
+      --command-id "${command_id}" \
+      --instance-id "${INSTANCE_ID}" \
+      --query 'Status' \
+      --output text 2>/dev/null || true)"
+    case "${status}" in
+      Success|Failed|TimedOut|Cancelled)
+        break
+        ;;
+      *)
+        sleep 2
+        ;;
+    esac
+  done
+  echo "${status}"
 }
 
 REMOTE_CMDS="$(
