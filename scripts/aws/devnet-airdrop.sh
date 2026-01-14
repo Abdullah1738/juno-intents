@@ -241,13 +241,7 @@ pubkey=os.environ["PUBKEY"]
 target=os.environ["TARGET_LAMPORTS"]
 chunk=os.environ["CHUNK_LAMPORTS"]
 
-cmd = f"""set -euo pipefail
-export RPC_URL='{rpc_url}'
-export PUBKEY='{pubkey}'
-export TARGET_LAMPORTS='{target}'
-export CHUNK_LAMPORTS='{chunk}'
-python3 - <<'PY2'
-import json
+python_code = r"""import json
 import os
 import time
 import urllib.request
@@ -290,8 +284,20 @@ if bal < target:
     raise SystemExit(f"still underfunded: balance={bal} target={target}")
 
 print("funded")
-PY2
 """
+
+cmd = "\n".join(
+    [
+        "set -euo pipefail",
+        f"export RPC_URL='{rpc_url}'",
+        f"export PUBKEY='{pubkey}'",
+        f"export TARGET_LAMPORTS='{target}'",
+        f"export CHUNK_LAMPORTS='{chunk}'",
+        "python3 - <<'PY2'",
+        python_code,
+        "PY2",
+    ]
+)
 print(json.dumps([cmd]))
 PY
 )"
