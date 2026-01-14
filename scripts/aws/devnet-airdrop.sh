@@ -15,7 +15,7 @@ INSTANCE_PROFILE_NAME="${JUNO_NITRO_INSTANCE_PROFILE_NAME:-}"
 RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
 PUBKEY=""
 TARGET_LAMPORTS=""
-CHUNK_LAMPORTS="$((1_000_000_000))"
+CHUNK_LAMPORTS="1000000000"
 
 usage() {
   cat <<'USAGE' >&2
@@ -326,4 +326,3 @@ fi
 if [[ "${status}" != "Success" ]]; then
   exit 1
 fi
-
