@@ -437,5 +437,5 @@ if [[ "${PUSH}" == "true" ]]; then
 fi
 
 echo "refunding remaining balance to ${REFUND_PUBKEY} (best-effort)..." >&2
-solana -u "${RPC_URL}" transfer "${REFUND_PUBKEY}" ALL --keypair "${PAYER_KEYPAIR}" >/dev/null 2>&1 || true
+solana -u "${RPC_URL}" transfer "${REFUND_PUBKEY}" ALL --allow-unfunded-recipient --keypair "${PAYER_KEYPAIR}" >/dev/null 2>&1 || true
 echo "done" >&2
