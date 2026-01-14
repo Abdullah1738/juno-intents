@@ -196,8 +196,14 @@ echo "receipt_verifier_program_id: ${RV_PROGRAM_ID}" >&2
 
 if [[ "${SKIP_BUILD}" != "true" ]]; then
   echo "building Solana programs (SBF, release)..." >&2
-  # cargo-build-sbf builds release by default (use --debug for debug builds).
-  (cd "${ROOT}" && cargo build-sbf --manifest-path solana/Cargo.toml)
+  # Build programs one-by-one to avoid Cargo feature unification across the workspace.
+  #
+  # In particular, intent-escrow depends on checkpoint-registry with `no-entrypoint`, and
+  # building the whole workspace in one invocation can accidentally strip the checkpoint-registry
+  # program entrypoint, producing an invalid `.so` for deploy.
+  (cd "${ROOT}" && cargo build-sbf --manifest-path solana/checkpoint-registry/Cargo.toml)
+  (cd "${ROOT}" && cargo build-sbf --manifest-path solana/receipt-verifier/Cargo.toml)
+  (cd "${ROOT}" && cargo build-sbf --manifest-path solana/intent-escrow/Cargo.toml)
 fi
 
 CRP_SO="${ROOT}/solana/target/deploy/juno_intents_checkpoint_registry.so"
@@ -219,7 +225,7 @@ rv_bytes="$(wc -c <"${RV_SO}" | tr -d ' ')"
 estimate_rent_exempt() {
   local bytes="$1"
   local out
-  out="$(solana -u "${RPC_URL}" rent "${bytes}" 2>/dev/null || true)"
+  out="$(solana -u "${RPC_URL}" rent --lamports "${bytes}" 2>/dev/null || true)"
   # Expected line: "Rent-exempt minimum: <lamports> lamports"
   echo "${out}" | awk '/Rent-exempt minimum:/ {print $3; exit}' || true
 }
