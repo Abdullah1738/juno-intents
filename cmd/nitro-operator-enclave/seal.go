@@ -13,12 +13,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	enclave "github.com/edgebitio/nitro-enclaves-sdk-go"
 
+	"github.com/Abdullah1738/juno-intents/internal/vsock"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -126,7 +126,7 @@ func initSigningKey(ctx context.Context, state *enclaveState, p initSigningKeyPa
 			Recipient: recipient,
 		})
 		if err != nil {
-			return initSigningKeyResult{}, errors.New("kms_generate_data_key_failed")
+			return initSigningKeyResult{}, fmt.Errorf("kms_generate_data_key_failed: %w", err)
 		}
 		if len(dk.CiphertextBlob) == 0 || len(dk.CiphertextForRecipient) == 0 {
 			return initSigningKeyResult{}, errors.New("kms_generate_data_key_missing_fields")
@@ -180,7 +180,7 @@ func initSigningKey(ctx context.Context, state *enclaveState, p initSigningKeyPa
 		Recipient:      recipient,
 	})
 	if err != nil {
-		return initSigningKeyResult{}, errors.New("kms_decrypt_failed")
+		return initSigningKeyResult{}, fmt.Errorf("kms_decrypt_failed: %w", err)
 	}
 	if len(dec.CiphertextForRecipient) == 0 {
 		return initSigningKeyResult{}, errors.New("kms_decrypt_missing_recipient_ciphertext")
@@ -271,27 +271,7 @@ func (d vsockDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, er
 	default:
 	}
 
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0)
-	if err != nil {
-		return nil, err
-	}
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = unix.Close(fd)
-		}
-	}()
-
-	if err := unix.Connect(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_HOST, Port: d.port}); err != nil {
-		return nil, err
-	}
-
-	f := os.NewFile(uintptr(fd), "vsock")
-	if f == nil {
-		return nil, errors.New("os.NewFile failed")
-	}
-	conn, err := net.FileConn(f)
-	_ = f.Close()
+	conn, err := vsock.Dial(unix.VMADDR_CID_HOST, d.port)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +284,6 @@ func (d vsockDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, er
 		_ = conn.Close()
 	}()
 
-	cleanup = false
 	return conn, nil
 }
 
