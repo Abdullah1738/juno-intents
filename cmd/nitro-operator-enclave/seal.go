@@ -109,9 +109,9 @@ func initSigningKey(ctx context.Context, state *enclaveState, p initSigningKeyPa
 	}
 	kc := kms.NewFromConfig(cfg)
 
-	recipient := &types.RecipientInfoType{
+	recipient := &types.RecipientInfo{
 		AttestationDocument:    attDoc,
-		KeyEncryptionAlgorithm: types.EncryptionAlgorithmSpecRsaesOaepSha256,
+		KeyEncryptionAlgorithm: types.KeyEncryptionMechanismRsaesOaepSha256,
 	}
 
 	if p.SealedKey == nil {
