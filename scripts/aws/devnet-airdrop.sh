@@ -235,8 +235,17 @@ wait_ssm() {
 
 REMOTE_CMDS="$(
   python3 - <<'PY'
-import json
-cmd = r"""set -euo pipefail
+import json, os
+rpc_url=os.environ["RPC_URL"]
+pubkey=os.environ["PUBKEY"]
+target=os.environ["TARGET_LAMPORTS"]
+chunk=os.environ["CHUNK_LAMPORTS"]
+
+cmd = f"""set -euo pipefail
+export RPC_URL='{rpc_url}'
+export PUBKEY='{pubkey}'
+export TARGET_LAMPORTS='{target}'
+export CHUNK_LAMPORTS='{chunk}'
 python3 - <<'PY2'
 import json
 import os
