@@ -196,7 +196,8 @@ echo "receipt_verifier_program_id: ${RV_PROGRAM_ID}" >&2
 
 if [[ "${SKIP_BUILD}" != "true" ]]; then
   echo "building Solana programs (SBF, release)..." >&2
-  (cd "${ROOT}" && cargo build-sbf --manifest-path solana/Cargo.toml --release)
+  # cargo-build-sbf treats cargo flags (like --release) as passthrough args after "--".
+  (cd "${ROOT}" && cargo build-sbf --manifest-path solana/Cargo.toml -- --release)
 fi
 
 CRP_SO="${ROOT}/solana/target/deploy/juno_intents_checkpoint_registry.so"
