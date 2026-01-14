@@ -140,7 +140,8 @@ func (c *Client) LatestBlockhash(ctx context.Context) ([32]byte, error) {
 			Blockhash string `json:"blockhash"`
 		} `json:"value"`
 	}
-	if err := c.rpcCall(ctx, "getLatestBlockhash", []any{map[string]any{"commitment": "processed"}}, &resp); err != nil {
+	// Use finalized to avoid "Blockhash not found" when talking to load-balanced public RPCs.
+	if err := c.rpcCall(ctx, "getLatestBlockhash", []any{map[string]any{"commitment": "finalized"}}, &resp); err != nil {
 		// Some RPCs still require getRecentBlockhash.
 		var old struct {
 			Value struct {
