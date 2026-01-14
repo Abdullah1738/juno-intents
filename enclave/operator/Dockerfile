@@ -13,7 +13,8 @@ ENV CGO_ENABLED=0
 ENV GOOS=linux
 ENV GOARCH=amd64
 
-RUN go build -trimpath -buildvcs=false -mod=readonly -ldflags "-s -w -buildid=" -o /out/operator ./cmd/nitro-operator-enclave
+RUN go build -trimpath -buildvcs=false -mod=readonly -ldflags "-s -w -buildid=" -o /out/operator ./cmd/nitro-operator-enclave \
+    && touch -d '@0' /out/operator
 
 FROM scratch
 
