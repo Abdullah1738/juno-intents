@@ -15,6 +15,7 @@ import (
 
 	"github.com/Abdullah1738/juno-intents/offchain/helius"
 	"github.com/Abdullah1738/juno-intents/offchain/junocashcli"
+	"github.com/Abdullah1738/juno-intents/offchain/nitro"
 	"github.com/Abdullah1738/juno-intents/offchain/solana"
 	"github.com/Abdullah1738/juno-intents/offchain/solanarpc"
 	"github.com/Abdullah1738/juno-intents/offchain/solvernet"
@@ -52,10 +53,10 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "crp-operator: CheckpointRegistry operator tooling")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  crp-operator submit   [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --height <u64> --block-hash <hex32> --orchard-root <hex32> --prev-hash <hex32> [--payer-keypair <path>] [--operator-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
+	fmt.Fprintln(w, "  crp-operator submit   [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --height <u64> --block-hash <hex32> --orchard-root <hex32> --prev-hash <hex32> [--payer-keypair <path>] [--operator-keypair <path>] [--operator-enclave-cid <u32>] [--operator-enclave-port <u32>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
 	fmt.Fprintln(w, "  crp-operator finalize [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --height <u64> --orchard-root <hex32> --operator-keypair <path> [--operator-keypair <path>...] [--payer-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
 	fmt.Fprintln(w, "  crp-operator deployments [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58>")
-	fmt.Fprintln(w, "  crp-operator run [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --start-height <u64> --finalize-operator-keypair <path> [--junocash-cli <path>] [--junocash-cli-arg <arg>...] [--lag <u64>] [--poll-interval <duration>] [--payer-keypair <path>] [--submit-operator-keypair <path>] [--cu-limit-submit <u32>] [--cu-limit-finalize <u32>] [--priority-level <level>] [--dry-run] [--once]")
+	fmt.Fprintln(w, "  crp-operator run [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --start-height <u64> --finalize-operator-keypair <path> [--junocash-cli <path>] [--junocash-cli-arg <arg>...] [--lag <u64>] [--poll-interval <duration>] [--payer-keypair <path>] [--submit-operator-keypair <path>] [--submit-operator-enclave-cid <u32>] [--submit-operator-enclave-port <u32>] [--cu-limit-submit <u32>] [--cu-limit-finalize <u32>] [--priority-level <level>] [--dry-run] [--once]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Environment:")
 	fmt.Fprintln(w, "  SOLANA_RPC_URL or HELIUS_RPC_URL or HELIUS_API_KEY/HELIUS_CLUSTER")
@@ -76,8 +77,10 @@ func cmdSubmit(argv []string) error {
 		orchardHex    string
 		prevHashHex   string
 
-		payerPath    string
-		operatorPath string
+		payerPath           string
+		operatorPath        string
+		operatorEnclaveCID  uint
+		operatorEnclavePort uint
 
 		cuLimit       uint
 		priorityLevel string
@@ -94,6 +97,8 @@ func cmdSubmit(argv []string) error {
 	fs.StringVar(&prevHashHex, "prev-hash", "", "JunoCash prev hash (32-byte hex)")
 	fs.StringVar(&payerPath, "payer-keypair", solvernet.DefaultSolanaKeypairPath(), "Payer Solana keypair path (Solana CLI JSON format)")
 	fs.StringVar(&operatorPath, "operator-keypair", solvernet.DefaultSolanaKeypairPath(), "Operator ed25519 keypair path (Solana CLI JSON format)")
+	fs.UintVar(&operatorEnclaveCID, "operator-enclave-cid", 0, "If set, signs via Nitro enclave at this CID (disables --operator-keypair)")
+	fs.UintVar(&operatorEnclavePort, "operator-enclave-port", 5000, "Nitro enclave AF_VSOCK port")
 
 	fs.UintVar(&cuLimit, "cu-limit", 200_000, "Compute unit limit")
 	fs.StringVar(&priorityLevel, "priority-level", string(helius.PriorityMedium), "Priority level (Min/Low/Medium/High/VeryHigh/UnsafeMax)")
@@ -107,6 +112,11 @@ func cmdSubmit(argv []string) error {
 	}
 	if crpProgramStr == "" || deploymentHex == "" || blockHashHex == "" || orchardHex == "" || prevHashHex == "" {
 		return errors.New("--crp-program-id, --deployment-id, --block-hash, --orchard-root, and --prev-hash are required")
+	}
+	if operatorEnclaveCID != 0 {
+		if operatorEnclaveCID > 0xffff_ffff || operatorEnclavePort == 0 || operatorEnclavePort > 0xffff_ffff {
+			return errors.New("--operator-enclave-cid and --operator-enclave-port must fit in u32 (and port must be > 0)")
+		}
 	}
 
 	crpProgram, err := solana.ParsePubkey(crpProgramStr)
@@ -134,10 +144,6 @@ func cmdSubmit(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("load payer keypair: %w", err)
 	}
-	operatorPriv, operatorPub, err := solvernet.LoadSolanaKeypair(operatorPath)
-	if err != nil {
-		return fmt.Errorf("load operator keypair: %w", err)
-	}
 
 	cfg, _, err := solana.FindProgramAddress([][]byte{[]byte("config"), deploymentID[:]}, solana.Pubkey(crpProgram))
 	if err != nil {
@@ -158,9 +164,27 @@ func cmdSubmit(argv []string) error {
 		PrevHash:    protocol.JunoBlockHash(prevHash),
 	}
 	signingBytes := obs.SigningBytes(deploymentID)
-	sig := ed25519.Sign(ed25519.PrivateKey(operatorPriv), signingBytes)
+
+	var operatorPub [32]byte
 	var sig64 [64]byte
-	copy(sig64[:], sig)
+	if operatorEnclaveCID != 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		pk, sig, err := signObservationViaEnclave(ctx, uint32(operatorEnclaveCID), uint32(operatorEnclavePort), deploymentID, obs)
+		if err != nil {
+			return err
+		}
+		operatorPub = pk
+		sig64 = sig
+	} else {
+		operatorPriv, opPub, err := solvernet.LoadSolanaKeypair(operatorPath)
+		if err != nil {
+			return fmt.Errorf("load operator keypair: %w", err)
+		}
+		operatorPub = opPub
+		sig := ed25519.Sign(ed25519.PrivateKey(operatorPriv), signingBytes)
+		copy(sig64[:], sig)
+	}
 
 	edIx := solana.Ed25519VerifyInstruction(sig64, solana.Pubkey(operatorPub), signingBytes)
 	crpIx := solana.Instruction{
@@ -541,6 +565,57 @@ func parseHex32(s string) ([32]byte, error) {
 	return out, nil
 }
 
+func parseHex64(s string) ([64]byte, error) {
+	var out [64]byte
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "0x")
+	if len(s) != 128 {
+		return out, errors.New("expected 64-byte hex (128 chars)")
+	}
+	b, err := hex.DecodeString(s)
+	if err != nil || len(b) != 64 {
+		return out, errors.New("invalid hex")
+	}
+	copy(out[:], b)
+	return out, nil
+}
+
+type enclaveSignObservationParams struct {
+	DeploymentID string `json:"deployment_id"`
+	Height       uint64 `json:"height"`
+	BlockHash    string `json:"block_hash"`
+	OrchardRoot  string `json:"orchard_root"`
+	PrevHash     string `json:"prev_hash"`
+}
+
+type enclaveSignObservationResult struct {
+	SignerPubkeyHex string `json:"signer_pubkey_hex"`
+	SignatureHex    string `json:"signature_hex"`
+}
+
+func signObservationViaEnclave(ctx context.Context, cid uint32, port uint32, deploymentID protocol.DeploymentID, obs protocol.CheckpointObservation) ([32]byte, [64]byte, error) {
+	params := enclaveSignObservationParams{
+		DeploymentID: deploymentID.Hex(),
+		Height:       obs.Height,
+		BlockHash:    hex.EncodeToString(obs.BlockHash[:]),
+		OrchardRoot:  hex.EncodeToString(obs.OrchardRoot[:]),
+		PrevHash:     hex.EncodeToString(obs.PrevHash[:]),
+	}
+	var resp enclaveSignObservationResult
+	if err := nitro.Call(ctx, cid, port, "sign_observation", params, &resp); err != nil {
+		return [32]byte{}, [64]byte{}, err
+	}
+	pub, err := parseHex32(resp.SignerPubkeyHex)
+	if err != nil {
+		return [32]byte{}, [64]byte{}, fmt.Errorf("invalid signer_pubkey_hex: %w", err)
+	}
+	sig, err := parseHex64(resp.SignatureHex)
+	if err != nil {
+		return [32]byte{}, [64]byte{}, fmt.Errorf("invalid signature_hex: %w", err)
+	}
+	return pub, sig, nil
+}
+
 func u64LE(v uint64) []byte {
 	var out [8]byte
 	out[0] = byte(v)
@@ -599,15 +674,15 @@ func decodeCrpCheckpointV1(b []byte) (crpCheckpointV1, error) {
 }
 
 type crpConfigV1 struct {
-	Version              uint8
-	DeploymentID         [32]byte
-	Admin                [32]byte
-	Threshold            uint8
-	ConflictThreshold    uint8
+	Version                uint8
+	DeploymentID           [32]byte
+	Admin                  [32]byte
+	Threshold              uint8
+	ConflictThreshold      uint8
 	FinalizationDelaySlots uint64
-	OperatorCount        uint8
-	Operators            [32][32]byte
-	Paused               bool
+	OperatorCount          uint8
+	Operators              [32][32]byte
+	Paused                 bool
 }
 
 func decodeCrpConfigV1(b []byte) (crpConfigV1, error) {
@@ -689,13 +764,15 @@ func cmdRun(argv []string) error {
 		junocashPath string
 		junocashArgs multiString
 
-		startHeight uint64
-		lag         uint64
+		startHeight  uint64
+		lag          uint64
 		pollInterval time.Duration
 
-		payerPath        string
-		submitOperatorPath string
-		finalizeOperatorPaths multiString
+		payerPath                 string
+		submitOperatorPath        string
+		submitOperatorEnclaveCID  uint
+		submitOperatorEnclavePort uint
+		finalizeOperatorPaths     multiString
 
 		cuLimitSubmit   uint
 		cuLimitFinalize uint
@@ -715,6 +792,8 @@ func cmdRun(argv []string) error {
 	fs.DurationVar(&pollInterval, "poll-interval", 10*time.Second, "Poll interval (e.g. 5s, 30s)")
 	fs.StringVar(&payerPath, "payer-keypair", solvernet.DefaultSolanaKeypairPath(), "Payer Solana keypair path (Solana CLI JSON format)")
 	fs.StringVar(&submitOperatorPath, "submit-operator-keypair", solvernet.DefaultSolanaKeypairPath(), "Submitter operator keypair (ed25519; Solana CLI JSON format)")
+	fs.UintVar(&submitOperatorEnclaveCID, "submit-operator-enclave-cid", 0, "If set, signs SubmitObservation via Nitro enclave at this CID (disables --submit-operator-keypair)")
+	fs.UintVar(&submitOperatorEnclavePort, "submit-operator-enclave-port", 5000, "Nitro enclave AF_VSOCK port")
 	fs.Var(&finalizeOperatorPaths, "finalize-operator-keypair", "Finalizer operator keypair (repeatable; Solana CLI JSON format)")
 	fs.UintVar(&cuLimitSubmit, "cu-limit-submit", 200_000, "Compute unit limit for SubmitObservation tx")
 	fs.UintVar(&cuLimitFinalize, "cu-limit-finalize", 250_000, "Compute unit limit for FinalizeCheckpoint tx")
@@ -737,6 +816,11 @@ func cmdRun(argv []string) error {
 	if lag == 0 {
 		return errors.New("--lag must be > 0 (reorg safety)")
 	}
+	if submitOperatorEnclaveCID != 0 {
+		if submitOperatorEnclaveCID > 0xffff_ffff || submitOperatorEnclavePort == 0 || submitOperatorEnclavePort > 0xffff_ffff {
+			return errors.New("--submit-operator-enclave-cid and --submit-operator-enclave-port must fit in u32 (and port must be > 0)")
+		}
+	}
 	if len(finalizeOperatorPaths) == 0 {
 		return errors.New("at least one --finalize-operator-keypair is required")
 	}
@@ -754,9 +838,13 @@ func cmdRun(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("load payer keypair: %w", err)
 	}
-	submitterPriv, submitterPub, err := solvernet.LoadSolanaKeypair(submitOperatorPath)
-	if err != nil {
-		return fmt.Errorf("load submitter keypair: %w", err)
+	var submitterPriv ed25519.PrivateKey
+	var submitterPub [32]byte
+	if submitOperatorEnclaveCID == 0 {
+		submitterPriv, submitterPub, err = solvernet.LoadSolanaKeypair(submitOperatorPath)
+		if err != nil {
+			return fmt.Errorf("load submitter keypair: %w", err)
+		}
 	}
 
 	var finalizePrivs []ed25519.PrivateKey
@@ -886,9 +974,21 @@ func cmdRun(argv []string) error {
 				PrevHash:    protocol.JunoBlockHash(prevHash),
 			}
 			signingBytes := obs.SigningBytes(deploymentID)
-			sig := ed25519.Sign(ed25519.PrivateKey(submitterPriv), signingBytes)
 			var sig64 [64]byte
-			copy(sig64[:], sig)
+			var opPub [32]byte
+			if submitOperatorEnclaveCID != 0 {
+				pk, sig, err := signObservationViaEnclave(ctx, uint32(submitOperatorEnclaveCID), uint32(submitOperatorEnclavePort), deploymentID, obs)
+				if err != nil {
+					cancel()
+					return err
+				}
+				opPub = pk
+				sig64 = sig
+			} else {
+				opPub = submitterPub
+				sig := ed25519.Sign(ed25519.PrivateKey(submitterPriv), signingBytes)
+				copy(sig64[:], sig)
+			}
 
 			checkpoint, _, err := solana.FindProgramAddress(
 				[][]byte{[]byte("checkpoint"), cfgPDA[:], orchardRoot[:]},
@@ -931,7 +1031,7 @@ func cmdRun(argv []string) error {
 				ixs = append(ixs, solana.ComputeBudgetSetComputeUnitPrice(microLamports))
 			}
 			ixs = append(ixs,
-				solana.Ed25519VerifyInstruction(sig64, solana.Pubkey(submitterPub), signingBytes),
+				solana.Ed25519VerifyInstruction(sig64, solana.Pubkey(opPub), signingBytes),
 				solana.Instruction{
 					ProgramID: solana.Pubkey(crpProgram),
 					Accounts: []solana.AccountMeta{
