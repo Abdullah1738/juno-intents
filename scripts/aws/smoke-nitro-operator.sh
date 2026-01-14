@@ -14,6 +14,10 @@ INSTANCE_TYPE="${JUNO_NITRO_SMOKE_INSTANCE_TYPE:-c6i.xlarge}"
 REPO="${JUNO_EIF_GIT_REPO:-Abdullah1738/juno-intents}"
 REF="${JUNO_EIF_GIT_REF:-}"
 
+EIF_SOURCE="${JUNO_NITRO_EIF_SOURCE:-build}" # build | release
+EIF_RELEASE_TAG="${JUNO_NITRO_EIF_RELEASE_TAG:-}"
+EIF_RELEASE_REPO="${JUNO_NITRO_EIF_RELEASE_REPO:-${REPO}}"
+
 KMS_KEY_ID="${JUNO_NITRO_KMS_KEY_ID:-alias/juno-intents-nitro-operator}"
 KMS_VSOCK_PORT="${JUNO_NITRO_KMS_VSOCK_PORT:-8000}"
 ENCLAVE_CID="${JUNO_NITRO_ENCLAVE_CID:-16}"
@@ -37,6 +41,10 @@ Environment:
   JUNO_EIF_GIT_REPO                (default: Abdullah1738/juno-intents)
   JUNO_EIF_GIT_REF                 (default: current HEAD if available, else main)
 
+  JUNO_NITRO_EIF_SOURCE            (default: build; build|release)
+  JUNO_NITRO_EIF_RELEASE_TAG       (required if source=release; GitHub release tag)
+  JUNO_NITRO_EIF_RELEASE_REPO      (default: JUNO_EIF_GIT_REPO; owner/repo for release downloads)
+
   JUNO_NITRO_KMS_KEY_ID            (default: alias/juno-intents-nitro-operator)
   JUNO_NITRO_KMS_VSOCK_PORT        (default: 8000)
   JUNO_NITRO_ENCLAVE_CID           (default: 16)
@@ -48,6 +56,7 @@ Notes:
   - All AWS calls use: --profile juno
   - The instance is ALWAYS terminated on exit (success/failure).
   - This is a KMS+attestation smoke test (init_signing_key) only.
+  - In release mode, the host downloads operator.eif/operator.meta.json from GitHub Releases and pins PCR0 from the release metadata.
 USAGE
 }
 
@@ -59,6 +68,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ref)
       REF="${2:-}"
+      shift 2
+      ;;
+    --eif-source)
+      EIF_SOURCE="${2:-}"
+      shift 2
+      ;;
+    --eif-release-tag)
+      EIF_RELEASE_TAG="${2:-}"
+      shift 2
+      ;;
+    --eif-release-repo)
+      EIF_RELEASE_REPO="${2:-}"
       shift 2
       ;;
     *)
@@ -87,6 +108,15 @@ if [[ -z "${REF}" ]]; then
   else
     REF="main"
   fi
+fi
+
+if [[ "${EIF_SOURCE}" != "build" && "${EIF_SOURCE}" != "release" ]]; then
+  echo "--eif-source must be 'build' or 'release' (got: ${EIF_SOURCE})" >&2
+  exit 2
+fi
+if [[ "${EIF_SOURCE}" == "release" && -z "${EIF_RELEASE_TAG}" ]]; then
+  echo "--eif-release-tag is required when --eif-source=release" >&2
+  exit 2
 fi
 
 if [[ -z "${INSTANCE_PROFILE_NAME}" ]]; then
@@ -166,7 +196,7 @@ if [[ "${ping}" != "Online" ]]; then
 fi
 
 echo "running smoke test via SSM (phase 1: build EIF + capture PCR0)..." >&2
-export REGION INSTANCE_ID REPO REF KMS_KEY_ID KMS_VSOCK_PORT ENCLAVE_CID ENCLAVE_PORT ENCLAVE_MEM_MIB ENCLAVE_CPU_COUNT
+export REGION INSTANCE_ID REPO REF EIF_SOURCE EIF_RELEASE_TAG EIF_RELEASE_REPO KMS_KEY_ID KMS_VSOCK_PORT ENCLAVE_CID ENCLAVE_PORT ENCLAVE_MEM_MIB ENCLAVE_CPU_COUNT
 
 send_ssm() {
   python3 - "$@" <<'PY'
@@ -231,25 +261,72 @@ wait_ssm() {
 PHASE1_CMDS="$(
   python3 - <<'PY'
 import json,os
-region=os.environ["REGION"]
-repo=os.environ["REPO"]
-ref=os.environ["REF"]
 enclave_mem_mib=os.environ["ENCLAVE_MEM_MIB"]
 enclave_cpu_count=os.environ["ENCLAVE_CPU_COUNT"]
+eif_source=os.environ.get("EIF_SOURCE","build")
+repo=os.environ["REPO"]
+ref=os.environ["REF"]
+release_repo=os.environ.get("EIF_RELEASE_REPO","")
+release_tag=os.environ.get("EIF_RELEASE_TAG","")
+
 cmds=[
   "set -euo pipefail",
   "sudo dnf install -y git docker python3",
+  "command -v curl >/dev/null || sudo dnf install -y curl-minimal",
   "sudo systemctl enable --now docker",
   "sudo dnf install -y aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel || sudo dnf install -y aws-nitro-enclaves-cli",
   "nitro-cli --version || true",
   "sudo mkdir -p /etc/nitro_enclaves",
   f"cat <<'YAML' | sudo tee /etc/nitro_enclaves/allocator.yaml >/dev/null\n---\nmemory_mib: {enclave_mem_mib}\ncpu_count: {enclave_cpu_count}\nYAML",
   "sudo systemctl enable --now nitro-enclaves-allocator || { echo \"allocator_failed\" >&2; ls -la /dev/nitro_enclaves /dev/nsm || true; cat /etc/nitro_enclaves/allocator.yaml || true; systemctl status --no-pager nitro-enclaves-allocator || true; journalctl -xeu nitro-enclaves-allocator --no-pager | tail -n 200 || true; exit 1; }",
-  f"rm -rf juno-intents && git clone https://github.com/{repo}.git juno-intents",
-  "cd juno-intents",
-  f"git checkout {ref}",
-  "scripts/enclave/build-eif.sh",
 ]
+
+if eif_source == "build":
+  cmds += [
+    f"rm -rf juno-intents && git clone https://github.com/{repo}.git juno-intents",
+    "cd juno-intents",
+    f"git checkout {ref}",
+    "scripts/enclave/build-eif.sh",
+  ]
+elif eif_source == "release":
+  if not release_repo or not release_tag:
+    raise SystemExit("release mode requires EIF_RELEASE_REPO and EIF_RELEASE_TAG")
+  cmds += [
+    "mkdir -p /tmp/juno-eif",
+    f"BASE_URL=\"https://github.com/{release_repo}/releases/download/{release_tag}\"",
+    "echo \"eif_base_url=${BASE_URL}\"",
+    "curl -fsSL \"${BASE_URL}/operator.meta.json\" -o /tmp/juno-eif/operator.meta.json",
+    "curl -fsSL \"${BASE_URL}/operator.eif\" -o /tmp/juno-eif/operator.eif",
+    r"""python3 - <<'PYMETA'
+import hashlib
+import json
+
+with open("/tmp/juno-eif/operator.meta.json","r",encoding="utf-8") as f:
+  meta=json.load(f)
+
+expected=(meta.get("eif_sha256") or "").strip().lower()
+if len(expected) != 64:
+  raise SystemExit("missing/invalid eif_sha256 in operator.meta.json")
+
+h=hashlib.sha256()
+with open("/tmp/juno-eif/operator.eif","rb") as f:
+  for chunk in iter(lambda: f.read(1024*1024), b""):
+    h.update(chunk)
+got=h.hexdigest()
+if got != expected:
+  raise SystemExit(f"operator.eif sha256 mismatch (expected={expected} got={got})")
+
+pcr0=(meta.get("pcr0") or "").strip().lower()
+if len(pcr0) != 96:
+  raise SystemExit("missing/invalid pcr0 in operator.meta.json")
+
+print(f"pcr0={pcr0}")
+print(f"eif_sha256={expected}")
+print(f"git_sha={(meta.get('git_sha') or '').strip()}")
+PYMETA""",
+  ]
+else:
+  raise SystemExit(f"invalid eif_source: {eif_source}")
 print(json.dumps(cmds))
 PY
 )"
@@ -303,9 +380,37 @@ enclave_cid=os.environ["ENCLAVE_CID"]
 enclave_port=os.environ["ENCLAVE_PORT"]
 enclave_mem_mib=os.environ["ENCLAVE_MEM_MIB"]
 enclave_cpu_count=os.environ["ENCLAVE_CPU_COUNT"]
-cmds=[
-  "set -euo pipefail",
-  "cd juno-intents",
+eif_source=os.environ.get("EIF_SOURCE","build")
+repo=os.environ["REPO"]
+ref=os.environ["REF"]
+
+cmds=["set -euo pipefail"]
+
+if eif_source == "build":
+  cmds += [
+    "cd juno-intents",
+  ]
+elif eif_source == "release":
+  cmds += [
+    "cd /tmp",
+    f"rm -rf juno-intents && git clone https://github.com/{repo}.git juno-intents",
+    "cd juno-intents",
+    r"""GIT_SHA="$(python3 - <<'PYMETA'
+import json
+with open("/tmp/juno-eif/operator.meta.json","r",encoding="utf-8") as f:
+  meta=json.load(f)
+print((meta.get("git_sha") or "").strip())
+PYMETA
+)" """,
+    "if [[ -n \"${GIT_SHA}\" ]]; then git checkout \"${GIT_SHA}\"; else git checkout " + ref + "; fi",
+    "mkdir -p tmp/enclave",
+    "cp /tmp/juno-eif/operator.eif tmp/enclave/operator.eif",
+    "cp /tmp/juno-eif/operator.meta.json tmp/enclave/operator.meta.json",
+  ]
+else:
+  raise SystemExit(f"invalid eif_source: {eif_source}")
+
+cmds += [
   "VSOCK_PROXY=\"$(command -v vsock-proxy || command -v nitro-enclaves-vsock-proxy || true)\"",
   "if [[ -z \"${VSOCK_PROXY}\" ]]; then echo \"missing vsock-proxy\" >&2; exit 1; fi",
   "echo \"vsock-proxy=${VSOCK_PROXY}\"",
