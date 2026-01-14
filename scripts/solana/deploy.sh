@@ -262,8 +262,8 @@ airdrop_if_possible() {
     if [[ -n "${bal}" && "${bal}" -ge "${need_lamports}" ]]; then
       return 0
     fi
-    echo "airdropping 2 SOL..." >&2
-    solana -u "${RPC_URL}" airdrop 2 "${PAYER_PUBKEY}" --keypair "${PAYER_KEYPAIR}" >/dev/null 2>&1 || true
+    echo "airdropping 1 SOL..." >&2
+    solana -u "${RPC_URL}" airdrop 1 "${PAYER_PUBKEY}" --keypair "${PAYER_KEYPAIR}" || true
     sleep 2
   done
 }
