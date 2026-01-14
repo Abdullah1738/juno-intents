@@ -317,7 +317,7 @@ cmds=[
   "echo \"builder_image=${BUILDER_IMAGE}\"",
   "mkdir -p tmp",
   "docker run --rm -v \"$PWD\":/src -w /src \"$BUILDER_IMAGE\" go build -trimpath -buildvcs=false -mod=readonly -ldflags \"-s -w -buildid=\" -o ./tmp/nitro-operator ./cmd/nitro-operator",
-  f"./tmp/nitro-operator init-key --enclave-cid {enclave_cid} --enclave-port {enclave_port} --region {region} --kms-key-id '{kms_key_id}' --kms-vsock-port {kms_vsock_port} --sealed-key-file ./tmp/nitro-operator.sealed.json",
+  f"./tmp/nitro-operator init-key --enclave-cid {enclave_cid} --enclave-port {enclave_port} --region {region} --kms-key-id '{kms_key_id}' --kms-vsock-port {kms_vsock_port} --sealed-key-file ./tmp/nitro-operator.sealed.json || {{ echo 'init-key failed' >&2; sudo tail -n 200 /var/log/vsock-proxy.log || true; exit 1; }}",
   "ls -la ./tmp/nitro-operator.sealed.json",
 ]
 print(json.dumps(cmds))
