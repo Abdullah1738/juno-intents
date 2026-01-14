@@ -1,5 +1,30 @@
 {
-  "deployments": [],
+  "deployments": [
+    {
+      "admin": "7Qx1LJUMeCXr8ygfwdnEmGbYSsQPrgHrFU7VPuGXJeEH",
+      "checkpoint_registry_program_id": "GaXkzzZ4AwrXDAtT9hr7Q32Ydg5QjPx1FtoKrZftqrJv",
+      "cluster": "devnet",
+      "created_at": "2026-01-14T20:11:58Z",
+      "crp_config": "5wYfcD3w1pnJWup1MhB8ocJHks3SeoRiF5Un1Ko58wez",
+      "crp_conflict_threshold": 2,
+      "crp_finalization_delay_slots": 0,
+      "crp_operators": [
+        "48fRaYNz79nuqdnnje9EEQRaY8QkFCJ2Fxf583B2E83J",
+        "4tn4ygiKQ3bR2JgBNdLKYNgofu6KUdu5hPmqafPHDrZX"
+      ],
+      "crp_threshold": 2,
+      "deployment_id": "74ee0e599525a749b71defd34171887aa59dffdffb99d1be99b672310a6e9b65",
+      "fee_bps": 25,
+      "fee_collector": "7Qx1LJUMeCXr8ygfwdnEmGbYSsQPrgHrFU7VPuGXJeEH",
+      "git_commit": "c147194055ac601ef6d9abd5070fe8699cf640d7",
+      "iep_config": "56jAZMBu4y5uxUohfspig3qcFis6oHgebmZ7XnmHZq1U",
+      "intent_escrow_program_id": "3CwdGYRukkGyAZZshHEDfmzhdy9VvoNrMYNqzsyc2pW1",
+      "name": "devnet-20260114T182817Z",
+      "receipt_verifier_program_id": "4grwLfLBX4c2VbKXd4QjDeuEkfnPttyPMYCoL3Luhf5a",
+      "rpc_url": "https://api.devnet.solana.com",
+      "upgrade_mode": "final"
+    }
+  ],
   "protocol_version": 1,
   "schema_version": 1
 }
