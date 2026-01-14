@@ -10,6 +10,10 @@ OUT_EIF="${JUNO_EIF_OUT_EIF:-${OUT_DIR}/operator.eif}"
 export NITRO_CLI_ARTIFACTS="${NITRO_CLI_ARTIFACTS:-${OUT_DIR}/nitro-cli-artifacts}"
 export NITRO_CLI_BLOBS="${NITRO_CLI_BLOBS:-/usr/share/nitro_enclaves/blobs/}"
 
+# Make EIF builds as deterministic as possible across hosts.
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
+export TZ="${TZ:-UTC}"
+
 require_cmd() {
   if ! command -v "$1" >/dev/null; then
     echo "missing required command: $1" >&2
