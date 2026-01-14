@@ -167,6 +167,7 @@ impl From<IepError> for ProgramError {
 #[cfg(not(feature = "no-entrypoint"))]
 entrypoint!(process_instruction);
 
+#[inline(never)]
 pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let ix = IepInstruction::try_from_slice(data).map_err(|_| IepError::InvalidInstruction)?;
     match ix {
@@ -210,6 +211,7 @@ pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: 
     }
 }
 
+#[inline(never)]
 fn process_initialize(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -267,6 +269,7 @@ fn process_initialize(
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
 }
 
+#[inline(never)]
 fn process_create_intent(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -342,6 +345,7 @@ fn process_create_intent(
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
 }
 
+#[inline(never)]
 fn process_cancel_intent(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     // Accounts:
     // 0. creator (signer)
@@ -375,6 +379,7 @@ fn process_cancel_intent(program_id: &Pubkey, accounts: &[AccountInfo]) -> Progr
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
 }
 
+#[inline(never)]
 fn process_fill_intent(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -531,6 +536,7 @@ fn process_fill_intent(
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
 }
 
+#[inline(never)]
 fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>) -> ProgramResult {
     // Accounts:
     // 0. payer (signer, writable)
@@ -676,9 +682,19 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
         return Err(IepError::CheckpointInvalid.into());
     }
 
-    let crp_cfg = crp::CrpConfigV1::try_from_slice(&crp_config_ai.data.borrow())
-        .map_err(|_| ProgramError::from(IepError::CheckpointInvalid))?;
-    if crp_cfg.version != 1 || crp_cfg.deployment_id != cfg.deployment_id || crp_cfg.paused {
+    // Avoid deserializing the full CRP config (it contains a 32-pubkey operator array) to stay under SBF stack limits.
+    let crp_cfg_data = crp_config_ai.data.borrow();
+    if crp_cfg_data.len() != crp::CONFIG_LEN_V1 {
+        return Err(IepError::CheckpointInvalid.into());
+    }
+    if crp_cfg_data[0] != 1 {
+        return Err(IepError::CheckpointInvalid.into());
+    }
+    if &crp_cfg_data[1..33] != cfg.deployment_id.as_ref() {
+        return Err(IepError::CheckpointInvalid.into());
+    }
+    // paused: last byte (borsh bool). Any non-zero value is treated as paused/invalid.
+    if crp_cfg_data[crp::CONFIG_LEN_V1 - 1] != 0 {
         return Err(IepError::CheckpointInvalid.into());
     }
     let cp = crp::CrpCheckpointV1::try_from_slice(&checkpoint_ai.data.borrow())
@@ -822,6 +838,7 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
 }
 
+#[inline(never)]
 fn process_refund_fill(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     // Accounts:
     // 0. solver (signer)

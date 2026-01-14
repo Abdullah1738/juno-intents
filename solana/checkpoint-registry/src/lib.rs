@@ -30,9 +30,9 @@ const MAX_OPERATORS: usize = 32;
 const OBS_PREFIX: &[u8] = b"JUNO_INTENTS\0crp_observation\0\x01\x00";
 const OBS_SIGNING_BYTES_LEN: usize = 167;
 
-const CONFIG_LEN_V1: usize = 1 + 32 + 32 + 1 + 1 + 8 + 1 + (32 * MAX_OPERATORS) + 1;
-const CHECKPOINT_LEN_V1: usize = 1 + 8 + 32 + 32 + 32 + 8 + 1;
-const HEIGHT_LEN_V1: usize = 1 + 8 + 32 + 1 + 1;
+pub const CONFIG_LEN_V1: usize = 1 + 32 + 32 + 1 + 1 + 8 + 1 + (32 * MAX_OPERATORS) + 1;
+pub const CHECKPOINT_LEN_V1: usize = 1 + 8 + 32 + 32 + 32 + 8 + 1;
+pub const HEIGHT_LEN_V1: usize = 1 + 8 + 32 + 1 + 1;
 
 const ED25519_PROGRAM_ID: Pubkey = solana_program::ed25519_program::ID;
 const ED25519_SIGNATURE_OFFSETS_START: usize = 2;
@@ -125,6 +125,7 @@ impl From<CrpError> for ProgramError {
 #[cfg(not(feature = "no-entrypoint"))]
 entrypoint!(process_instruction);
 
+#[inline(never)]
 pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let ix = CrpInstruction::try_from_slice(data).map_err(|_| CrpError::InvalidInstruction)?;
     match ix {
@@ -157,6 +158,7 @@ pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: 
     }
 }
 
+#[inline(never)]
 fn process_initialize(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -217,6 +219,7 @@ fn process_initialize(
         .map_err(|_| ProgramError::from(CrpError::InvalidAccountData))
 }
 
+#[inline(never)]
 fn process_set_operators(program_id: &Pubkey, accounts: &[AccountInfo], operators: Vec<Pubkey>) -> ProgramResult {
     // Accounts:
     // 0. admin (signer)
@@ -248,6 +251,7 @@ fn process_set_operators(program_id: &Pubkey, accounts: &[AccountInfo], operator
         .map_err(|_| ProgramError::from(CrpError::InvalidAccountData))
 }
 
+#[inline(never)]
 fn process_submit_observation(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -351,6 +355,7 @@ fn process_submit_observation(
     Ok(())
 }
 
+#[inline(never)]
 fn process_finalize_checkpoint(program_id: &Pubkey, accounts: &[AccountInfo], sig_count: u8) -> ProgramResult {
     // Accounts:
     // 0. payer (signer, writable)
@@ -487,6 +492,7 @@ fn process_finalize_checkpoint(program_id: &Pubkey, accounts: &[AccountInfo], si
         .map_err(|_| ProgramError::from(CrpError::InvalidAccountData))
 }
 
+#[inline(never)]
 fn process_mark_conflict(program_id: &Pubkey, accounts: &[AccountInfo], sig_count: u8) -> ProgramResult {
     // Accounts:
     // 0. payer (signer, writable)
