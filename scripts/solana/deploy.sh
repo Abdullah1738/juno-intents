@@ -9,6 +9,7 @@ ADMIN_PUBKEY=""
 REFUND_PUBKEY=""
 DEPLOYMENT_ID_HEX=""
 NAME=""
+WORKDIR_OVERRIDE=""
 
 FEE_BPS="25"
 FEE_COLLECTOR_PUBKEY=""
@@ -30,6 +31,7 @@ Usage:
     --fee-collector <pubkey> \
     --operator <pubkey> --operator <pubkey> \
     [--deployment-id <hex32>] \
+    [--workdir <path>] \
     [--rpc-url <url>] \
     [--fee-bps <u16>] \
     [--threshold <u8>] [--conflict-threshold <u8>] [--finalization-delay-slots <u64>] \
@@ -40,6 +42,7 @@ Usage:
 
 Notes:
   - Creates a fresh disposable payer keypair under tmp/ and deletes it on success.
+  - Use --workdir to resume a failed deploy with the same payer/program IDs and deployment_id.
   - Uses Solana CLI for build+deploy; uses Go tooling for program initialization.
   - Records deployment outputs into deployments.json (tracked). You should review before pushing.
   - Programs are ALWAYS deployed immutable (upgrade authority set to --final).
@@ -58,6 +61,8 @@ while [[ $# -gt 0 ]]; do
       RPC_URL="${2:-}"; shift 2 ;;
     --deployment-id)
       DEPLOYMENT_ID_HEX="${2:-}"; shift 2 ;;
+    --workdir)
+      WORKDIR_OVERRIDE="${2:-}"; shift 2 ;;
     --name)
       NAME="${2:-}"; shift 2 ;;
     --admin)
@@ -119,20 +124,6 @@ if [[ "${#CRP_OPERATORS[@]}" -lt 2 ]]; then
   exit 2
 fi
 
-if [[ -z "${DEPLOYMENT_ID_HEX}" ]]; then
-  if command -v openssl >/dev/null; then
-    DEPLOYMENT_ID_HEX="$(openssl rand -hex 32)"
-  else
-    echo "openssl is required to generate --deployment-id (or pass it explicitly)" >&2
-    exit 2
-  fi
-fi
-DEPLOYMENT_ID_HEX="${DEPLOYMENT_ID_HEX#0x}"
-if [[ "${#DEPLOYMENT_ID_HEX}" -ne 64 ]]; then
-  echo "--deployment-id must be 32-byte hex (64 chars)" >&2
-  exit 2
-fi
-
 if ! command -v solana >/dev/null; then
   echo "solana CLI not found in PATH" >&2
   exit 1
@@ -155,13 +146,18 @@ if [[ "${SKIP_BUILD}" != "true" ]] && ! command -v cargo >/dev/null; then
 fi
 
 ts="$(date -u +%Y%m%dT%H%M%SZ)"
-WORKDIR="${ROOT}/tmp/solana/deploy/${ts}"
+if [[ -n "${WORKDIR_OVERRIDE}" ]]; then
+  WORKDIR="${WORKDIR_OVERRIDE}"
+else
+  WORKDIR="${ROOT}/tmp/solana/deploy/${ts}"
+fi
 mkdir -p "${WORKDIR}"
 
 PAYER_KEYPAIR="${WORKDIR}/payer.json"
 CRP_KEYPAIR="${WORKDIR}/crp-program.json"
 IEP_KEYPAIR="${WORKDIR}/iep-program.json"
 RV_KEYPAIR="${WORKDIR}/receipt-verifier-program.json"
+DEPLOYMENT_ID_FILE="${WORKDIR}/deployment_id.hex"
 
 cleanup() {
   rm -rf "${WORKDIR}" >/dev/null 2>&1 || true
@@ -178,16 +174,42 @@ on_exit() {
 trap on_exit EXIT
 
 echo "workdir: ${WORKDIR}" >&2
-solana-keygen new --no-bip39-passphrase --silent --force -o "${PAYER_KEYPAIR}"
+if [[ ! -f "${PAYER_KEYPAIR}" ]]; then
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${PAYER_KEYPAIR}"
+fi
 PAYER_PUBKEY="$(solana-keygen pubkey "${PAYER_KEYPAIR}")"
 echo "payer: ${PAYER_PUBKEY}" >&2
 
-solana-keygen new --no-bip39-passphrase --silent --force -o "${CRP_KEYPAIR}"
-solana-keygen new --no-bip39-passphrase --silent --force -o "${IEP_KEYPAIR}"
-solana-keygen new --no-bip39-passphrase --silent --force -o "${RV_KEYPAIR}"
+if [[ ! -f "${CRP_KEYPAIR}" ]]; then
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${CRP_KEYPAIR}"
+fi
+if [[ ! -f "${IEP_KEYPAIR}" ]]; then
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${IEP_KEYPAIR}"
+fi
+if [[ ! -f "${RV_KEYPAIR}" ]]; then
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${RV_KEYPAIR}"
+fi
 CRP_PROGRAM_ID="$(solana-keygen pubkey "${CRP_KEYPAIR}")"
 IEP_PROGRAM_ID="$(solana-keygen pubkey "${IEP_KEYPAIR}")"
 RV_PROGRAM_ID="$(solana-keygen pubkey "${RV_KEYPAIR}")"
+
+if [[ -z "${DEPLOYMENT_ID_HEX}" && -f "${DEPLOYMENT_ID_FILE}" ]]; then
+  DEPLOYMENT_ID_HEX="$(cat "${DEPLOYMENT_ID_FILE}" 2>/dev/null || true)"
+fi
+if [[ -z "${DEPLOYMENT_ID_HEX}" ]]; then
+  if command -v openssl >/dev/null; then
+    DEPLOYMENT_ID_HEX="$(openssl rand -hex 32)"
+  else
+    echo "openssl is required to generate --deployment-id (or pass it explicitly)" >&2
+    exit 2
+  fi
+fi
+DEPLOYMENT_ID_HEX="${DEPLOYMENT_ID_HEX#0x}"
+if [[ "${#DEPLOYMENT_ID_HEX}" -ne 64 ]]; then
+  echo "--deployment-id must be 32-byte hex (64 chars)" >&2
+  exit 2
+fi
+echo -n "${DEPLOYMENT_ID_HEX}" >"${DEPLOYMENT_ID_FILE}"
 
 echo "deployment_id: ${DEPLOYMENT_ID_HEX}" >&2
 echo "crp_program_id: ${CRP_PROGRAM_ID}" >&2
