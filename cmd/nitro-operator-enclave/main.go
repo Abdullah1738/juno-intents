@@ -35,7 +35,9 @@ func run(argv []string) error {
 	fs.SetOutput(io.Discard)
 
 	var vsockPort uint
+	var unsafeEphemeral bool
 	fs.UintVar(&vsockPort, "vsock-port", 5000, "AF_VSOCK port to listen on")
+	fs.BoolVar(&unsafeEphemeral, "unsafe-ephemeral", false, "If set, generates an in-memory ed25519 key at boot (NOT persistent, NOT for production)")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
@@ -46,11 +48,15 @@ func run(argv []string) error {
 		return errors.New("--vsock-port must fit in u32")
 	}
 
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return err
+	state := &enclaveState{}
+	if unsafeEphemeral {
+		pub, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return err
+		}
+		state.SetKey(priv, pub)
+		fmt.Fprintf(os.Stderr, "unsafe_ephemeral_pubkey_hex=%s\n", hex.EncodeToString(pub))
 	}
-	fmt.Fprintf(os.Stderr, "operator_pubkey_hex=%s\n", hex.EncodeToString(pub))
 
 	ln, err := listenVsock(uint32(vsockPort))
 	if err != nil {
@@ -77,7 +83,7 @@ func run(argv []string) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = handleConn(ctx, c, priv, pub)
+			_ = handleConn(ctx, c, state)
 		}()
 	}
 }
@@ -94,6 +100,22 @@ type response struct {
 	Error  string `json:"error,omitempty"`
 }
 
+type initSigningKeyParams struct {
+	AwsRegion     string `json:"aws_region"`
+	KmsKeyID      string `json:"kms_key_id"`
+	KmsVsockPort  uint32 `json:"kms_vsock_port"`
+	AwsAccessKey  string `json:"aws_access_key_id"`
+	AwsSecretKey  string `json:"aws_secret_access_key"`
+	AwsSessionTok string `json:"aws_session_token,omitempty"`
+
+	SealedKey *sealedSigningKeyV1 `json:"sealed_key,omitempty"`
+}
+
+type initSigningKeyResult struct {
+	SignerPubkeyHex string             `json:"signer_pubkey_hex"`
+	SealedKey       sealedSigningKeyV1 `json:"sealed_key"`
+}
+
 type signObservationParams struct {
 	DeploymentID string `json:"deployment_id"`
 	Height       uint64 `json:"height"`
@@ -107,7 +129,7 @@ type signObservationResult struct {
 	SignatureHex    string `json:"signature_hex"`
 }
 
-func handleConn(ctx context.Context, c net.Conn, priv ed25519.PrivateKey, pub ed25519.PublicKey) error {
+func handleConn(ctx context.Context, c net.Conn, state *enclaveState) error {
 	defer c.Close()
 
 	rd := bufio.NewScanner(c)
@@ -141,11 +163,33 @@ func handleConn(ctx context.Context, c net.Conn, priv ed25519.PrivateKey, pub ed
 		case "ping":
 			resp.Result = "pong"
 		case "pubkey":
+			pub, ok := state.Pubkey()
+			if !ok {
+				resp.Error = "not_initialized"
+				break
+			}
 			resp.Result = hex.EncodeToString(pub)
+		case "init_signing_key":
+			var p initSigningKeyParams
+			if err := json.Unmarshal(req.Params, &p); err != nil {
+				resp.Error = "invalid_params"
+				break
+			}
+			out, err := initSigningKey(ctx, state, p)
+			if err != nil {
+				resp.Error = err.Error()
+				break
+			}
+			resp.Result = out
 		case "sign_observation":
 			var p signObservationParams
 			if err := json.Unmarshal(req.Params, &p); err != nil {
 				resp.Error = "invalid_params"
+				break
+			}
+			priv, pub, ok := state.Key()
+			if !ok {
+				resp.Error = "not_initialized"
 				break
 			}
 			out, err := signObservation(p, priv, pub)
@@ -285,5 +329,5 @@ func (l *vsockListener) Accept() (net.Conn, error) {
 	return c, nil
 }
 
-func (l *vsockListener) Close() error { return unix.Close(l.fd) }
+func (l *vsockListener) Close() error   { return unix.Close(l.fd) }
 func (l *vsockListener) Addr() net.Addr { return l.addr }

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM --platform=linux/amd64 golang:1.22.6-bookworm@sha256:0fb1bda119f4cc07d236c2b98225d1ef0cb6e759a407d5d6d09e58402643679f AS builder
+FROM --platform=linux/amd64 golang:1.23.5-bookworm@sha256:42026e2733c399fa6c0938f7a32160f75d1530870054f1252a9ade444e3cbcf5 AS builder
 
 WORKDIR /src
 
@@ -21,4 +21,3 @@ COPY --from=builder /out/operator /operator
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 ENTRYPOINT ["/operator"]
-
