@@ -165,59 +165,20 @@ if [[ "${ping}" != "Online" ]]; then
   exit 1
 fi
 
-echo "running smoke test via SSM..." >&2
+echo "running smoke test via SSM (phase 1: build EIF + capture PCR0)..." >&2
 export REGION INSTANCE_ID REPO REF KMS_KEY_ID KMS_VSOCK_PORT ENCLAVE_CID ENCLAVE_PORT ENCLAVE_MEM_MIB ENCLAVE_CPU_COUNT
-COMMAND_ID="$(
-  python3 - <<'PY'
+
+send_ssm() {
+  python3 - "$@" <<'PY'
 import json
 import os
 import subprocess
+import sys
 
 region = os.environ["REGION"]
 instance_id = os.environ["INSTANCE_ID"]
-repo = os.environ["REPO"]
-ref = os.environ["REF"]
-kms_key_id = os.environ["KMS_KEY_ID"]
-kms_vsock_port = os.environ["KMS_VSOCK_PORT"]
-enclave_cid = os.environ["ENCLAVE_CID"]
-enclave_port = os.environ["ENCLAVE_PORT"]
-enclave_mem_mib = os.environ["ENCLAVE_MEM_MIB"]
-enclave_cpu_count = os.environ["ENCLAVE_CPU_COUNT"]
-
-cmds = [
-    "set -euo pipefail",
-    "sudo dnf install -y git docker python3",
-    "sudo systemctl enable --now docker",
-    # Nitro enclaves tooling
-    "sudo dnf install -y aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel || sudo dnf install -y aws-nitro-enclaves-cli",
-    "nitro-cli --version || true",
-    # Configure allocator
-    "sudo mkdir -p /etc/nitro_enclaves",
-    f"cat <<'YAML' | sudo tee /etc/nitro_enclaves/allocator.yaml >/dev/null\n---\nmemory_mib: {enclave_mem_mib}\ncpu_count: {enclave_cpu_count}\nYAML",
-    "sudo systemctl enable --now nitro-enclaves-allocator || { echo \"allocator_failed\" >&2; ls -la /dev/nitro_enclaves /dev/nsm || true; cat /etc/nitro_enclaves/allocator.yaml || true; systemctl status --no-pager nitro-enclaves-allocator || true; journalctl -xeu nitro-enclaves-allocator --no-pager | tail -n 200 || true; exit 1; }",
-    # Clone and build EIF
-    f"rm -rf juno-intents && git clone https://github.com/{repo}.git juno-intents",
-    "cd juno-intents",
-    f"git checkout {ref}",
-    "scripts/enclave/build-eif.sh",
-    # Start vsock-proxy to KMS
-    "VSOCK_PROXY=\"$(command -v vsock-proxy || command -v nitro-enclaves-vsock-proxy || true)\"",
-    "if [[ -z \"${VSOCK_PROXY}\" ]]; then echo \"missing vsock-proxy\" >&2; exit 1; fi",
-    "echo \"vsock-proxy=${VSOCK_PROXY}\"",
-    f"sudo nohup \"${{VSOCK_PROXY}}\" {kms_vsock_port} kms.{region}.amazonaws.com 443 >/var/log/vsock-proxy.log 2>&1 &",
-    "sleep 1",
-    # Run enclave
-    f"sudo nitro-cli run-enclave --eif-path tmp/enclave/operator.eif --cpu-count {enclave_cpu_count} --memory {enclave_mem_mib} --enclave-cid {enclave_cid}",
-    "sleep 2",
-    # Build host binary using the same pinned toolchain image as the EIF build.
-    "BUILDER_IMAGE=\"$(awk '/^FROM --platform=linux\\/amd64 golang:/{print $3}' enclave/operator/Dockerfile | head -n 1)\"",
-    "echo \"builder_image=${BUILDER_IMAGE}\"",
-    "mkdir -p tmp",
-    "docker run --rm -v \"$PWD\":/src -w /src \"$BUILDER_IMAGE\" go build -trimpath -buildvcs=false -mod=readonly -ldflags \"-s -w -buildid=\" -o ./tmp/nitro-operator ./cmd/nitro-operator",
-    # Init/unseal the enclave signing key via KMS (PCR0-gated).
-    f"./tmp/nitro-operator init-key --enclave-cid {enclave_cid} --enclave-port {enclave_port} --region {region} --kms-key-id '{kms_key_id}' --kms-vsock-port {kms_vsock_port} --sealed-key-file ./tmp/nitro-operator.sealed.json",
-    "ls -la ./tmp/nitro-operator.sealed.json",
-]
+commands_json = sys.argv[1]
+cmds = json.loads(commands_json)
 
 payload = json.dumps({"commands": cmds})
 out = subprocess.check_output(
@@ -244,49 +205,154 @@ out = subprocess.check_output(
 )
 print(out.strip())
 PY
+}
+
+wait_ssm() {
+  local command_id="$1"
+  local status="InProgress"
+  for _ in $(seq 1 360); do
+    status="$(awsj ssm get-command-invocation \
+      --command-id "${command_id}" \
+      --instance-id "${INSTANCE_ID}" \
+      --query 'Status' \
+      --output text 2>/dev/null || true)"
+    case "${status}" in
+      Success|Failed|TimedOut|Cancelled)
+        break
+        ;;
+      *)
+        sleep 5
+        ;;
+    esac
+  done
+  echo "${status}"
+}
+
+PHASE1_CMDS="$(
+  python3 - <<'PY'
+import json,os
+region=os.environ["REGION"]
+repo=os.environ["REPO"]
+ref=os.environ["REF"]
+enclave_mem_mib=os.environ["ENCLAVE_MEM_MIB"]
+enclave_cpu_count=os.environ["ENCLAVE_CPU_COUNT"]
+cmds=[
+  "set -euo pipefail",
+  "sudo dnf install -y git docker python3",
+  "sudo systemctl enable --now docker",
+  "sudo dnf install -y aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel || sudo dnf install -y aws-nitro-enclaves-cli",
+  "nitro-cli --version || true",
+  "sudo mkdir -p /etc/nitro_enclaves",
+  f"cat <<'YAML' | sudo tee /etc/nitro_enclaves/allocator.yaml >/dev/null\n---\nmemory_mib: {enclave_mem_mib}\ncpu_count: {enclave_cpu_count}\nYAML",
+  "sudo systemctl enable --now nitro-enclaves-allocator || { echo \"allocator_failed\" >&2; ls -la /dev/nitro_enclaves /dev/nsm || true; cat /etc/nitro_enclaves/allocator.yaml || true; systemctl status --no-pager nitro-enclaves-allocator || true; journalctl -xeu nitro-enclaves-allocator --no-pager | tail -n 200 || true; exit 1; }",
+  f"rm -rf juno-intents && git clone https://github.com/{repo}.git juno-intents",
+  "cd juno-intents",
+  f"git checkout {ref}",
+  "scripts/enclave/build-eif.sh",
+]
+print(json.dumps(cmds))
+PY
 )"
 
-echo "ssm command id: ${COMMAND_ID}" >&2
-echo "waiting for command to finish (polling)..." >&2
-status="InProgress"
-for _ in $(seq 1 360); do
-  status="$(awsj ssm get-command-invocation \
-    --command-id "${COMMAND_ID}" \
-    --instance-id "${INSTANCE_ID}" \
-    --query 'Status' \
-    --output text 2>/dev/null || true)"
-  case "${status}" in
-    Success|Failed|TimedOut|Cancelled)
-      break
-      ;;
-    InProgress|Pending|Delayed)
-      sleep 5
-      ;;
-    *)
-      sleep 5
-      ;;
-  esac
-done
-echo "ssm status: ${status}" >&2
-
-invocation="$(awsj ssm get-command-invocation \
-  --command-id "${COMMAND_ID}" \
+PHASE1_ID="$(send_ssm "${PHASE1_CMDS}")"
+echo "ssm phase1 command id: ${PHASE1_ID}" >&2
+echo "waiting for phase1 to finish..." >&2
+phase1_status="$(wait_ssm "${PHASE1_ID}")"
+echo "ssm phase1 status: ${phase1_status}" >&2
+phase1_stdout="$(awsj ssm get-command-invocation \
+  --command-id "${PHASE1_ID}" \
   --instance-id "${INSTANCE_ID}" \
-  --query '{Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
-  --output json 2>/dev/null || true)"
-echo "${invocation}" >&2
-
-if [[ "${status}" != "Success" ]]; then
+  --query 'StandardOutputContent' \
+  --output text 2>/dev/null || true)"
+phase1_stderr="$(awsj ssm get-command-invocation \
+  --command-id "${PHASE1_ID}" \
+  --instance-id "${INSTANCE_ID}" \
+  --query 'StandardErrorContent' \
+  --output text 2>/dev/null || true)"
+printf '%s\n' "${phase1_stdout}" >&2
+printf '%s\n' "${phase1_stderr}" >&2
+if [[ "${phase1_status}" != "Success" ]]; then
   exit 1
 fi
 
-# Best-effort extraction of operator pubkey lines.
-python3 - <<'PY' <<<"${invocation}" || true
-import json,sys,re
-obj=json.load(sys.stdin)
-out=obj.get("Stdout","") + "\\n" + obj.get("Stderr","")
-for k in ["operator_pubkey_base58", "operator_pubkey_hex", "sealed_key_file"]:
-    m=re.search(rf"^{k}=(.+)$", out, re.M)
-    if m:
-        print(f"{k}={m.group(1)}")
+pcr0="$(
+  printf '%s\n%s\n' "${phase1_stdout}" "${phase1_stderr}" \
+    | tr -d '\r' \
+    | sed -nE 's/^pcr0=([0-9a-fA-F]{96})$/\1/p' \
+    | head -n 1 \
+    | tr 'A-F' 'a-f'
+)"
+if [[ -z "${pcr0}" ]]; then
+  echo "failed to extract pcr0 from phase1 output" >&2
+  exit 1
+fi
+echo "pcr0=${pcr0}" >&2
+
+echo "applying terraform allowed_pcr0..." >&2
+terraform -chdir="${ROOT}/infra/terraform/nitro-operator" apply -auto-approve -var "allowed_pcr0=[\"${pcr0}\"]" >/dev/null
+sleep 5
+
+echo "running smoke test via SSM (phase 2: run enclave + init key)..." >&2
+PHASE2_CMDS="$(
+  python3 - <<'PY'
+import json,os
+region=os.environ["REGION"]
+kms_key_id=os.environ["KMS_KEY_ID"]
+kms_vsock_port=os.environ["KMS_VSOCK_PORT"]
+enclave_cid=os.environ["ENCLAVE_CID"]
+enclave_port=os.environ["ENCLAVE_PORT"]
+enclave_mem_mib=os.environ["ENCLAVE_MEM_MIB"]
+enclave_cpu_count=os.environ["ENCLAVE_CPU_COUNT"]
+cmds=[
+  "set -euo pipefail",
+  "cd juno-intents",
+  "VSOCK_PROXY=\"$(command -v vsock-proxy || command -v nitro-enclaves-vsock-proxy || true)\"",
+  "if [[ -z \"${VSOCK_PROXY}\" ]]; then echo \"missing vsock-proxy\" >&2; exit 1; fi",
+  "echo \"vsock-proxy=${VSOCK_PROXY}\"",
+  f"sudo nohup \"${{VSOCK_PROXY}}\" {kms_vsock_port} kms.{region}.amazonaws.com 443 >/var/log/vsock-proxy.log 2>&1 &",
+  "sleep 1",
+  f"sudo nitro-cli run-enclave --eif-path tmp/enclave/operator.eif --cpu-count {enclave_cpu_count} --memory {enclave_mem_mib} --enclave-cid {enclave_cid}",
+  "sleep 2",
+  "BUILDER_IMAGE=\"$(awk '/^FROM --platform=linux\\/amd64 golang:/{print $3}' enclave/operator/Dockerfile | head -n 1)\"",
+  "echo \"builder_image=${BUILDER_IMAGE}\"",
+  "mkdir -p tmp",
+  "docker run --rm -v \"$PWD\":/src -w /src \"$BUILDER_IMAGE\" go build -trimpath -buildvcs=false -mod=readonly -ldflags \"-s -w -buildid=\" -o ./tmp/nitro-operator ./cmd/nitro-operator",
+  f"./tmp/nitro-operator init-key --enclave-cid {enclave_cid} --enclave-port {enclave_port} --region {region} --kms-key-id '{kms_key_id}' --kms-vsock-port {kms_vsock_port} --sealed-key-file ./tmp/nitro-operator.sealed.json",
+  "ls -la ./tmp/nitro-operator.sealed.json",
+]
+print(json.dumps(cmds))
 PY
+)"
+
+PHASE2_ID="$(send_ssm "${PHASE2_CMDS}")"
+echo "ssm phase2 command id: ${PHASE2_ID}" >&2
+echo "waiting for phase2 to finish..." >&2
+phase2_status="$(wait_ssm "${PHASE2_ID}")"
+echo "ssm phase2 status: ${phase2_status}" >&2
+phase2_stdout="$(awsj ssm get-command-invocation \
+  --command-id "${PHASE2_ID}" \
+  --instance-id "${INSTANCE_ID}" \
+  --query 'StandardOutputContent' \
+  --output text 2>/dev/null || true)"
+phase2_stderr="$(awsj ssm get-command-invocation \
+  --command-id "${PHASE2_ID}" \
+  --instance-id "${INSTANCE_ID}" \
+  --query 'StandardErrorContent' \
+  --output text 2>/dev/null || true)"
+printf '%s\n' "${phase2_stdout}" >&2
+printf '%s\n' "${phase2_stderr}" >&2
+if [[ "${phase2_status}" != "Success" ]]; then
+  exit 1
+fi
+
+for key in operator_pubkey_base58 operator_pubkey_hex sealed_key_file; do
+  val="$(
+    printf '%s\n%s\n' "${phase2_stdout}" "${phase2_stderr}" \
+      | tr -d '\r' \
+      | sed -nE "s/^${key}=(.+)$/\\1/p" \
+      | head -n 1
+  )"
+  if [[ -n "${val}" ]]; then
+    echo "${key}=${val}"
+  fi
+done

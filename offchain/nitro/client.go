@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -84,9 +86,8 @@ func dialVsock(cid uint32, port uint32) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	cleanup := true
 	defer func() {
-		if cleanup {
+		if fd != -1 {
 			_ = unix.Close(fd)
 		}
 	}()
@@ -99,12 +100,70 @@ func dialVsock(cid uint32, port uint32) (net.Conn, error) {
 	if f == nil {
 		return nil, errors.New("os.NewFile failed")
 	}
-	conn, err := net.FileConn(f)
-	_ = f.Close()
-	if err != nil {
-		return nil, err
+
+	local := VSockAddr{CID: 0, Port: 0}
+	if sa, err := unix.Getsockname(fd); err == nil {
+		if vm, ok := sa.(*unix.SockaddrVM); ok {
+			local = VSockAddr{CID: vm.CID, Port: vm.Port}
+		}
 	}
 
-	cleanup = false
+	conn := &vsockConn{
+		f:      f,
+		fd:     fd,
+		local:  local,
+		remote: VSockAddr{CID: cid, Port: port},
+	}
+	fd = -1 // owned by conn.f now
 	return conn, nil
+}
+
+type VSockAddr struct {
+	CID  uint32
+	Port uint32
+}
+
+func (a VSockAddr) Network() string { return "vsock" }
+func (a VSockAddr) String() string  { return fmt.Sprintf("%d:%d", a.CID, a.Port) }
+
+type vsockConn struct {
+	f      *os.File
+	fd     int
+	local  VSockAddr
+	remote VSockAddr
+}
+
+func (c *vsockConn) Read(b []byte) (int, error)  { return c.f.Read(b) }
+func (c *vsockConn) Write(b []byte) (int, error) { return c.f.Write(b) }
+func (c *vsockConn) Close() error                { return c.f.Close() }
+func (c *vsockConn) LocalAddr() net.Addr         { return c.local }
+func (c *vsockConn) RemoteAddr() net.Addr        { return c.remote }
+
+func (c *vsockConn) SetDeadline(t time.Time) error {
+	if err := c.SetReadDeadline(t); err != nil {
+		return err
+	}
+	return c.SetWriteDeadline(t)
+}
+
+func (c *vsockConn) SetReadDeadline(t time.Time) error {
+	return setSockTimeout(c.fd, unix.SO_RCVTIMEO, t)
+}
+
+func (c *vsockConn) SetWriteDeadline(t time.Time) error {
+	return setSockTimeout(c.fd, unix.SO_SNDTIMEO, t)
+}
+
+func setSockTimeout(fd int, opt int, deadline time.Time) error {
+	if deadline.IsZero() {
+		tv := unix.Timeval{Sec: 0, Usec: 0}
+		return unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, opt, &tv)
+	}
+
+	d := time.Until(deadline)
+	if d <= 0 {
+		d = time.Microsecond
+	}
+	tv := unix.NsecToTimeval(d.Nanoseconds())
+	return unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, opt, &tv)
 }
