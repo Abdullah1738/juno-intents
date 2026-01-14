@@ -60,7 +60,6 @@ data "aws_iam_policy_document" "kms_key_policy" {
     effect = "Allow"
     actions = [
       "kms:Decrypt",
-      "kms:Encrypt",
       "kms:GenerateDataKey",
       "kms:GenerateDataKeyWithoutPlaintext",
     ]
@@ -96,7 +95,6 @@ data "aws_iam_policy_document" "kms_use" {
     effect = "Allow"
     actions = [
       "kms:Decrypt",
-      "kms:Encrypt",
       "kms:GenerateDataKey",
       "kms:GenerateDataKeyWithoutPlaintext",
     ]
@@ -115,4 +113,3 @@ resource "aws_iam_role_policy" "kms_use" {
   role   = aws_iam_role.nitro_operator.id
   policy = data.aws_iam_policy_document.kms_use.json
 }
-
