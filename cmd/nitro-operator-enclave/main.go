@@ -18,8 +18,7 @@ import (
 	"sync"
 	"syscall"
 
-	"golang.org/x/sys/unix"
-
+	"github.com/Abdullah1738/juno-intents/internal/vsock"
 	"github.com/Abdullah1738/juno-intents/protocol"
 )
 
@@ -58,7 +57,7 @@ func run(argv []string) error {
 		fmt.Fprintf(os.Stderr, "unsafe_ephemeral_pubkey_hex=%s\n", hex.EncodeToString(pub))
 	}
 
-	ln, err := listenVsock(uint32(vsockPort))
+	ln, err := vsock.Listen(uint32(vsockPort))
 	if err != nil {
 		return err
 	}
@@ -265,69 +264,3 @@ func parseHex32(s string) ([32]byte, error) {
 	copy(out[:], b)
 	return out, nil
 }
-
-type vsockListener struct {
-	fd   int
-	addr vsockAddr
-}
-
-type vsockAddr struct {
-	cid  uint32
-	port uint32
-}
-
-func (a vsockAddr) Network() string { return "vsock" }
-func (a vsockAddr) String() string  { return fmt.Sprintf("%d:%d", a.cid, a.port) }
-
-func listenVsock(port uint32) (*vsockListener, error) {
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0)
-	if err != nil {
-		return nil, err
-	}
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = unix.Close(fd)
-		}
-	}()
-
-	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_REUSEADDR, 1); err != nil {
-		return nil, err
-	}
-
-	if err := unix.Bind(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_ANY, Port: port}); err != nil {
-		return nil, err
-	}
-	if err := unix.Listen(fd, 128); err != nil {
-		return nil, err
-	}
-
-	cleanup = false
-	return &vsockListener{
-		fd:   fd,
-		addr: vsockAddr{cid: unix.VMADDR_CID_ANY, port: port},
-	}, nil
-}
-
-func (l *vsockListener) Accept() (net.Conn, error) {
-	fd, _, err := unix.Accept(l.fd)
-	if err != nil {
-		return nil, err
-	}
-	_ = unix.SetNonblock(fd, true)
-
-	f := os.NewFile(uintptr(fd), "vsock")
-	if f == nil {
-		_ = unix.Close(fd)
-		return nil, errors.New("os.NewFile failed")
-	}
-	c, err := net.FileConn(f)
-	_ = f.Close()
-	if err != nil {
-		return nil, err
-	}
-	return c, nil
-}
-
-func (l *vsockListener) Close() error   { return unix.Close(l.fd) }
-func (l *vsockListener) Addr() net.Addr { return l.addr }
