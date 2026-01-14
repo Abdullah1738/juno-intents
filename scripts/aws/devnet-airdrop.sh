@@ -266,17 +266,24 @@ def get_balance():
     return int(res["value"])
 
 attempts = 0
+sleep_s = 6
 bal = get_balance()
 print(f"balance={bal} target={target} pubkey={pubkey} rpc={rpc_url}")
 
-while bal < target and attempts < 60:
+while bal < target and attempts < 120:
     attempts += 1
     try:
         sig = rpc("requestAirdrop", [pubkey, chunk])
         print(f"airdrop[{attempts}] sig={sig}")
+        sleep_s = 15
     except Exception as e:
-        print(f"airdrop[{attempts}] error={e}")
-    time.sleep(6)
+        msg = str(e)
+        print(f"airdrop[{attempts}] error={msg}")
+        if "429" in msg or "Too Many Requests" in msg:
+            sleep_s = min(sleep_s * 2, 120)
+        else:
+            sleep_s = min(max(sleep_s, 15), 120)
+    time.sleep(sleep_s)
     bal = get_balance()
     print(f"balance={bal}")
 
