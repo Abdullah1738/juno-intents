@@ -270,3 +270,69 @@ func (c *Client) ProgramAccountsByDataSizeBase64(ctx context.Context, programID 
 	}
 	return out, nil
 }
+
+type SignatureInfo struct {
+	Signature string `json:"signature"`
+	Slot      uint64 `json:"slot"`
+	Err       any    `json:"err"`
+}
+
+func (c *Client) SignaturesForAddress(ctx context.Context, address string, limit int) ([]SignatureInfo, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return nil, errors.New("address required")
+	}
+	if limit <= 0 {
+		return nil, errors.New("limit must be > 0")
+	}
+	if limit > 1000 {
+		return nil, errors.New("limit too large")
+	}
+
+	var resp []SignatureInfo
+	params := []any{
+		address,
+		map[string]any{
+			"limit":      limit,
+			"commitment": "confirmed",
+		},
+	}
+	if err := c.rpcCall(ctx, "getSignaturesForAddress", params, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (c *Client) TransactionBytesBase64(ctx context.Context, signature string) ([]byte, error) {
+	signature = strings.TrimSpace(signature)
+	if signature == "" {
+		return nil, errors.New("signature required")
+	}
+
+	var resp struct {
+		Transaction []any `json:"transaction"`
+	}
+	params := []any{
+		signature,
+		map[string]any{
+			"encoding":                       "base64",
+			"commitment":                     "confirmed",
+			"maxSupportedTransactionVersion": 0,
+		},
+	}
+	if err := c.rpcCall(ctx, "getTransaction", params, &resp); err != nil {
+		return nil, err
+	}
+	if len(resp.Transaction) < 1 {
+		return nil, errors.New("missing transaction in getTransaction response")
+	}
+	b64, ok := resp.Transaction[0].(string)
+	if !ok || strings.TrimSpace(b64) == "" {
+		return nil, errors.New("unexpected getTransaction encoding")
+	}
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
