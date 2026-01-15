@@ -30,6 +30,9 @@ Notes:
       - verifier entry PDA = PDA("verifier", selector)
   - Router program is deployed immutable (--final).
   - Groth16 verifier program is deployed with upgrade authority = router PDA.
+  - The RISC0 Solana verifier programs are Anchor programs which hard-code their program id.
+    This script stages a private copy of the upstream sources under tmp/ and patches `declare_id!()`
+    to match the generated program ids before building.
   - Creates a fresh disposable payer keypair under tmp/ and deletes it on success.
 USAGE
 }
@@ -152,15 +155,55 @@ G16_PROGRAM_ID="$(solana-keygen pubkey "${G16_KEYPAIR}")"
 echo "verifier_router_program_id: ${VR_PROGRAM_ID}" >&2
 echo "groth16_verifier_program_id: ${G16_PROGRAM_ID}" >&2
 
-if [[ "${SKIP_BUILD}" != "true" ]]; then
-  echo "building verifier_router (INITIAL_OWNER=${PAYER_PUBKEY})..." >&2
-  (cd "${ROOT}" && INITIAL_OWNER="${PAYER_PUBKEY}" cargo build-sbf --manifest-path third_party/risc0/risc0-solana/solana-verifier/programs/verifier_router/Cargo.toml)
-  echo "building groth_16_verifier..." >&2
-  (cd "${ROOT}" && cargo build-sbf --manifest-path third_party/risc0/risc0-solana/solana-verifier/programs/groth_16_verifier/Cargo.toml)
+BUILD_SRC="${WORKDIR}/risc0-solana"
+
+patch_declare_id() {
+  local file="$1"
+  local new_id="$2"
+  python3 - "${file}" "${new_id}" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+new_id = sys.argv[2]
+
+with open(path, "r", encoding="utf-8") as f:
+    lines = f.readlines()
+
+out = []
+patched = False
+for line in lines:
+    if re.match(r'\s*declare_id!\("[^"]+"\);\s*$', line):
+        out.append(re.sub(r'declare_id!\("[^"]+"\);', f'declare_id!("{new_id}");', line))
+        patched = True
+    else:
+        out.append(line)
+
+if not patched:
+    raise SystemExit(f"declare_id!() not found in {path}")
+
+with open(path, "w", encoding="utf-8") as f:
+    f.write("".join(out))
+PY
+}
+
+if [[ ! -d "${BUILD_SRC}" ]]; then
+  echo "staging risc0-solana sources..." >&2
+  cp -a "${ROOT}/third_party/risc0/risc0-solana" "${BUILD_SRC}"
+  rm -rf "${BUILD_SRC}/solana-verifier/target" >/dev/null 2>&1 || true
+  patch_declare_id "${BUILD_SRC}/solana-verifier/programs/verifier_router/src/lib.rs" "${VR_PROGRAM_ID}"
+  patch_declare_id "${BUILD_SRC}/solana-verifier/programs/groth_16_verifier/src/lib.rs" "${G16_PROGRAM_ID}"
 fi
 
-VR_SO="${ROOT}/third_party/risc0/risc0-solana/solana-verifier/target/deploy/verifier_router.so"
-G16_SO="${ROOT}/third_party/risc0/risc0-solana/solana-verifier/target/deploy/groth_16_verifier.so"
+if [[ "${SKIP_BUILD}" != "true" ]]; then
+  echo "building verifier_router (INITIAL_OWNER=${PAYER_PUBKEY})..." >&2
+  (cd "${BUILD_SRC}" && INITIAL_OWNER="${PAYER_PUBKEY}" cargo build-sbf --manifest-path solana-verifier/programs/verifier_router/Cargo.toml)
+  echo "building groth_16_verifier..." >&2
+  (cd "${BUILD_SRC}" && cargo build-sbf --manifest-path solana-verifier/programs/groth_16_verifier/Cargo.toml)
+fi
+
+VR_SO="${BUILD_SRC}/solana-verifier/target/deploy/verifier_router.so"
+G16_SO="${BUILD_SRC}/solana-verifier/target/deploy/groth_16_verifier.so"
 for f in "${VR_SO}" "${G16_SO}"; do
   if [[ ! -f "${f}" ]]; then
     echo "missing program artifact: ${f}" >&2
