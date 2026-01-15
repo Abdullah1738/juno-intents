@@ -44,9 +44,9 @@ func TestDecodeCrpCheckpointV1_Golden(t *testing.T) {
 	b[1] = 5
 
 	for i := 0; i < 32; i++ {
-		b[9+i] = 0x11       // block hash
-		b[41+i] = 0x22      // orchard root
-		b[73+i] = 0x33      // prev hash
+		b[9+i] = 0x11  // block hash
+		b[41+i] = 0x22 // orchard root
+		b[73+i] = 0x33 // prev hash
 	}
 	// first_seen_slot = 9
 	b[105] = 9
@@ -163,6 +163,110 @@ func TestExtractObservationSignaturesFromTx(t *testing.T) {
 	out3, err := extractObservationSignaturesFromTx(tx, expectedMsg, map[solana.Pubkey]struct{}{})
 	if err != nil {
 		t.Fatalf("extractObservationSignaturesFromTx (disallowed): %v", err)
+	}
+	if len(out3) != 0 {
+		t.Fatalf("len=%d, want 0", len(out3))
+	}
+}
+
+func TestExtractCheckpointsFromSubmitTx(t *testing.T) {
+	var blockhash [32]byte
+	for i := range blockhash {
+		blockhash[i] = 0x22
+	}
+
+	payerSeed := [32]byte{9, 8, 7}
+	payerPriv := ed25519.NewKeyFromSeed(payerSeed[:])
+	payerPub := payerPriv.Public().(ed25519.PublicKey)
+	var payer solana.Pubkey
+	copy(payer[:], payerPub)
+
+	var crpProgram solana.Pubkey
+	for i := range crpProgram {
+		crpProgram[i] = 0xA5
+	}
+	var cfg solana.Pubkey
+	for i := range cfg {
+		cfg[i] = 0xB6
+	}
+	var checkpoint solana.Pubkey
+	for i := range checkpoint {
+		checkpoint[i] = 0xC7
+	}
+
+	var blockHash [32]byte
+	var orchardRoot [32]byte
+	var prevHash [32]byte
+	for i := 0; i < 32; i++ {
+		blockHash[i] = 0x11
+		orchardRoot[i] = 0x22
+		prevHash[i] = 0x33
+	}
+
+	submitIx := solana.Instruction{
+		ProgramID: crpProgram,
+		Accounts: []solana.AccountMeta{
+			{Pubkey: payer, IsSigner: true, IsWritable: true},
+			{Pubkey: cfg, IsSigner: false, IsWritable: false},
+			{Pubkey: checkpoint, IsSigner: false, IsWritable: true},
+			{Pubkey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
+			{Pubkey: solana.InstructionsSysvarID, IsSigner: false, IsWritable: false},
+		},
+		Data: encodeCrpSubmitObservation(5, blockHash, orchardRoot, prevHash),
+	}
+
+	tx, err := solana.BuildAndSignLegacyTransaction(
+		blockhash,
+		payer,
+		map[solana.Pubkey]ed25519.PrivateKey{payer: payerPriv},
+		[]solana.Instruction{submitIx},
+	)
+	if err != nil {
+		t.Fatalf("BuildAndSignLegacyTransaction: %v", err)
+	}
+
+	out, err := extractCheckpointsFromSubmitTx(tx, crpProgram, cfg)
+	if err != nil {
+		t.Fatalf("extractCheckpointsFromSubmitTx: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("len=%d, want 1", len(out))
+	}
+	if out[0] != checkpoint {
+		t.Fatalf("checkpoint mismatch")
+	}
+
+	// Wrong config must not match.
+	var wrongCfg solana.Pubkey
+	for i := range wrongCfg {
+		wrongCfg[i] = 0x01
+	}
+	out2, err := extractCheckpointsFromSubmitTx(tx, crpProgram, wrongCfg)
+	if err != nil {
+		t.Fatalf("extractCheckpointsFromSubmitTx(wrong cfg): %v", err)
+	}
+	if len(out2) != 0 {
+		t.Fatalf("len=%d, want 0", len(out2))
+	}
+
+	// Non-submit instruction must not match.
+	nonSubmitIx := solana.Instruction{
+		ProgramID: crpProgram,
+		Accounts:  submitIx.Accounts,
+		Data:      encodeCrpFinalize(2),
+	}
+	tx2, err := solana.BuildAndSignLegacyTransaction(
+		blockhash,
+		payer,
+		map[solana.Pubkey]ed25519.PrivateKey{payer: payerPriv},
+		[]solana.Instruction{nonSubmitIx},
+	)
+	if err != nil {
+		t.Fatalf("BuildAndSignLegacyTransaction(non-submit): %v", err)
+	}
+	out3, err := extractCheckpointsFromSubmitTx(tx2, crpProgram, cfg)
+	if err != nil {
+		t.Fatalf("extractCheckpointsFromSubmitTx(non-submit): %v", err)
 	}
 	if len(out3) != 0 {
 		t.Fatalf("len=%d, want 0", len(out3))

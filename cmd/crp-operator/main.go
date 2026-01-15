@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -43,6 +44,8 @@ func run(argv []string) error {
 		return cmdFinalize(argv[1:])
 	case "finalize-auto":
 		return cmdFinalizeAuto(argv[1:])
+	case "finalize-pending":
+		return cmdFinalizePending(argv[1:])
 	case "deployments":
 		return cmdDeployments(argv[1:])
 	case "run":
@@ -59,6 +62,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  crp-operator submit   [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --height <u64> --block-hash <hex32> --orchard-root <hex32> --prev-hash <hex32> [--payer-keypair <path>] [--operator-keypair <path>] [--operator-enclave-cid <u32>] [--operator-enclave-port <u32>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
 	fmt.Fprintln(w, "  crp-operator finalize [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --height <u64> --orchard-root <hex32> --operator-keypair <path> [--operator-keypair <path>...] [--payer-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
 	fmt.Fprintln(w, "  crp-operator finalize-auto [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --height <u64> --orchard-root <hex32> [--payer-keypair <path>] [--scan-limit <n>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
+	fmt.Fprintln(w, "  crp-operator finalize-pending [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> [--payer-keypair <path>] [--config-scan-limit <n>] [--scan-limit <n>] [--max-checkpoints <n>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
 	fmt.Fprintln(w, "  crp-operator deployments [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58>")
 	fmt.Fprintln(w, "  crp-operator run [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --start-height <u64> --finalize-operator-keypair <path> [--junocash-cli <path>] [--junocash-cli-arg <arg>...] [--lag <u64>] [--poll-interval <duration>] [--payer-keypair <path>] [--submit-operator-keypair <path>] [--submit-operator-enclave-cid <u32>] [--submit-operator-enclave-port <u32>] [--cu-limit-submit <u32>] [--cu-limit-finalize <u32>] [--priority-level <level>] [--dry-run] [--once] [--submit-only]")
 	fmt.Fprintln(w)
@@ -630,6 +634,223 @@ func cmdFinalizeAuto(argv []string) error {
 		return nil
 	}
 
+	return finalizeCheckpointAuto(ctx, rpc, payerPriv, payerPub, crpProgram, deploymentID, cfg, crpCfg, checkpoint, cp, uint(scanLimit), cuLimit, priorityLevel, dryRun)
+}
+
+func cmdFinalizePending(argv []string) error {
+	fs := flag.NewFlagSet("finalize-pending", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	var (
+		deploymentFile string
+		deploymentName string
+
+		crpProgramStr string
+		deploymentHex string
+
+		payerPath string
+
+		configScanLimit uint
+		scanLimit       uint
+		maxCheckpoints  uint
+
+		cuLimit       uint
+		priorityLevel string
+		dryRun        bool
+	)
+
+	fs.StringVar(&deploymentName, "deployment", "", "Deployment name from deployments.json (fills --crp-program-id/--deployment-id)")
+	fs.StringVar(&deploymentFile, "deployment-file", "deployments.json", "Deployments registry file path")
+	fs.StringVar(&crpProgramStr, "crp-program-id", "", "CRP program id (base58)")
+	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
+	fs.StringVar(&payerPath, "payer-keypair", solvernet.DefaultSolanaKeypairPath(), "Payer Solana keypair path (Solana CLI JSON format)")
+	fs.UintVar(&configScanLimit, "config-scan-limit", 200, "Max tx signatures to scan on the CRP config PDA")
+	fs.UintVar(&scanLimit, "scan-limit", 200, "Max tx signatures to scan for operator ed25519 signatures per checkpoint")
+	fs.UintVar(&maxCheckpoints, "max-checkpoints", 1, "Max checkpoints to finalize in one run")
+	fs.UintVar(&cuLimit, "cu-limit", 250_000, "Compute unit limit")
+	fs.StringVar(&priorityLevel, "priority-level", string(helius.PriorityMedium), "Priority level (Min/Low/Medium/High/VeryHigh/UnsafeMax)")
+	fs.BoolVar(&dryRun, "dry-run", false, "If set, prints the base64 tx for the first candidate instead of sending it")
+
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if err := applyDeploymentRegistryDefaults(deploymentFile, deploymentName, &crpProgramStr, &deploymentHex); err != nil {
+		return err
+	}
+	if crpProgramStr == "" || deploymentHex == "" {
+		return errors.New("--crp-program-id and --deployment-id are required")
+	}
+	if configScanLimit == 0 || configScanLimit > 1000 {
+		return errors.New("--config-scan-limit must be in [1,1000]")
+	}
+	if scanLimit == 0 || scanLimit > 1000 {
+		return errors.New("--scan-limit must be in [1,1000]")
+	}
+	if maxCheckpoints == 0 || maxCheckpoints > 10 {
+		return errors.New("--max-checkpoints must be in [1,10]")
+	}
+
+	crpProgram, err := solana.ParsePubkey(crpProgramStr)
+	if err != nil {
+		return fmt.Errorf("parse --crp-program-id: %w", err)
+	}
+	deploymentID, err := protocol.ParseDeploymentIDHex(strings.TrimPrefix(strings.TrimSpace(deploymentHex), "0x"))
+	if err != nil {
+		return fmt.Errorf("parse --deployment-id: %w", err)
+	}
+
+	payerPriv, payerPub, err := solvernet.LoadSolanaKeypair(payerPath)
+	if err != nil {
+		return fmt.Errorf("load payer keypair: %w", err)
+	}
+
+	cfg, _, err := solana.FindProgramAddress([][]byte{[]byte("config"), deploymentID[:]}, solana.Pubkey(crpProgram))
+	if err != nil {
+		return fmt.Errorf("derive config pda: %w", err)
+	}
+
+	rpc, err := solanarpc.ClientFromEnv()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	cfgRaw, err := rpc.AccountDataBase64(ctx, cfg.Base58())
+	if err != nil {
+		return fmt.Errorf("fetch config: %w", err)
+	}
+	crpCfg, err := decodeCrpConfigV1(cfgRaw)
+	if err != nil {
+		return fmt.Errorf("decode config: %w", err)
+	}
+	if crpCfg.Paused {
+		return errors.New("crp config is paused")
+	}
+	if crpCfg.DeploymentID != deploymentID {
+		return errors.New("crp deployment_id mismatch")
+	}
+	if crpCfg.Threshold == 0 {
+		return errors.New("crp config threshold=0")
+	}
+
+	sigInfos, err := rpc.SignaturesForAddress(ctx, cfg.Base58(), int(configScanLimit))
+	if err != nil {
+		return fmt.Errorf("getSignaturesForAddress(config): %w", err)
+	}
+
+	type candidate struct {
+		Checkpoint solana.Pubkey
+		Height     uint64
+		Orchard    [32]byte
+		CP         crpCheckpointV1
+	}
+
+	seenCheckpoints := make(map[solana.Pubkey]struct{}, int(maxCheckpoints))
+	candidates := make([]candidate, 0, int(maxCheckpoints))
+
+	for _, si := range sigInfos {
+		if si.Err != nil {
+			continue
+		}
+		txBytes, err := rpc.TransactionBytesBase64(ctx, si.Signature)
+		if err != nil {
+			continue
+		}
+		checkpoints, err := extractCheckpointsFromSubmitTx(txBytes, solana.Pubkey(crpProgram), cfg)
+		if err != nil {
+			continue
+		}
+		for _, chk := range checkpoints {
+			if _, ok := seenCheckpoints[chk]; ok {
+				continue
+			}
+			seenCheckpoints[chk] = struct{}{}
+
+			raw, err := rpc.AccountDataBase64(ctx, chk.Base58())
+			if err != nil {
+				continue
+			}
+			cp, err := decodeCrpCheckpointV1(raw)
+			if err != nil {
+				continue
+			}
+			if cp.Version != 1 || cp.Finalized {
+				continue
+			}
+			candidates = append(candidates, candidate{
+				Checkpoint: chk,
+				Height:     cp.Height,
+				Orchard:    cp.OrchardRoot,
+				CP:         cp,
+			})
+		}
+	}
+
+	if len(candidates) == 0 {
+		fmt.Fprintln(os.Stderr, "no pending checkpoints found")
+		return nil
+	}
+
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Height < candidates[j].Height })
+
+	nowSlot, err := rpc.Slot(ctx)
+	if err != nil {
+		return err
+	}
+
+	var finalized uint
+	for _, c := range candidates {
+		if finalized >= maxCheckpoints {
+			break
+		}
+
+		if nowSlot < c.CP.FirstSeenSlot+crpCfg.FinalizationDelaySlots {
+			continue
+		}
+
+		// Sanity: ensure the checkpoint PDA matches (config, orchard_root).
+		expectedCheckpoint, _, err := solana.FindProgramAddress(
+			[][]byte{[]byte("checkpoint"), cfg[:], c.Orchard[:]},
+			solana.Pubkey(crpProgram),
+		)
+		if err != nil || expectedCheckpoint != c.Checkpoint {
+			continue
+		}
+
+		if err := finalizeCheckpointAuto(ctx, rpc, payerPriv, payerPub, crpProgram, deploymentID, cfg, crpCfg, c.Checkpoint, c.CP, scanLimit, cuLimit, priorityLevel, dryRun); err != nil {
+			fmt.Fprintf(os.Stderr, "finalize %s (height=%d): %v\n", c.Checkpoint.Base58(), c.Height, err)
+			continue
+		}
+		finalized++
+		if dryRun {
+			return nil
+		}
+	}
+
+	if finalized == 0 {
+		fmt.Fprintln(os.Stderr, "no checkpoints eligible for finalization")
+	}
+	return nil
+}
+
+func finalizeCheckpointAuto(
+	ctx context.Context,
+	rpc *solanarpc.Client,
+	payerPriv ed25519.PrivateKey,
+	payerPub [32]byte,
+	crpProgram solana.Pubkey,
+	deploymentID protocol.DeploymentID,
+	cfg solana.Pubkey,
+	crpCfg crpConfigV1,
+	checkpoint solana.Pubkey,
+	cp crpCheckpointV1,
+	scanLimit uint,
+	cuLimit uint,
+	priorityLevel string,
+	dryRun bool,
+) error {
 	heightRec, _, err := solana.FindProgramAddress(
 		[][]byte{[]byte("height"), cfg[:], u64LE(cp.Height)},
 		solana.Pubkey(crpProgram),
@@ -772,6 +993,41 @@ func cmdFinalizeAuto(argv []string) error {
 	}
 	fmt.Println(sigStr)
 	return nil
+}
+
+func extractCheckpointsFromSubmitTx(
+	tx []byte,
+	crpProgram solana.Pubkey,
+	config solana.Pubkey,
+) ([]solana.Pubkey, error) {
+	msg, err := solana.ParseLegacyTransaction(tx)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []solana.Pubkey
+	for _, ix := range msg.Instructions {
+		if ix.ProgramID != crpProgram {
+			continue
+		}
+		// Borsh enum discriminant: SubmitObservation is 2.
+		if len(ix.Data) == 0 || ix.Data[0] != 2 {
+			continue
+		}
+		if len(ix.Accounts) < 3 {
+			continue
+		}
+		cfgIdx := int(ix.Accounts[1])
+		chkIdx := int(ix.Accounts[2])
+		if cfgIdx < 0 || cfgIdx >= len(msg.AccountKeys) || chkIdx < 0 || chkIdx >= len(msg.AccountKeys) {
+			continue
+		}
+		if msg.AccountKeys[cfgIdx] != config {
+			continue
+		}
+		out = append(out, msg.AccountKeys[chkIdx])
+	}
+	return out, nil
 }
 
 func cmdDeployments(argv []string) error {
