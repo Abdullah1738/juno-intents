@@ -62,6 +62,10 @@ func run(argv []string) error {
 		return cmdIepFill(argv[1:])
 	case "iep-settle":
 		return cmdIepSettle(argv[1:])
+	case "iep-pdas":
+		return cmdIepPDAs(argv[1:])
+	case "receipt-inputs":
+		return cmdReceiptInputs(argv[1:])
 	case "pda":
 		return cmdPDA(argv[1:])
 	case "keygen":
@@ -86,6 +90,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  juno-intents iep-create-intent [--deployment <name>] --mint <pubkey> --solana-recipient <pubkey> --net-amount <u64> --expiry-slot <u64> [--direction A|B] [--intent-nonce <hex32>] [--creator-keypair <path>] [--creator-source-token-account <pubkey>] [--priority-level <level>]")
 	fmt.Fprintln(w, "  juno-intents iep-fill [--deployment <name>] --intent <pubkey> --mint <pubkey> --receiver-tag <hex32> --junocash-amount <u64> [--solver-keypair <path>] [--solver-source-token-account <pubkey>] [--solver-destination-token-account <pubkey>] [--priority-level <level>]")
 	fmt.Fprintln(w, "  juno-intents iep-settle --deployment <name> --intent <pubkey> --mint <pubkey> --recipient-token-account <pubkey> --fee-token-account <pubkey> [--bundle-hex <hex>] [--payer-keypair <path>] [--priority-level <level>]")
+	fmt.Fprintln(w, "  juno-intents iep-pdas [--deployment <name>] --intent <pubkey> [--print <field>]")
+	fmt.Fprintln(w, "  juno-intents receipt-inputs [--witness-hex <hex>] [--json]")
 	fmt.Fprintln(w, "  juno-intents pda --program-id <pubkey> --deployment-id <hex32> --intent-nonce <hex32> [--print <field>]")
 	fmt.Fprintln(w, "  juno-intents keygen [--out <path>] [--force]")
 	fmt.Fprintln(w)
@@ -101,6 +107,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  iep-create-intent Creates an IEP intent (devnet/mainnet RPC).")
 	fmt.Fprintln(w, "  iep-fill  Fills an IEP intent (locks escrow).")
 	fmt.Fprintln(w, "  iep-settle Settles a fill with a receipt bundle.")
+	fmt.Fprintln(w, "  iep-pdas  Prints IEP-derived PDAs for an intent.")
+	fmt.Fprintln(w, "  receipt-inputs Prints receipt public inputs for a witness.")
 	fmt.Fprintln(w, "  pda       Prints the derived Intent/Fill PDAs for deterministic testing.")
 	fmt.Fprintln(w, "  keygen    Generates a new Solana CLI JSON keypair file (0600).")
 }
