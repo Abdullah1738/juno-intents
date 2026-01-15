@@ -60,7 +60,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  crp-operator finalize [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --height <u64> --orchard-root <hex32> --operator-keypair <path> [--operator-keypair <path>...] [--payer-keypair <path>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
 	fmt.Fprintln(w, "  crp-operator finalize-auto [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --height <u64> --orchard-root <hex32> [--payer-keypair <path>] [--scan-limit <n>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
 	fmt.Fprintln(w, "  crp-operator deployments [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58>")
-	fmt.Fprintln(w, "  crp-operator run [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --start-height <u64> --finalize-operator-keypair <path> [--junocash-cli <path>] [--junocash-cli-arg <arg>...] [--lag <u64>] [--poll-interval <duration>] [--payer-keypair <path>] [--submit-operator-keypair <path>] [--submit-operator-enclave-cid <u32>] [--submit-operator-enclave-port <u32>] [--cu-limit-submit <u32>] [--cu-limit-finalize <u32>] [--priority-level <level>] [--dry-run] [--once]")
+	fmt.Fprintln(w, "  crp-operator run [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --start-height <u64> --finalize-operator-keypair <path> [--junocash-cli <path>] [--junocash-cli-arg <arg>...] [--lag <u64>] [--poll-interval <duration>] [--payer-keypair <path>] [--submit-operator-keypair <path>] [--submit-operator-enclave-cid <u32>] [--submit-operator-enclave-port <u32>] [--cu-limit-submit <u32>] [--cu-limit-finalize <u32>] [--priority-level <level>] [--dry-run] [--once] [--submit-only]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Environment:")
 	fmt.Fprintln(w, "  SOLANA_RPC_URL or HELIUS_RPC_URL or HELIUS_API_KEY/HELIUS_CLUSTER")
@@ -1081,6 +1081,7 @@ func cmdRun(argv []string) error {
 		priorityLevel   string
 		dryRun          bool
 		once            bool
+		submitOnly      bool
 	)
 
 	fs.StringVar(&deploymentName, "deployment", "", "Deployment name from deployments.json (fills --crp-program-id/--deployment-id)")
@@ -1102,6 +1103,7 @@ func cmdRun(argv []string) error {
 	fs.StringVar(&priorityLevel, "priority-level", string(helius.PriorityMedium), "Priority level (Min/Low/Medium/High/VeryHigh/UnsafeMax)")
 	fs.BoolVar(&dryRun, "dry-run", false, "If set, prints base64 txs instead of sending them")
 	fs.BoolVar(&once, "once", false, "If set, runs one poll cycle and exits")
+	fs.BoolVar(&submitOnly, "submit-only", false, "If set, only submits observations (does not finalize checkpoints)")
 
 	if err := fs.Parse(argv); err != nil {
 		return err
@@ -1123,8 +1125,8 @@ func cmdRun(argv []string) error {
 			return errors.New("--submit-operator-enclave-cid and --submit-operator-enclave-port must fit in u32 (and port must be > 0)")
 		}
 	}
-	if len(finalizeOperatorPaths) == 0 {
-		return errors.New("at least one --finalize-operator-keypair is required")
+	if !submitOnly && len(finalizeOperatorPaths) == 0 {
+		return errors.New("at least one --finalize-operator-keypair is required (or pass --submit-only)")
 	}
 
 	crpProgram, err := solana.ParsePubkey(crpProgramStr)
@@ -1150,12 +1152,14 @@ func cmdRun(argv []string) error {
 	}
 
 	var finalizePrivs []ed25519.PrivateKey
-	for _, p := range finalizeOperatorPaths {
-		opPriv, _, err := solvernet.LoadSolanaKeypair(p)
-		if err != nil {
-			return fmt.Errorf("load finalizer keypair %q: %w", p, err)
+	if !submitOnly {
+		for _, p := range finalizeOperatorPaths {
+			opPriv, _, err := solvernet.LoadSolanaKeypair(p)
+			if err != nil {
+				return fmt.Errorf("load finalizer keypair %q: %w", p, err)
+			}
+			finalizePrivs = append(finalizePrivs, opPriv)
 		}
-		finalizePrivs = append(finalizePrivs, opPriv)
 	}
 
 	jc := junocashcli.New(junocashPath, []string(junocashArgs))
@@ -1190,7 +1194,7 @@ func cmdRun(argv []string) error {
 	if cfg.Threshold == 0 {
 		return errors.New("crp config threshold=0")
 	}
-	if uint8(len(finalizePrivs)) < cfg.Threshold {
+	if !submitOnly && uint8(len(finalizePrivs)) < cfg.Threshold {
 		return fmt.Errorf("need at least %d finalize keypairs, got %d", cfg.Threshold, len(finalizePrivs))
 	}
 
@@ -1378,7 +1382,9 @@ func cmdRun(argv []string) error {
 				fmt.Fprintf(os.Stderr, "tx %s\n", sigStr)
 			}
 
-			pending = append(pending, pendingCheckpoint{Height: nextHeight, OrchardRoot: orchardRoot})
+			if !submitOnly {
+				pending = append(pending, pendingCheckpoint{Height: nextHeight, OrchardRoot: orchardRoot})
+			}
 			nextHeight++
 		}
 
@@ -1388,143 +1394,145 @@ func cmdRun(argv []string) error {
 			return err
 		}
 
-		for i := 0; i < len(pending); {
-			p := pending[i]
+		if !submitOnly {
+			for i := 0; i < len(pending); {
+				p := pending[i]
 
-			checkpoint, _, err := solana.FindProgramAddress(
-				[][]byte{[]byte("checkpoint"), cfgPDA[:], p.OrchardRoot[:]},
-				solana.Pubkey(crpProgram),
-			)
-			if err != nil {
-				cancel()
-				return err
-			}
-			cpRaw, err := rpc.AccountDataBase64(ctx, checkpoint.Base58())
-			if err != nil {
-				i++
-				continue
-			}
-			cp, err := decodeCrpCheckpointV1(cpRaw)
-			if err != nil {
-				cancel()
-				return err
-			}
-			if cp.Finalized {
-				pending = append(pending[:i], pending[i+1:]...)
-				continue
-			}
-			if curSlot < cp.FirstSeenSlot+cfg.FinalizationDelaySlots {
-				i++
-				continue
-			}
-
-			heightRec, _, err := solana.FindProgramAddress(
-				[][]byte{[]byte("height"), cfgPDA[:], u64LE(cp.Height)},
-				solana.Pubkey(crpProgram),
-			)
-			if err != nil {
-				cancel()
-				return err
-			}
-
-			obs := protocol.CheckpointObservation{
-				Height:      cp.Height,
-				BlockHash:   protocol.JunoBlockHash(cp.BlockHash),
-				OrchardRoot: protocol.OrchardRoot(cp.OrchardRoot),
-				PrevHash:    protocol.JunoBlockHash(cp.PrevHash),
-			}
-			signingBytes := obs.SigningBytes(deploymentID)
-
-			var edIxs []solana.Instruction
-			for _, priv := range finalizePrivs[:cfg.Threshold] {
-				pub := priv.Public().(ed25519.PublicKey)
-				var pk [32]byte
-				copy(pk[:], pub)
-				sig := ed25519.Sign(priv, signingBytes)
-				var sig64 [64]byte
-				copy(sig64[:], sig)
-				edIxs = append(edIxs, solana.Ed25519VerifyInstruction(sig64, solana.Pubkey(pk), signingBytes))
-			}
-
-			feeKeys := []string{
-				solana.Pubkey(payerPub).Base58(),
-				cfgPDA.Base58(),
-				checkpoint.Base58(),
-				heightRec.Base58(),
-				solana.SystemProgramID.Base58(),
-				solana.InstructionsSysvarID.Base58(),
-				solana.Ed25519ProgramID.Base58(),
-				solana.Pubkey(crpProgram).Base58(),
-			}
-
-			var microLamports uint64
-			if heliusClient != nil {
-				est, err := heliusClient.GetPriorityFeeEstimateByAccountKeys(ctx, helius.PriorityFeeEstimateByAccountKeysRequest{
-					AccountKeys: feeKeys,
-					Options: &helius.PriorityFeeOptions{
-						PriorityLevel: helius.PriorityLevel(priorityLevel),
-						Recommended:   true,
-					},
-				})
-				if err == nil {
-					microLamports = est.MicroLamports
-				}
-			}
-
-			var ixs []solana.Instruction
-			if cuLimitFinalize != 0 {
-				ixs = append(ixs, solana.ComputeBudgetSetComputeUnitLimit(uint32(cuLimitFinalize)))
-			}
-			if microLamports != 0 {
-				ixs = append(ixs, solana.ComputeBudgetSetComputeUnitPrice(microLamports))
-			}
-			ixs = append(ixs, edIxs...)
-			ixs = append(ixs, solana.Instruction{
-				ProgramID: solana.Pubkey(crpProgram),
-				Accounts: []solana.AccountMeta{
-					{Pubkey: solana.Pubkey(payerPub), IsSigner: true, IsWritable: true},
-					{Pubkey: cfgPDA, IsSigner: false, IsWritable: true},
-					{Pubkey: checkpoint, IsSigner: false, IsWritable: true},
-					{Pubkey: heightRec, IsSigner: false, IsWritable: true},
-					{Pubkey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
-					{Pubkey: solana.InstructionsSysvarID, IsSigner: false, IsWritable: false},
-				},
-				Data: encodeCrpFinalize(uint8(len(edIxs))),
-			})
-
-			bhSol, err := rpc.LatestBlockhash(ctx)
-			if err != nil {
-				cancel()
-				return err
-			}
-			tx, err := solana.BuildAndSignLegacyTransaction(
-				bhSol,
-				solana.Pubkey(payerPub),
-				map[solana.Pubkey]ed25519.PrivateKey{solana.Pubkey(payerPub): payerPriv},
-				ixs,
-			)
-			if err != nil {
-				cancel()
-				return err
-			}
-
-			fmt.Fprintf(os.Stderr, "finalize height=%d orchard_root=%x\n", cp.Height, cp.OrchardRoot)
-			if dryRun {
-				if microLamports != 0 {
-					fmt.Fprintf(os.Stderr, "priority_fee: cu_limit=%d microLamports=%d keys=%s\n", cuLimitFinalize, microLamports, strings.Join(feeKeys, ","))
-				}
-				fmt.Println(base64Std(tx))
-			} else {
-				sigStr, err := rpc.SendTransaction(ctx, tx, false)
+				checkpoint, _, err := solana.FindProgramAddress(
+					[][]byte{[]byte("checkpoint"), cfgPDA[:], p.OrchardRoot[:]},
+					solana.Pubkey(crpProgram),
+				)
 				if err != nil {
 					cancel()
 					return err
 				}
-				fmt.Fprintf(os.Stderr, "tx %s\n", sigStr)
-			}
+				cpRaw, err := rpc.AccountDataBase64(ctx, checkpoint.Base58())
+				if err != nil {
+					i++
+					continue
+				}
+				cp, err := decodeCrpCheckpointV1(cpRaw)
+				if err != nil {
+					cancel()
+					return err
+				}
+				if cp.Finalized {
+					pending = append(pending[:i], pending[i+1:]...)
+					continue
+				}
+				if curSlot < cp.FirstSeenSlot+cfg.FinalizationDelaySlots {
+					i++
+					continue
+				}
 
-			// Remove from pending after we attempt finalization.
-			pending = append(pending[:i], pending[i+1:]...)
+				heightRec, _, err := solana.FindProgramAddress(
+					[][]byte{[]byte("height"), cfgPDA[:], u64LE(cp.Height)},
+					solana.Pubkey(crpProgram),
+				)
+				if err != nil {
+					cancel()
+					return err
+				}
+
+				obs := protocol.CheckpointObservation{
+					Height:      cp.Height,
+					BlockHash:   protocol.JunoBlockHash(cp.BlockHash),
+					OrchardRoot: protocol.OrchardRoot(cp.OrchardRoot),
+					PrevHash:    protocol.JunoBlockHash(cp.PrevHash),
+				}
+				signingBytes := obs.SigningBytes(deploymentID)
+
+				var edIxs []solana.Instruction
+				for _, priv := range finalizePrivs[:cfg.Threshold] {
+					pub := priv.Public().(ed25519.PublicKey)
+					var pk [32]byte
+					copy(pk[:], pub)
+					sig := ed25519.Sign(priv, signingBytes)
+					var sig64 [64]byte
+					copy(sig64[:], sig)
+					edIxs = append(edIxs, solana.Ed25519VerifyInstruction(sig64, solana.Pubkey(pk), signingBytes))
+				}
+
+				feeKeys := []string{
+					solana.Pubkey(payerPub).Base58(),
+					cfgPDA.Base58(),
+					checkpoint.Base58(),
+					heightRec.Base58(),
+					solana.SystemProgramID.Base58(),
+					solana.InstructionsSysvarID.Base58(),
+					solana.Ed25519ProgramID.Base58(),
+					solana.Pubkey(crpProgram).Base58(),
+				}
+
+				var microLamports uint64
+				if heliusClient != nil {
+					est, err := heliusClient.GetPriorityFeeEstimateByAccountKeys(ctx, helius.PriorityFeeEstimateByAccountKeysRequest{
+						AccountKeys: feeKeys,
+						Options: &helius.PriorityFeeOptions{
+							PriorityLevel: helius.PriorityLevel(priorityLevel),
+							Recommended:   true,
+						},
+					})
+					if err == nil {
+						microLamports = est.MicroLamports
+					}
+				}
+
+				var ixs []solana.Instruction
+				if cuLimitFinalize != 0 {
+					ixs = append(ixs, solana.ComputeBudgetSetComputeUnitLimit(uint32(cuLimitFinalize)))
+				}
+				if microLamports != 0 {
+					ixs = append(ixs, solana.ComputeBudgetSetComputeUnitPrice(microLamports))
+				}
+				ixs = append(ixs, edIxs...)
+				ixs = append(ixs, solana.Instruction{
+					ProgramID: solana.Pubkey(crpProgram),
+					Accounts: []solana.AccountMeta{
+						{Pubkey: solana.Pubkey(payerPub), IsSigner: true, IsWritable: true},
+						{Pubkey: cfgPDA, IsSigner: false, IsWritable: true},
+						{Pubkey: checkpoint, IsSigner: false, IsWritable: true},
+						{Pubkey: heightRec, IsSigner: false, IsWritable: true},
+						{Pubkey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
+						{Pubkey: solana.InstructionsSysvarID, IsSigner: false, IsWritable: false},
+					},
+					Data: encodeCrpFinalize(uint8(len(edIxs))),
+				})
+
+				bhSol, err := rpc.LatestBlockhash(ctx)
+				if err != nil {
+					cancel()
+					return err
+				}
+				tx, err := solana.BuildAndSignLegacyTransaction(
+					bhSol,
+					solana.Pubkey(payerPub),
+					map[solana.Pubkey]ed25519.PrivateKey{solana.Pubkey(payerPub): payerPriv},
+					ixs,
+				)
+				if err != nil {
+					cancel()
+					return err
+				}
+
+				fmt.Fprintf(os.Stderr, "finalize height=%d orchard_root=%x\n", cp.Height, cp.OrchardRoot)
+				if dryRun {
+					if microLamports != 0 {
+						fmt.Fprintf(os.Stderr, "priority_fee: cu_limit=%d microLamports=%d keys=%s\n", cuLimitFinalize, microLamports, strings.Join(feeKeys, ","))
+					}
+					fmt.Println(base64Std(tx))
+				} else {
+					sigStr, err := rpc.SendTransaction(ctx, tx, false)
+					if err != nil {
+						cancel()
+						return err
+					}
+					fmt.Fprintf(os.Stderr, "tx %s\n", sigStr)
+				}
+
+				// Remove from pending after we attempt finalization.
+				pending = append(pending[:i], pending[i+1:]...)
+			}
 		}
 
 		cancel()
