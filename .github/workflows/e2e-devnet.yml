@@ -1,0 +1,144 @@
+name: e2e-devnet
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment:
+        description: "Deployment name from deployments.json"
+        required: true
+        type: string
+      net_amount_a:
+        description: "Direction A net amount (SPL tokens, u64)"
+        required: false
+        default: "1000"
+        type: string
+      net_amount_b:
+        description: "Direction B net amount (SPL tokens, u64)"
+        required: false
+        default: "1000"
+        type: string
+      junocash_amount_a:
+        description: "Direction A JunoCash send amount (float, coins)"
+        required: false
+        default: "1.0"
+        type: string
+      junocash_amount_b:
+        description: "Direction B JunoCash send amount (float, coins)"
+        required: false
+        default: "0.5"
+        type: string
+      priority_level:
+        description: "Helius priority level (Min/Low/Medium/High/VeryHigh/UnsafeMax)"
+        required: false
+        default: "Medium"
+        type: string
+
+concurrency:
+  group: e2e-devnet-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: 1.91.1
+  RISC0_RUST_TOOLCHAIN: 1.91.1
+  RZUP_VERSION: 0.5.1
+  HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+  HELIUS_CLUSTER: devnet
+  JUNO_E2E_NET_AMOUNT_A: ${{ github.event.inputs.net_amount_a }}
+  JUNO_E2E_NET_AMOUNT_B: ${{ github.event.inputs.net_amount_b }}
+  JUNO_E2E_JUNOCASH_SEND_AMOUNT_A: ${{ github.event.inputs.junocash_amount_a }}
+  JUNO_E2E_JUNOCASH_SEND_AMOUNT_B: ${{ github.event.inputs.junocash_amount_b }}
+  JUNO_E2E_PRIORITY_LEVEL: ${{ github.event.inputs.priority_level }}
+
+jobs:
+  e2e:
+    runs-on: runs-on=${{ github.run_id }}/family=g5.4xlarge/image=ubuntu22-gpu-x64/spot=false/extras=s3-cache
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: RunsOn cache
+        uses: runs-on/action@v2
+        with:
+          sccache: s3
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: GPU prerequisites
+        run: |
+          set -euo pipefail
+          nvidia-smi
+          nvcc --version
+
+      - name: Install system deps
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends docker.io protobuf-compiler
+          sudo systemctl start docker || sudo service docker start || true
+          docker ps >/dev/null
+
+      - name: Install Solana CLI
+        run: |
+          set -euo pipefail
+          if ! command -v solana >/dev/null; then
+            sh -c "$(curl -sSfL https://release.solana.com/stable/install)"
+          fi
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          solana --version
+          spl-token --version
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-${{ env.RUST_TOOLCHAIN }}
+          workspaces: |
+            risc0/receipt -> target
+            solana -> target
+
+      - name: Cache RISC0 toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.risc0
+          key: ${{ runner.os }}-risc0-rzup-rust-${{ env.RISC0_RUST_TOOLCHAIN }}
+
+      - name: Install rzup
+        run: |
+          set -euo pipefail
+          if command -v rzup >/dev/null && rzup --version | grep -q "${{ env.RZUP_VERSION }}"; then
+            echo "rzup already installed: $(rzup --version)"
+            exit 0
+          fi
+          cargo install rzup --version ${{ env.RZUP_VERSION }} --locked --force
+
+      - name: Install RISC0 toolchain + Groth16 component
+        run: |
+          set -euo pipefail
+          rzup install rust ${{ env.RISC0_RUST_TOOLCHAIN }}
+          rzup install risc0-groth16 0.1.0
+
+      - name: Run devnet e2e (both directions)
+        env:
+          RUST_LOG: info
+        run: |
+          set -euo pipefail
+          ./scripts/e2e/devnet-testnet.sh --deployment "${{ github.event.inputs.deployment }}"
+
