@@ -32,12 +32,12 @@ const PROTOCOL_DOMAIN: &[u8] = b"JUNO_INTENTS";
 const PROTOCOL_VERSION_U16_LE: [u8; 2] = 1u16.to_le_bytes();
 const PURPOSE_IEP_SPENT_RECEIPT_ID: &[u8] = b"iep_spent_receipt_id";
 
-const CONFIG_VERSION_V1: u8 = 1;
+const CONFIG_VERSION_V2: u8 = 2;
 const INTENT_VERSION_V2: u8 = 2;
 const FILL_VERSION_V2: u8 = 2;
 const SPENT_RECEIPT_VERSION_V1: u8 = 1;
 
-const CONFIG_LEN_V1: usize = 1 + 32 + 2 + 32 + 32 + 32;
+const CONFIG_LEN_V2: usize = 1 + 32 + 2 + 32 + 32 + 32 + 32 + 32 + 32 + 32;
 const INTENT_LEN_V2: usize = 1 + 1 + 1 + 32 + 32 + 32 + 32 + 8 + 2 + 8 + 8 + 32 + 32;
 const FILL_LEN_V2: usize = 1 + 1 + 32 + 32 + 32 + 8 + 32 + 32;
 const SPENT_RECEIPT_LEN_V1: usize = 1 + 32 + 32;
@@ -48,6 +48,8 @@ const RECEIPT_BUNDLE_VERSION_V1: u16 = 1;
 const ZKVM_PROOF_SYSTEM_RISC0_GROTH16: u8 = 1;
 const RECEIPT_JOURNAL_LEN_V1: usize = 170;
 const RECEIPT_SEAL_LEN_V1: usize = 260;
+
+const RISC0_VERIFIER_SELECTOR: [u8; 4] = *b"JINT";
 
 const INTENT_STATUS_OPEN: u8 = 0;
 const INTENT_STATUS_CANCELED: u8 = 1;
@@ -69,6 +71,10 @@ pub enum IepInstruction {
         fee_collector: Pubkey,
         checkpoint_registry_program: Pubkey,
         receipt_verifier_program: Pubkey,
+        verifier_router_program: Pubkey,
+        router: Pubkey,
+        verifier_entry: Pubkey,
+        verifier_program: Pubkey,
     },
     CreateIntent {
         intent_nonce: [u8; 32],
@@ -90,13 +96,17 @@ pub enum IepInstruction {
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq, Eq)]
-pub struct IepConfigV1 {
+pub struct IepConfigV2 {
     pub version: u8,
     pub deployment_id: [u8; 32],
     pub fee_bps: u16,
     pub fee_collector: Pubkey,
     pub checkpoint_registry_program: Pubkey,
     pub receipt_verifier_program: Pubkey,
+    pub verifier_router_program: Pubkey,
+    pub router: Pubkey,
+    pub verifier_entry: Pubkey,
+    pub verifier_program: Pubkey,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq, Eq)]
@@ -191,6 +201,10 @@ pub fn process_instruction(
             fee_collector,
             checkpoint_registry_program,
             receipt_verifier_program,
+            verifier_router_program,
+            router,
+            verifier_entry,
+            verifier_program,
         } => process_initialize(
             program_id,
             accounts,
@@ -199,6 +213,10 @@ pub fn process_instruction(
             fee_collector,
             checkpoint_registry_program,
             receipt_verifier_program,
+            verifier_router_program,
+            router,
+            verifier_entry,
+            verifier_program,
         ),
         IepInstruction::CreateIntent {
             intent_nonce,
@@ -236,6 +254,10 @@ fn process_initialize(
     fee_collector: Pubkey,
     checkpoint_registry_program: Pubkey,
     receipt_verifier_program: Pubkey,
+    verifier_router_program: Pubkey,
+    router: Pubkey,
+    verifier_entry: Pubkey,
+    verifier_program: Pubkey,
 ) -> ProgramResult {
     // Accounts:
     // 0. payer (signer, writable)
@@ -265,27 +287,45 @@ fn process_initialize(
         return Err(IepError::AlreadyInitialized.into());
     }
 
+    let (expected_router, _bump) =
+        Pubkey::find_program_address(&[b"router"], &verifier_router_program);
+    if expected_router != router {
+        return Err(IepError::InvalidAccountData.into());
+    }
+
+    let (expected_entry, _bump) = Pubkey::find_program_address(
+        &[b"verifier", RISC0_VERIFIER_SELECTOR.as_ref()],
+        &verifier_router_program,
+    );
+    if expected_entry != verifier_entry {
+        return Err(IepError::InvalidAccountData.into());
+    }
+
     let rent = Rent::get()?;
-    let lamports = rent.minimum_balance(CONFIG_LEN_V1);
+    let lamports = rent.minimum_balance(CONFIG_LEN_V2);
     invoke_signed(
         &system_instruction::create_account(
             payer.key,
             config_ai.key,
             lamports,
-            CONFIG_LEN_V1 as u64,
+            CONFIG_LEN_V2 as u64,
             program_id,
         ),
         &[payer.clone(), config_ai.clone(), system_program.clone()],
         &[&[CONFIG_SEED, deployment_id.as_ref(), &[bump]]],
     )?;
 
-    let cfg = IepConfigV1 {
-        version: CONFIG_VERSION_V1,
+    let cfg = IepConfigV2 {
+        version: CONFIG_VERSION_V2,
         deployment_id,
         fee_bps,
         fee_collector,
         checkpoint_registry_program,
         receipt_verifier_program,
+        verifier_router_program,
+        router,
+        verifier_entry,
+        verifier_program,
     };
     cfg.serialize(&mut &mut config_ai.data.borrow_mut()[..])
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
@@ -348,9 +388,9 @@ fn process_create_intent(
         return Err(IepError::InvalidAccountData.into());
     }
 
-    let cfg = IepConfigV1::try_from_slice(&config_ai.data.borrow())
+    let cfg = IepConfigV2::try_from_slice(&config_ai.data.borrow())
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if cfg.version != CONFIG_VERSION_V1 {
+    if cfg.version != CONFIG_VERSION_V2 {
         return Err(IepError::InvalidAccountData.into());
     }
     let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
@@ -622,9 +662,9 @@ fn process_fill_intent(
         return Err(IepError::AlreadyInitialized.into());
     }
 
-    let cfg = IepConfigV1::try_from_slice(&config_ai.data.borrow())
+    let cfg = IepConfigV2::try_from_slice(&config_ai.data.borrow())
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if cfg.version != CONFIG_VERSION_V1 {
+    if cfg.version != CONFIG_VERSION_V2 {
         return Err(IepError::InvalidAccountData.into());
     }
     let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
@@ -838,9 +878,9 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
         return Err(IepError::InvalidFillOwner.into());
     }
 
-    let cfg = IepConfigV1::try_from_slice(&config_ai.data.borrow())
+    let cfg = IepConfigV2::try_from_slice(&config_ai.data.borrow())
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if cfg.version != CONFIG_VERSION_V1 {
+    if cfg.version != CONFIG_VERSION_V2 {
         return Err(IepError::InvalidAccountData.into());
     }
     let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
@@ -851,6 +891,18 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
         return Err(ProgramError::IncorrectProgramId);
     }
     if cfg.checkpoint_registry_program != *crp_program.key {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if cfg.verifier_router_program != *verifier_router_program.key {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if cfg.router != *router.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if cfg.verifier_entry != *verifier_entry.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if cfg.verifier_program != *verifier_program.key {
         return Err(ProgramError::IncorrectProgramId);
     }
 

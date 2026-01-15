@@ -180,9 +180,17 @@ async fn settle_transfers_net_and_fee_and_marks_spent() {
     );
 
     // Dummy accounts passed through to the mock receipt verifier.
+    //
+    // These must be self-consistent with the on-chain config checks:
+    //   router PDA = PDA("router")
+    //   verifier_entry PDA = PDA("verifier", "JINT")
     let verifier_router_program = solana_sdk::pubkey::Pubkey::new_unique();
-    let router = solana_sdk::pubkey::Pubkey::new_unique();
-    let verifier_entry = solana_sdk::pubkey::Pubkey::new_unique();
+    let (router, _bump) =
+        solana_sdk::pubkey::Pubkey::find_program_address(&[b"router"], &verifier_router_program);
+    let (verifier_entry, _bump) = solana_sdk::pubkey::Pubkey::find_program_address(
+        &[b"verifier", b"JINT"],
+        &verifier_router_program,
+    );
     let verifier_program = solana_sdk::pubkey::Pubkey::new_unique();
     for k in [
         verifier_router_program,
@@ -362,6 +370,10 @@ async fn settle_transfers_net_and_fee_and_marks_spent() {
             fee_collector: fee_owner.pubkey(),
             checkpoint_registry_program: crp_program_id,
             receipt_verifier_program: receipt_verifier_program_id,
+            verifier_router_program,
+            router,
+            verifier_entry,
+            verifier_program,
         },
     );
     let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
@@ -551,9 +563,17 @@ async fn settle_direction_b_transfers_to_solver_and_fee() {
     );
 
     // Dummy accounts passed through to the mock receipt verifier.
+    //
+    // These must be self-consistent with the on-chain config checks:
+    //   router PDA = PDA("router")
+    //   verifier_entry PDA = PDA("verifier", "JINT")
     let verifier_router_program = solana_sdk::pubkey::Pubkey::new_unique();
-    let router = solana_sdk::pubkey::Pubkey::new_unique();
-    let verifier_entry = solana_sdk::pubkey::Pubkey::new_unique();
+    let (router, _bump) =
+        solana_sdk::pubkey::Pubkey::find_program_address(&[b"router"], &verifier_router_program);
+    let (verifier_entry, _bump) = solana_sdk::pubkey::Pubkey::find_program_address(
+        &[b"verifier", b"JINT"],
+        &verifier_router_program,
+    );
     let verifier_program = solana_sdk::pubkey::Pubkey::new_unique();
     for k in [
         verifier_router_program,
@@ -736,6 +756,10 @@ async fn settle_direction_b_transfers_to_solver_and_fee() {
             fee_collector: fee_owner.pubkey(),
             checkpoint_registry_program: crp_program_id,
             receipt_verifier_program: receipt_verifier_program_id,
+            verifier_router_program,
+            router,
+            verifier_entry,
+            verifier_program,
         },
     );
     let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();

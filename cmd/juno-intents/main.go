@@ -70,7 +70,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  juno-intents set-witness-secret [-- <wallet_witness_v1 args>]")
 	fmt.Fprintln(w, "  juno-intents prove-ci [--witness-source regtest|secret]")
 	fmt.Fprintln(w, "  juno-intents init-crp --crp-program-id <pubkey> --deployment-id <hex32> --admin <pubkey> --threshold <u8> --conflict-threshold <u8> --finalization-delay-slots <u64> --operator <pubkey> [--operator <pubkey>...] [--payer-keypair <path>] [--dry-run]")
-	fmt.Fprintln(w, "  juno-intents init-iep --iep-program-id <pubkey> --deployment-id <hex32> --fee-bps <u16> --fee-collector <pubkey> --checkpoint-registry-program <pubkey> --receipt-verifier-program <pubkey> [--payer-keypair <path>] [--dry-run]")
+	fmt.Fprintln(w, "  juno-intents init-iep --iep-program-id <pubkey> --deployment-id <hex32> --fee-bps <u16> --fee-collector <pubkey> --checkpoint-registry-program <pubkey> --receipt-verifier-program <pubkey> --verifier-router-program <pubkey> --verifier-router <pubkey> --verifier-entry <pubkey> --verifier-program <pubkey> [--payer-keypair <path>] [--dry-run]")
 	fmt.Fprintln(w, "  juno-intents pda --program-id <pubkey> --deployment-id <hex32> --intent-nonce <hex32> [--print <field>]")
 	fmt.Fprintln(w, "  juno-intents keygen [--out <path>] [--force]")
 	fmt.Fprintln(w)

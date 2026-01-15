@@ -497,6 +497,10 @@ async fn settles_real_risc0_groth16_bundle_v1() {
             fee_collector: fee_owner.pubkey(),
             checkpoint_registry_program: crp_program_id,
             receipt_verifier_program: receipt_verifier_program_id,
+            verifier_router_program: risc0_verifier_router::ID,
+            router: router_pda,
+            verifier_entry: verifier_entry_pda,
+            verifier_program: risc0_groth16_verifier::ID,
         },
     );
     let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();

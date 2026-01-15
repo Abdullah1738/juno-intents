@@ -154,6 +154,11 @@ func cmdInitIEP(argv []string) error {
 		crpProgramStr string
 		verifierStr   string
 
+		verifierRouterProgramStr string
+		routerStr                string
+		verifierEntryStr         string
+		verifierProgramStr       string
+
 		payerPath string
 		dryRun    bool
 	)
@@ -164,6 +169,10 @@ func cmdInitIEP(argv []string) error {
 	fs.StringVar(&feeCollector, "fee-collector", "", "Fee collector pubkey (base58)")
 	fs.StringVar(&crpProgramStr, "checkpoint-registry-program", "", "CRP program id (base58)")
 	fs.StringVar(&verifierStr, "receipt-verifier-program", "", "Receipt verifier program id (base58)")
+	fs.StringVar(&verifierRouterProgramStr, "verifier-router-program", "", "RISC0 verifier router program id (base58)")
+	fs.StringVar(&routerStr, "verifier-router", "", "RISC0 verifier router PDA (base58)")
+	fs.StringVar(&verifierEntryStr, "verifier-entry", "", "RISC0 verifier entry PDA (base58)")
+	fs.StringVar(&verifierProgramStr, "verifier-program", "", "RISC0 Groth16 verifier program id (base58)")
 	fs.StringVar(&payerPath, "payer-keypair", solvernet.DefaultSolanaKeypairPath(), "Payer Solana keypair path (Solana CLI JSON format)")
 	fs.BoolVar(&dryRun, "dry-run", false, "If set, prints the base64 tx instead of sending it")
 
@@ -171,6 +180,9 @@ func cmdInitIEP(argv []string) error {
 		return err
 	}
 	if iepProgramStr == "" || deploymentHex == "" || feeCollector == "" || crpProgramStr == "" || verifierStr == "" {
+		return errors.New("missing required args (see --help)")
+	}
+	if verifierRouterProgramStr == "" || routerStr == "" || verifierEntryStr == "" || verifierProgramStr == "" {
 		return errors.New("missing required args (see --help)")
 	}
 	if feeBps > 65_535 {
@@ -197,6 +209,22 @@ func cmdInitIEP(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("parse --receipt-verifier-program: %w", err)
 	}
+	verifierRouterProgram, err := solana.ParsePubkey(verifierRouterProgramStr)
+	if err != nil {
+		return fmt.Errorf("parse --verifier-router-program: %w", err)
+	}
+	router, err := solana.ParsePubkey(routerStr)
+	if err != nil {
+		return fmt.Errorf("parse --verifier-router: %w", err)
+	}
+	verifierEntry, err := solana.ParsePubkey(verifierEntryStr)
+	if err != nil {
+		return fmt.Errorf("parse --verifier-entry: %w", err)
+	}
+	groth16VerifierProgram, err := solana.ParsePubkey(verifierProgramStr)
+	if err != nil {
+		return fmt.Errorf("parse --verifier-program: %w", err)
+	}
 
 	payerPriv, payerPub, err := solvernet.LoadSolanaKeypair(payerPath)
 	if err != nil {
@@ -215,7 +243,17 @@ func cmdInitIEP(argv []string) error {
 			{Pubkey: cfgPDA, IsSigner: false, IsWritable: true},
 			{Pubkey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
 		},
-		Data: encodeIepInitialize([32]byte(deploymentID), uint16(feeBps), feeCollectorPK, crpProgram, verifierProgram),
+		Data: encodeIepInitialize(
+			[32]byte(deploymentID),
+			uint16(feeBps),
+			feeCollectorPK,
+			crpProgram,
+			verifierProgram,
+			verifierRouterProgram,
+			router,
+			verifierEntry,
+			groth16VerifierProgram,
+		),
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -288,9 +326,13 @@ func encodeIepInitialize(
 	feeCollector solana.Pubkey,
 	checkpointRegistryProgram solana.Pubkey,
 	receiptVerifierProgram solana.Pubkey,
+	verifierRouterProgram solana.Pubkey,
+	router solana.Pubkey,
+	verifierEntry solana.Pubkey,
+	verifierProgram solana.Pubkey,
 ) []byte {
 	// Borsh enum variant index (u8) for Initialize is 0.
-	out := make([]byte, 0, 1+32+2+32+32+32)
+	out := make([]byte, 0, 1+32+2+(32*7))
 	out = append(out, 0)
 	out = append(out, deploymentID[:]...)
 
@@ -301,6 +343,10 @@ func encodeIepInitialize(
 	out = append(out, feeCollector[:]...)
 	out = append(out, checkpointRegistryProgram[:]...)
 	out = append(out, receiptVerifierProgram[:]...)
+	out = append(out, verifierRouterProgram[:]...)
+	out = append(out, router[:]...)
+	out = append(out, verifierEntry[:]...)
+	out = append(out, verifierProgram[:]...)
 	return out
 }
 
