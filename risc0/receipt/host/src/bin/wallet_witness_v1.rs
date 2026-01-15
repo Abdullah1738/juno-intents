@@ -230,6 +230,11 @@ fn default_db_dump_path() -> Option<PathBuf> {
 fn select_outpoint(args: &Args) -> Result<(TxId, u32, u32)> {
     if let (Some(txid_hex), Some(action)) = (&args.txid, args.action) {
         let txid = txid_from_rpc_hex(txid_hex)?;
+        if args.unified_address.is_some() {
+            // For outgoing proofs, the txid+action may not be present in z_listunspent. In that
+            // case, require --unified-address (so we can derive FVK/OVK) and skip account lookup.
+            return Ok((txid, action, 0));
+        }
         let account = select_account_for_outpoint(args, &txid, action)?;
         return Ok((txid, action, account));
     }
