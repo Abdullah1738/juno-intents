@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"crypto/ed25519"
+	"testing"
+
+	"github.com/Abdullah1738/juno-intents/offchain/solana"
+)
 
 func TestEncodeCrpSubmitObservation_Golden(t *testing.T) {
 	var blockHash [32]byte
@@ -98,5 +103,68 @@ func TestDecodeCrpConfigV1_Golden(t *testing.T) {
 		if out.Operators[0][i] != 0x44 || out.Operators[1][i] != 0x55 {
 			t.Fatalf("operator mismatch at %d", i)
 		}
+	}
+}
+
+func TestExtractObservationSignaturesFromTx(t *testing.T) {
+	var blockhash [32]byte
+	for i := range blockhash {
+		blockhash[i] = 0x11
+	}
+	feeSeed := [32]byte{1, 2, 3}
+	feePriv := ed25519.NewKeyFromSeed(feeSeed[:])
+	feePub := feePriv.Public().(ed25519.PublicKey)
+	var feePayer solana.Pubkey
+	copy(feePayer[:], feePub)
+
+	expectedMsg := []byte("hello")
+	var sig [64]byte
+	for i := range sig {
+		sig[i] = byte(i)
+	}
+	var operator solana.Pubkey
+	for i := range operator {
+		operator[i] = 0xAA
+	}
+
+	ix := solana.Ed25519VerifyInstruction(sig, operator, expectedMsg)
+	tx, err := solana.BuildAndSignLegacyTransaction(
+		blockhash,
+		feePayer,
+		map[solana.Pubkey]ed25519.PrivateKey{feePayer: feePriv},
+		[]solana.Instruction{ix},
+	)
+	if err != nil {
+		t.Fatalf("BuildAndSignLegacyTransaction: %v", err)
+	}
+
+	allowed := map[solana.Pubkey]struct{}{operator: {}}
+	out, err := extractObservationSignaturesFromTx(tx, expectedMsg, allowed)
+	if err != nil {
+		t.Fatalf("extractObservationSignaturesFromTx: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("len=%d", len(out))
+	}
+	if out[0].Pubkey != operator || out[0].Signature != sig {
+		t.Fatalf("unexpected sig: %+v", out[0])
+	}
+
+	// Wrong message must not match.
+	out2, err := extractObservationSignaturesFromTx(tx, []byte("nope"), allowed)
+	if err != nil {
+		t.Fatalf("extractObservationSignaturesFromTx (wrong msg): %v", err)
+	}
+	if len(out2) != 0 {
+		t.Fatalf("len=%d, want 0", len(out2))
+	}
+
+	// Disallowed operator must not match.
+	out3, err := extractObservationSignaturesFromTx(tx, expectedMsg, map[solana.Pubkey]struct{}{})
+	if err != nil {
+		t.Fatalf("extractObservationSignaturesFromTx (disallowed): %v", err)
+	}
+	if len(out3) != 0 {
+		t.Fatalf("len=%d, want 0", len(out3))
 	}
 }
