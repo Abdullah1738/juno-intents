@@ -15,11 +15,14 @@ TXID_HEX=""
 ACTION_INDEX=""
 
 REF="${REF:-main}"
+LIST_ONLY=0
+LIST_LIMIT=20
 
 usage() {
   cat <<'USAGE' >&2
 Usage:
   scripts/gh/update-receipt-witness-secret.sh [--txid <hex>] [--action <u32>] [--ref <git-ref>]
+  scripts/gh/update-receipt-witness-secret.sh --list [--limit <n>]
 
 Notes:
   - Generates a real ReceiptWitnessV1 from your local JunoCash wallet/node.
@@ -40,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       usage
       exit 0
       ;;
+    --list)
+      LIST_ONLY=1; shift 1 ;;
+    --limit)
+      LIST_LIMIT="${2:-}"; shift 2 ;;
     --txid)
       TXID_HEX="${2:-}"; shift 2 ;;
     --action)
@@ -67,6 +74,10 @@ if ! command -v gh >/dev/null; then
   echo "missing required command: gh" >&2
   exit 1
 fi
+if ! command -v junocash-cli >/dev/null; then
+  echo "missing required command: junocash-cli" >&2
+  exit 1
+fi
 if ! command -v go >/dev/null; then
   echo "missing required command: go" >&2
   exit 1
@@ -74,6 +85,30 @@ fi
 if ! command -v cargo >/dev/null; then
   echo "missing required command: cargo" >&2
   exit 1
+fi
+
+if [[ "${LIST_ONLY}" == "1" ]]; then
+  if ! command -v python3 >/dev/null; then
+    echo "missing required command: python3" >&2
+    exit 1
+  fi
+  if [[ -z "${LIST_LIMIT}" || "${LIST_LIMIT}" -le 0 ]]; then
+    echo "--limit must be > 0" >&2
+    exit 2
+  fi
+  junocash-cli z_listunspent 1 9999999 false | python3 - <<PY
+import json,sys
+limit=int(${LIST_LIMIT})
+notes=json.load(sys.stdin)
+orch=[n for n in notes if n.get('pool')=='orchard' and n.get('spendable')]
+print(f"orchard_spendable_count={len(orch)}")
+for n in orch[:limit]:
+    txid=n.get('txid','')
+    outindex=n.get('outindex')
+    account=n.get('account')
+    print(f"txid={txid} outindex={outindex} account={account}")
+PY
+  exit 0
 fi
 
 DEPLOYMENT_ID_HEX="$(printf '11%.0s' {1..32})"
