@@ -264,6 +264,7 @@ echo "verifier_entry_pda: ${ENTRY_PDA}" >&2
 echo "setting groth_16_verifier upgrade authority to router PDA..." >&2
 solana -u "${RPC_URL}" program set-upgrade-authority "${G16_PROGRAM_ID}" \
   --new-upgrade-authority "${ROUTER_PDA}" \
+  --skip-new-upgrade-authority-signer-check \
   --keypair "${PAYER_KEYPAIR}"
 
 echo "initializing router PDA + registering verifier selector ${SELECTOR}..." >&2
