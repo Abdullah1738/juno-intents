@@ -56,6 +56,12 @@ func run(argv []string) error {
 		return cmdRisc0PDA(argv[1:])
 	case "init-risc0-verifier":
 		return cmdInitRisc0Verifier(argv[1:])
+	case "iep-create-intent":
+		return cmdIepCreateIntent(argv[1:])
+	case "iep-fill":
+		return cmdIepFill(argv[1:])
+	case "iep-settle":
+		return cmdIepSettle(argv[1:])
 	case "pda":
 		return cmdPDA(argv[1:])
 	case "keygen":
@@ -77,6 +83,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  juno-intents init-iep --iep-program-id <pubkey> --deployment-id <hex32> --fee-bps <u16> --fee-collector <pubkey> --checkpoint-registry-program <pubkey> --receipt-verifier-program <pubkey> --verifier-router-program <pubkey> --verifier-router <pubkey> --verifier-entry <pubkey> --verifier-program <pubkey> [--payer-keypair <path>] [--dry-run]")
 	fmt.Fprintln(w, "  juno-intents risc0-pda --verifier-router-program-id <pubkey> [--selector JINT] [--print router|verifier-entry]")
 	fmt.Fprintln(w, "  juno-intents init-risc0-verifier --verifier-router-program-id <pubkey> --verifier-program-id <pubkey> [--selector JINT] [--payer-keypair <path>] [--dry-run]")
+	fmt.Fprintln(w, "  juno-intents iep-create-intent [--deployment <name>] --mint <pubkey> --solana-recipient <pubkey> --net-amount <u64> --expiry-slot <u64> [--direction A|B] [--intent-nonce <hex32>] [--creator-keypair <path>] [--creator-source-token-account <pubkey>] [--priority-level <level>]")
+	fmt.Fprintln(w, "  juno-intents iep-fill [--deployment <name>] --intent <pubkey> --mint <pubkey> --receiver-tag <hex32> --junocash-amount <u64> [--solver-keypair <path>] [--solver-source-token-account <pubkey>] [--solver-destination-token-account <pubkey>] [--priority-level <level>]")
+	fmt.Fprintln(w, "  juno-intents iep-settle --deployment <name> --intent <pubkey> --mint <pubkey> --recipient-token-account <pubkey> --fee-token-account <pubkey> [--bundle-hex <hex>] [--payer-keypair <path>] [--priority-level <level>]")
 	fmt.Fprintln(w, "  juno-intents pda --program-id <pubkey> --deployment-id <hex32> --intent-nonce <hex32> [--print <field>]")
 	fmt.Fprintln(w, "  juno-intents keygen [--out <path>] [--force]")
 	fmt.Fprintln(w)
@@ -89,6 +98,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  init-iep  Initializes an IEP config PDA (one-time deploy step).")
 	fmt.Fprintln(w, "  risc0-pda Prints Verifier Router PDAs for a selector.")
 	fmt.Fprintln(w, "  init-risc0-verifier Initializes a Verifier Router PDA + adds a Groth16 verifier entry for a selector.")
+	fmt.Fprintln(w, "  iep-create-intent Creates an IEP intent (devnet/mainnet RPC).")
+	fmt.Fprintln(w, "  iep-fill  Fills an IEP intent (locks escrow).")
+	fmt.Fprintln(w, "  iep-settle Settles a fill with a receipt bundle.")
 	fmt.Fprintln(w, "  pda       Prints the derived Intent/Fill PDAs for deterministic testing.")
 	fmt.Fprintln(w, "  keygen    Generates a new Solana CLI JSON keypair file (0600).")
 }
