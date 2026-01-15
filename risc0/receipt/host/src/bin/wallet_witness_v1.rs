@@ -308,11 +308,30 @@ fn note_opening_from_tx(
     let ivk_external = fvk.to_ivk(Scope::External);
     let ivk_internal = fvk.to_ivk(Scope::Internal);
 
-    let try_decrypt = |ivk| bundle.decrypt_output_with_key(action_idx as usize, ivk);
-    let (note, recipient) = try_decrypt(&ivk_external)
-        .or_else(|| try_decrypt(&ivk_internal))
-        .map(|(n, a, _m)| (n, a))
-        .ok_or_else(|| anyhow!("failed to decrypt orchard output at action {}", action_idx))?;
+    let ovk_external = fvk.to_ovk(Scope::External);
+    let ovk_internal = fvk.to_ovk(Scope::Internal);
+
+    let try_incoming = |ivk| {
+        bundle
+            .decrypt_output_with_key(action_idx as usize, ivk)
+            .map(|(n, a, _m)| (n, a))
+    };
+    let try_outgoing = |ovk| {
+        bundle
+            .recover_output_with_ovk(action_idx as usize, ovk)
+            .map(|(n, a, _m)| (n, a))
+    };
+
+    let (note, recipient, decrypted_kind) = try_incoming(&ivk_external)
+        .or_else(|| try_incoming(&ivk_internal))
+        .map(|(n, a)| (n, a, "incoming"))
+        .or_else(|| {
+            try_outgoing(&ovk_external)
+                .or_else(|| try_outgoing(&ovk_internal))
+                .map(|(n, a)| (n, a, "outgoing"))
+        })
+        .ok_or_else(|| anyhow!("failed to decrypt/recover orchard output at action {}", action_idx))?;
+    eprintln!("decrypted orchard output via {decrypted_kind} key");
 
     let cmx = action.cmx().to_bytes();
     let computed_cmx = orchard::note::ExtractedNoteCommitment::from(note.commitment()).to_bytes();
