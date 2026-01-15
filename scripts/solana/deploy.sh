@@ -26,6 +26,7 @@ CRP_FINALIZATION_DELAY_SLOTS="0"
 CRP_OPERATORS=()
 
 SKIP_BUILD="false"
+SKIP_FUNDING_WAIT="false"
 PUSH="false"
 
 usage() {
@@ -48,6 +49,7 @@ Usage:
     [--refund-to <pubkey>] \
     [--name <string>] \
     [--skip-build] \
+    [--skip-funding-wait] \
     [--push]
 
 Notes:
@@ -101,6 +103,8 @@ while [[ $# -gt 0 ]]; do
       CRP_FINALIZATION_DELAY_SLOTS="${2:-}"; shift 2 ;;
     --skip-build)
       SKIP_BUILD="true"; shift 1 ;;
+    --skip-funding-wait)
+      SKIP_FUNDING_WAIT="true"; shift 1 ;;
     --push)
       PUSH="true"; shift 1 ;;
     *)
@@ -342,19 +346,24 @@ airdrop_if_possible() {
 
 airdrop_if_possible || true
 
-echo "waiting for payer to be funded (send >= ${need_sol} SOL to ${PAYER_PUBKEY})..." >&2
-for _ in $(seq 1 240); do
+if [[ "${SKIP_FUNDING_WAIT}" != "true" ]]; then
+  echo "waiting for payer to be funded (send >= ${need_sol} SOL to ${PAYER_PUBKEY})..." >&2
+  for _ in $(seq 1 240); do
+    bal="$(get_balance_lamports)"
+    if [[ -n "${bal}" && "${bal}" -ge "${need_lamports}" ]]; then
+      echo "payer funded: ${bal} lamports" >&2
+      break
+    fi
+    sleep 5
+  done
   bal="$(get_balance_lamports)"
-  if [[ -n "${bal}" && "${bal}" -ge "${need_lamports}" ]]; then
-    echo "payer funded: ${bal} lamports" >&2
-    break
+  if [[ -z "${bal}" || "${bal}" -lt "${need_lamports}" ]]; then
+    echo "payer still underfunded (balance=${bal:-unknown} lamports)" >&2
+    exit 1
   fi
-  sleep 5
-done
-bal="$(get_balance_lamports)"
-if [[ -z "${bal}" || "${bal}" -lt "${need_lamports}" ]]; then
-  echo "payer still underfunded (balance=${bal:-unknown} lamports)" >&2
-  exit 1
+else
+  bal="$(get_balance_lamports)"
+  echo "skip funding wait: payer balance=${bal:-unknown} lamports (need=${need_lamports})" >&2
 fi
 
 echo "deploying CRP..." >&2

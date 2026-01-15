@@ -10,6 +10,7 @@ WORKDIR_OVERRIDE=""
 SELECTOR="${JUNO_RISC0_SELECTOR:-JINT}"
 
 SKIP_BUILD="false"
+SKIP_FUNDING_WAIT="false"
 
 usage() {
   cat <<'USAGE' >&2
@@ -21,6 +22,7 @@ Usage:
     [--selector JINT] \
     [--workdir <path>] \
     [--skip-build]
+    [--skip-funding-wait]
 
 Notes:
   - Deploys a Verifier Router + Groth16 verifier program, then initializes:
@@ -50,6 +52,8 @@ while [[ $# -gt 0 ]]; do
       WORKDIR_OVERRIDE="${2:-}"; shift 2 ;;
     --skip-build)
       SKIP_BUILD="true"; shift 1 ;;
+    --skip-funding-wait)
+      SKIP_FUNDING_WAIT="true"; shift 1 ;;
     *)
       echo "unexpected argument: $1" >&2
       usage
@@ -216,19 +220,24 @@ airdrop_if_possible() {
 
 airdrop_if_possible || true
 
-echo "waiting for payer to be funded (send >= ${need_sol} SOL to ${PAYER_PUBKEY})..." >&2
-for _ in $(seq 1 240); do
+if [[ "${SKIP_FUNDING_WAIT}" != "true" ]]; then
+  echo "waiting for payer to be funded (send >= ${need_sol} SOL to ${PAYER_PUBKEY})..." >&2
+  for _ in $(seq 1 240); do
+    bal="$(get_balance_lamports)"
+    if [[ -n "${bal}" && "${bal}" -ge "${need_lamports}" ]]; then
+      echo "payer funded: ${bal} lamports" >&2
+      break
+    fi
+    sleep 5
+  done
   bal="$(get_balance_lamports)"
-  if [[ -n "${bal}" && "${bal}" -ge "${need_lamports}" ]]; then
-    echo "payer funded: ${bal} lamports" >&2
-    break
+  if [[ -z "${bal}" || "${bal}" -lt "${need_lamports}" ]]; then
+    echo "payer still underfunded (balance=${bal:-unknown} lamports)" >&2
+    exit 1
   fi
-  sleep 5
-done
-bal="$(get_balance_lamports)"
-if [[ -z "${bal}" || "${bal}" -lt "${need_lamports}" ]]; then
-  echo "payer still underfunded (balance=${bal:-unknown} lamports)" >&2
-  exit 1
+else
+  bal="$(get_balance_lamports)"
+  echo "skip funding wait: payer balance=${bal:-unknown} lamports (need=${need_lamports})" >&2
 fi
 
 echo "deploying verifier_router..." >&2
