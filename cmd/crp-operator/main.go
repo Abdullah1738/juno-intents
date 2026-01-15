@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Abdullah1738/juno-intents/offchain/deployments"
 	"github.com/Abdullah1738/juno-intents/offchain/helius"
 	"github.com/Abdullah1738/juno-intents/offchain/junocashcli"
 	"github.com/Abdullah1738/juno-intents/offchain/nitro"
@@ -64,7 +65,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  crp-operator finalize-auto [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --height <u64> --orchard-root <hex32> [--payer-keypair <path>] [--scan-limit <n>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
 	fmt.Fprintln(w, "  crp-operator finalize-pending [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> [--payer-keypair <path>] [--config-scan-limit <n>] [--scan-limit <n>] [--max-checkpoints <n>] [--cu-limit <u32>] [--priority-level <level>] [--dry-run]")
 	fmt.Fprintln(w, "  crp-operator deployments [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58>")
-	fmt.Fprintln(w, "  crp-operator run [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --start-height <u64> --finalize-operator-keypair <path> [--junocash-cli <path>] [--junocash-cli-arg <arg>...] [--lag <u64>] [--poll-interval <duration>] [--payer-keypair <path>] [--submit-operator-keypair <path>] [--submit-operator-enclave-cid <u32>] [--submit-operator-enclave-port <u32>] [--cu-limit-submit <u32>] [--cu-limit-finalize <u32>] [--priority-level <level>] [--dry-run] [--once] [--submit-only]")
+	fmt.Fprintln(w, "  crp-operator run [--deployment <name>] [--deployment-file <path>] --crp-program-id <base58> --deployment-id <hex32> --start-height <u64> --finalize-operator-keypair <path> [--junocash-cli <path>] [--junocash-cli-arg <arg>...] [--junocash-chain <mainnet|testnet|regtest>] [--junocash-genesis-hash <hex32>] [--lag <u64>] [--poll-interval <duration>] [--payer-keypair <path>] [--submit-operator-keypair <path>] [--submit-operator-enclave-cid <u32>] [--submit-operator-enclave-port <u32>] [--cu-limit-submit <u32>] [--cu-limit-finalize <u32>] [--priority-level <level>] [--dry-run] [--once] [--submit-only]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Environment:")
 	fmt.Fprintln(w, "  SOLANA_RPC_URL or HELIUS_RPC_URL or HELIUS_API_KEY/HELIUS_CLUSTER")
@@ -1319,8 +1320,10 @@ func cmdRun(argv []string) error {
 		crpProgramStr string
 		deploymentHex string
 
-		junocashPath string
-		junocashArgs multiString
+		junocashPath       string
+		junocashArgs       multiString
+		junocashChain      string
+		junocashGenesisHex string
 
 		startHeight  uint64
 		lag          uint64
@@ -1346,6 +1349,8 @@ func cmdRun(argv []string) error {
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
 	fs.StringVar(&junocashPath, "junocash-cli", "junocash-cli", "Path to junocash-cli")
 	fs.Var(&junocashArgs, "junocash-cli-arg", "Extra argument passed to junocash-cli (repeatable)")
+	fs.StringVar(&junocashChain, "junocash-chain", "", "Expected JunoCash chain (mainnet|testnet|regtest; accepts main/test)")
+	fs.StringVar(&junocashGenesisHex, "junocash-genesis-hash", "", "Expected JunoCash genesis block hash (32-byte hex)")
 	fs.Uint64Var(&startHeight, "start-height", 0, "First JunoCash height to observe")
 	fs.Uint64Var(&lag, "lag", 10, "Only publish checkpoints at heights <= tip-lag (reorg safety)")
 	fs.DurationVar(&pollInterval, "poll-interval", 10*time.Second, "Poll interval (e.g. 5s, 30s)")
@@ -1419,6 +1424,59 @@ func cmdRun(argv []string) error {
 	}
 
 	jc := junocashcli.New(junocashPath, []string(junocashArgs))
+
+	// Verify the operator is pointed at the expected chain before producing observations.
+	expectedChain := strings.TrimSpace(junocashChain)
+	expectedGenesis := strings.TrimSpace(junocashGenesisHex)
+	if deploymentName != "" {
+		reg, err := deployments.Load(deploymentFile)
+		if err != nil {
+			return fmt.Errorf("load deployments registry %q: %w", deploymentFile, err)
+		}
+		d, err := reg.FindByName(deploymentName)
+		if err != nil {
+			return fmt.Errorf("find deployment %q in %q: %w", deploymentName, deploymentFile, err)
+		}
+		if expectedChain == "" {
+			expectedChain = d.JunocashChain
+		}
+		if expectedGenesis == "" {
+			expectedGenesis = d.JunocashGenesisHash
+		}
+	}
+	if expectedChain == "" {
+		return errors.New("expected JunoCash chain is required (--junocash-chain or deployments.json:junocash_chain)")
+	}
+	wantChain, err := junocashcli.NormalizeChain(expectedChain)
+	if err != nil {
+		return fmt.Errorf("invalid expected chain %q: %w", expectedChain, err)
+	}
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		info, err := jc.BlockchainInfo(ctx)
+		if err != nil {
+			return err
+		}
+		gotChain, err := junocashcli.NormalizeChain(info.Chain)
+		if err != nil {
+			return fmt.Errorf("junocash getblockchaininfo.chain: %w", err)
+		}
+		if gotChain != wantChain {
+			return fmt.Errorf("junocash chain mismatch: got %q want %q", gotChain, wantChain)
+		}
+		if expectedGenesis != "" {
+			genesis, err := jc.BlockHash(ctx, 0)
+			if err != nil {
+				return err
+			}
+			genesis = strings.TrimPrefix(strings.TrimSpace(strings.Trim(genesis, "\"")), "0x")
+			expectedGenesis = strings.TrimPrefix(strings.TrimSpace(strings.Trim(expectedGenesis, "\"")), "0x")
+			if !strings.EqualFold(genesis, expectedGenesis) {
+				return fmt.Errorf("junocash genesis hash mismatch: got %q want %q", genesis, expectedGenesis)
+			}
+		}
+	}
 
 	rpc, err := solanarpc.ClientFromEnv()
 	if err != nil {

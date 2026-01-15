@@ -17,11 +17,14 @@ type Registry struct {
 }
 
 type Deployment struct {
-	Name   string `json:"name"`
+	Name    string `json:"name"`
 	Cluster string `json:"cluster,omitempty"`
 	RPCURL  string `json:"rpc_url,omitempty"`
 
 	DeploymentID string `json:"deployment_id"`
+
+	JunocashChain       string `json:"junocash_chain,omitempty"`
+	JunocashGenesisHash string `json:"junocash_genesis_hash,omitempty"` // hex32 (no 0x prefix required)
 
 	CheckpointRegistryProgramID string `json:"checkpoint_registry_program_id"`
 	IntentEscrowProgramID       string `json:"intent_escrow_program_id,omitempty"`

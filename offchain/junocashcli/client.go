@@ -12,6 +12,13 @@ import (
 )
 
 var ErrCLI = errors.New("junocash cli error")
+var ErrUnknownChain = errors.New("unknown chain")
+
+const (
+	ChainMainnet = "mainnet"
+	ChainTestnet = "testnet"
+	ChainRegtest = "regtest"
+)
 
 type Client struct {
 	path string
@@ -85,6 +92,10 @@ type Block struct {
 	FinalOrchardRoot  string `json:"finalorchardroot"`
 }
 
+type BlockchainInfo struct {
+	Chain string `json:"chain"`
+}
+
 func ParseBlockJSON(r io.Reader) (Block, error) {
 	var b Block
 	dec := json.NewDecoder(r)
@@ -92,6 +103,29 @@ func ParseBlockJSON(r io.Reader) (Block, error) {
 		return Block{}, err
 	}
 	return b, nil
+}
+
+func ParseBlockchainInfoJSON(r io.Reader) (BlockchainInfo, error) {
+	var info BlockchainInfo
+	dec := json.NewDecoder(r)
+	if err := dec.Decode(&info); err != nil {
+		return BlockchainInfo{}, err
+	}
+	return info, nil
+}
+
+func NormalizeChain(s string) (string, error) {
+	s = strings.TrimSpace(strings.ToLower(s))
+	switch s {
+	case "main", ChainMainnet:
+		return ChainMainnet, nil
+	case "test", ChainTestnet:
+		return ChainTestnet, nil
+	case ChainRegtest:
+		return ChainRegtest, nil
+	default:
+		return "", fmt.Errorf("%w: %q", ErrUnknownChain, s)
+	}
 }
 
 func (c *Client) Block(ctx context.Context, blockHash string) (Block, error) {
@@ -110,4 +144,16 @@ func (c *Client) Block(ctx context.Context, blockHash string) (Block, error) {
 		return Block{}, fmt.Errorf("parse getblock: %w", err)
 	}
 	return b, nil
+}
+
+func (c *Client) BlockchainInfo(ctx context.Context) (BlockchainInfo, error) {
+	raw, err := c.run(ctx, "getblockchaininfo")
+	if err != nil {
+		return BlockchainInfo{}, err
+	}
+	info, err := ParseBlockchainInfoJSON(strings.NewReader(raw))
+	if err != nil {
+		return BlockchainInfo{}, fmt.Errorf("parse getblockchaininfo: %w", err)
+	}
+	return info, nil
 }

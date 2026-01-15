@@ -14,6 +14,8 @@
       ],
       "crp_threshold": 2,
       "deployment_id": "74ee0e599525a749b71defd34171887aa59dffdffb99d1be99b672310a6e9b65",
+      "junocash_chain": "regtest",
+      "junocash_genesis_hash": "02a19528ff5e8241dc7601cf7f54a74d26e0f2acc393a7ac964d055e6d1925db",
       "fee_bps": 25,
       "fee_collector": "7Qx1LJUMeCXr8ygfwdnEmGbYSsQPrgHrFU7VPuGXJeEH",
       "git_commit": "c147194055ac601ef6d9abd5070fe8699cf640d7",

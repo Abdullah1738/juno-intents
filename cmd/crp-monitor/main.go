@@ -119,6 +119,10 @@ func cmdCheck(argv []string) error {
 
 	jc := junocashcli.New(junocashPath, []string(junocashArgs))
 
+	if err := verifyJunocashExpected(ctx, jc, d); err != nil {
+		return err
+	}
+
 	rep, err := checkOnce(ctx, rpc, jc, d, maxLag)
 	if err != nil {
 		return err
@@ -176,6 +180,14 @@ func cmdWatch(argv []string) error {
 	}
 	jc := junocashcli.New(junocashPath, []string(junocashArgs))
 
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := verifyJunocashExpected(ctx, jc, d); err != nil {
+			return err
+		}
+	}
+
 	t := time.NewTicker(interval)
 	defer t.Stop()
 
@@ -201,8 +213,8 @@ const (
 )
 
 type report struct {
-	Status    status    `json:"status"`
-	Timestamp time.Time `json:"timestamp"`
+	Status     status    `json:"status"`
+	Timestamp  time.Time `json:"timestamp"`
 	Deployment struct {
 		Name         string `json:"name"`
 		DeploymentID string `json:"deployment_id"`
@@ -399,6 +411,42 @@ func rpcClientForDeployment(d deployments.Deployment, override string) (*solanar
 	return solanarpc.ClientFromEnv()
 }
 
+func verifyJunocashExpected(ctx context.Context, jc *junocashcli.Client, d deployments.Deployment) error {
+	expectedChain := strings.TrimSpace(d.JunocashChain)
+	if expectedChain == "" {
+		return errors.New("deployment record missing junocash_chain")
+	}
+	wantChain, err := junocashcli.NormalizeChain(expectedChain)
+	if err != nil {
+		return fmt.Errorf("invalid expected chain %q: %w", expectedChain, err)
+	}
+	info, err := jc.BlockchainInfo(ctx)
+	if err != nil {
+		return err
+	}
+	gotChain, err := junocashcli.NormalizeChain(info.Chain)
+	if err != nil {
+		return fmt.Errorf("junocash getblockchaininfo.chain: %w", err)
+	}
+	if gotChain != wantChain {
+		return fmt.Errorf("junocash chain mismatch: got %q want %q", gotChain, wantChain)
+	}
+
+	expectedGenesis := strings.TrimSpace(d.JunocashGenesisHash)
+	if expectedGenesis != "" {
+		genesis, err := jc.BlockHash(ctx, 0)
+		if err != nil {
+			return err
+		}
+		genesis = strings.TrimPrefix(strings.TrimSpace(strings.Trim(genesis, "\"")), "0x")
+		expectedGenesis = strings.TrimPrefix(strings.TrimSpace(strings.Trim(expectedGenesis, "\"")), "0x")
+		if !strings.EqualFold(genesis, expectedGenesis) {
+			return fmt.Errorf("junocash genesis hash mismatch: got %q want %q", genesis, expectedGenesis)
+		}
+	}
+	return nil
+}
+
 func printJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -406,15 +454,15 @@ func printJSON(w io.Writer, v any) error {
 }
 
 type crpConfigV1 struct {
-	Version               uint8
-	DeploymentID          [32]byte
-	Admin                 [32]byte
-	Threshold             uint8
-	ConflictThreshold     uint8
+	Version                uint8
+	DeploymentID           [32]byte
+	Admin                  [32]byte
+	Threshold              uint8
+	ConflictThreshold      uint8
 	FinalizationDelaySlots uint64
-	OperatorCount         uint8
-	Operators             [32][32]byte
-	Paused                bool
+	OperatorCount          uint8
+	Operators              [32][32]byte
+	Paused                 bool
 }
 
 func decodeCrpConfigV1(b []byte) (crpConfigV1, error) {
@@ -442,11 +490,11 @@ func decodeCrpConfigV1(b []byte) (crpConfigV1, error) {
 }
 
 type crpHeightV1 struct {
-	Version    uint8
-	Height     uint64
+	Version     uint8
+	Height      uint64
 	OrchardRoot [32]byte
-	Finalized  bool
-	Conflicted bool
+	Finalized   bool
+	Conflicted  bool
 }
 
 func decodeCrpHeightV1(b []byte) (crpHeightV1, error) {
