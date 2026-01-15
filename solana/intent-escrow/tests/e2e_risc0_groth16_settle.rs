@@ -12,17 +12,17 @@ use solana_sdk::{
     transaction::Transaction,
 };
 use spl_token::solana_program::program_pack::Pack;
-use verifier_router::state::{VerifierEntry, VerifierRouter};
 use verifier_router as risc0_verifier_router;
+use verifier_router::state::{VerifierEntry, VerifierRouter};
 
 use juno_intents_checkpoint_registry::{
-    checkpoint_pda as crp_checkpoint_pda, config_pda as crp_config_pda, height_pda as crp_height_pda,
-    observation_signing_bytes_v1, CrpInstruction,
+    checkpoint_pda as crp_checkpoint_pda, config_pda as crp_config_pda,
+    height_pda as crp_height_pda, observation_signing_bytes_v1, CrpInstruction,
 };
 use juno_intents_intent_escrow::{
     config_pda as iep_config_pda, fill_pda as iep_fill_pda, intent_pda as iep_intent_pda,
-    spent_receipt_pda as iep_spent_pda, vault_pda as iep_vault_pda, IepFillV1, IepInstruction,
-    IepIntentV1,
+    intent_vault_pda as iep_intent_vault_pda, spent_receipt_pda as iep_spent_pda,
+    vault_pda as iep_vault_pda, IepFillV2, IepInstruction, IepIntentV2,
 };
 
 const IEP_PROGRAM_ID_BYTES: [u8; 32] = [0xA1u8; 32];
@@ -150,7 +150,11 @@ fn anchor_account_data<T: AnchorSerialize + Discriminator>(value: &T) -> Vec<u8>
     out
 }
 
-fn iep_ix(program_id: solana_sdk::pubkey::Pubkey, accounts: Vec<AccountMeta>, data: IepInstruction) -> Instruction {
+fn iep_ix(
+    program_id: solana_sdk::pubkey::Pubkey,
+    accounts: Vec<AccountMeta>,
+    data: IepInstruction,
+) -> Instruction {
     Instruction {
         program_id,
         accounts,
@@ -158,7 +162,11 @@ fn iep_ix(program_id: solana_sdk::pubkey::Pubkey, accounts: Vec<AccountMeta>, da
     }
 }
 
-fn crp_ix(program_id: solana_sdk::pubkey::Pubkey, accounts: Vec<AccountMeta>, data: CrpInstruction) -> Instruction {
+fn crp_ix(
+    program_id: solana_sdk::pubkey::Pubkey,
+    accounts: Vec<AccountMeta>,
+    data: CrpInstruction,
+) -> Instruction {
     Instruction {
         program_id,
         accounts,
@@ -182,8 +190,14 @@ fn create_mint_instructions(
     let space = spl_token::state::Mint::LEN as u64;
     vec![
         system_instruction::create_account(payer, mint, lamports, space, &spl_token::ID),
-        spl_token::instruction::initialize_mint2(&spl_token::ID, mint, mint_authority, None, decimals)
-            .expect("initialize_mint2"),
+        spl_token::instruction::initialize_mint2(
+            &spl_token::ID,
+            mint,
+            mint_authority,
+            None,
+            decimals,
+        )
+        .expect("initialize_mint2"),
     ]
 }
 
@@ -363,7 +377,12 @@ async fn settles_real_risc0_groth16_bundle_v1() {
         &fee_owner.pubkey(),
         10_000_000_000,
     ));
-    ixs.push(mint_to_ix(&mint.pubkey(), &solver_ta.pubkey(), &payer.pubkey(), 1_000_000_000));
+    ixs.push(mint_to_ix(
+        &mint.pubkey(),
+        &solver_ta.pubkey(),
+        &payer.pubkey(),
+        1_000_000_000,
+    ));
 
     let tx = Transaction::new_signed_with_payer(
         &ixs,
@@ -490,16 +509,22 @@ async fn settles_real_risc0_groth16_bundle_v1() {
     banks_client.process_transaction(tx).await.unwrap();
 
     // Create intent.
+    let (intent_vault, _bump) = iep_intent_vault_pda(&iep_program_id, &intent);
     let create_intent = iep_ix(
         iep_program_id,
         vec![
             AccountMeta::new(payer.pubkey(), true),
             AccountMeta::new_readonly(iep_config, false),
             AccountMeta::new(intent, false),
+            AccountMeta::new(intent_vault, false),
+            AccountMeta::new(solver_ta.pubkey(), false), // unused for direction A
+            AccountMeta::new_readonly(mint.pubkey(), false),
+            AccountMeta::new_readonly(spl_token::ID, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
         IepInstruction::CreateIntent {
             intent_nonce: INTENT_NONCE,
+            direction: 1,
             mint: mint.pubkey(),
             solana_recipient: recipient_owner.pubkey(),
             net_amount: 100_000,
@@ -526,6 +551,7 @@ async fn settles_real_risc0_groth16_bundle_v1() {
             AccountMeta::new(fill, false),
             AccountMeta::new(vault, false),
             AccountMeta::new(solver_ta.pubkey(), false),
+            AccountMeta::new_readonly(solver_ta.pubkey(), false), // unused for direction A
             AccountMeta::new_readonly(mint.pubkey(), false),
             AccountMeta::new_readonly(spl_token::ID, false),
             AccountMeta::new_readonly(system_program::ID, false),
@@ -583,9 +609,21 @@ async fn settles_real_risc0_groth16_bundle_v1() {
     banks_client.process_transaction(tx).await.unwrap();
 
     // Check token balances.
-    let solver_acc = banks_client.get_account(solver_ta.pubkey()).await.unwrap().unwrap();
-    let recipient_acc = banks_client.get_account(recipient_ta.pubkey()).await.unwrap().unwrap();
-    let fee_acc = banks_client.get_account(fee_ta.pubkey()).await.unwrap().unwrap();
+    let solver_acc = banks_client
+        .get_account(solver_ta.pubkey())
+        .await
+        .unwrap()
+        .unwrap();
+    let recipient_acc = banks_client
+        .get_account(recipient_ta.pubkey())
+        .await
+        .unwrap()
+        .unwrap();
+    let fee_acc = banks_client
+        .get_account(fee_ta.pubkey())
+        .await
+        .unwrap()
+        .unwrap();
     let vault_acc = banks_client.get_account(vault).await.unwrap().unwrap();
 
     assert_eq!(token_amount(&recipient_acc), 100_000);
@@ -595,11 +633,11 @@ async fn settles_real_risc0_groth16_bundle_v1() {
 
     // Check state updated.
     let intent_ai = banks_client.get_account(intent).await.unwrap().unwrap();
-    let intent_state = IepIntentV1::try_from_slice(&intent_ai.data).unwrap();
+    let intent_state = IepIntentV2::try_from_slice(&intent_ai.data).unwrap();
     assert_eq!(intent_state.status, 3);
 
     let fill_ai = banks_client.get_account(fill).await.unwrap().unwrap();
-    let fill_state = IepFillV1::try_from_slice(&fill_ai.data).unwrap();
+    let fill_state = IepFillV2::try_from_slice(&fill_ai.data).unwrap();
     assert_eq!(fill_state.status, 2);
 
     // Spent receipt marker exists.
