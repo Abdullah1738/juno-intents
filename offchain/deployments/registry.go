@@ -29,6 +29,11 @@ type Deployment struct {
 	CheckpointRegistryProgramID string `json:"checkpoint_registry_program_id"`
 	IntentEscrowProgramID       string `json:"intent_escrow_program_id,omitempty"`
 	ReceiptVerifierProgramID    string `json:"receipt_verifier_program_id,omitempty"`
+
+	VerifierRouterProgramID string `json:"verifier_router_program_id,omitempty"`
+	VerifierRouter          string `json:"verifier_router,omitempty"`
+	VerifierEntry           string `json:"verifier_entry,omitempty"`
+	VerifierProgramID       string `json:"verifier_program_id,omitempty"`
 }
 
 func Load(path string) (Registry, error) {

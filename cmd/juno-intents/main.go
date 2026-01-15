@@ -52,6 +52,10 @@ func run(argv []string) error {
 		return cmdInitCRP(argv[1:])
 	case "init-iep":
 		return cmdInitIEP(argv[1:])
+	case "risc0-pda":
+		return cmdRisc0PDA(argv[1:])
+	case "init-risc0-verifier":
+		return cmdInitRisc0Verifier(argv[1:])
 	case "pda":
 		return cmdPDA(argv[1:])
 	case "keygen":
@@ -71,6 +75,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  juno-intents prove-ci [--witness-source regtest|secret]")
 	fmt.Fprintln(w, "  juno-intents init-crp --crp-program-id <pubkey> --deployment-id <hex32> --admin <pubkey> --threshold <u8> --conflict-threshold <u8> --finalization-delay-slots <u64> --operator <pubkey> [--operator <pubkey>...] [--payer-keypair <path>] [--dry-run]")
 	fmt.Fprintln(w, "  juno-intents init-iep --iep-program-id <pubkey> --deployment-id <hex32> --fee-bps <u16> --fee-collector <pubkey> --checkpoint-registry-program <pubkey> --receipt-verifier-program <pubkey> --verifier-router-program <pubkey> --verifier-router <pubkey> --verifier-entry <pubkey> --verifier-program <pubkey> [--payer-keypair <path>] [--dry-run]")
+	fmt.Fprintln(w, "  juno-intents risc0-pda --verifier-router-program-id <pubkey> [--selector JINT] [--print router|verifier-entry]")
+	fmt.Fprintln(w, "  juno-intents init-risc0-verifier --verifier-router-program-id <pubkey> --verifier-program-id <pubkey> [--selector JINT] [--payer-keypair <path>] [--dry-run]")
 	fmt.Fprintln(w, "  juno-intents pda --program-id <pubkey> --deployment-id <hex32> --intent-nonce <hex32> [--print <field>]")
 	fmt.Fprintln(w, "  juno-intents keygen [--out <path>] [--force]")
 	fmt.Fprintln(w)
@@ -81,6 +87,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  prove-ci  Triggers a workflow_dispatch GPU prove run and watches it.")
 	fmt.Fprintln(w, "  init-crp  Initializes a CRP config PDA (one-time deploy step).")
 	fmt.Fprintln(w, "  init-iep  Initializes an IEP config PDA (one-time deploy step).")
+	fmt.Fprintln(w, "  risc0-pda Prints Verifier Router PDAs for a selector.")
+	fmt.Fprintln(w, "  init-risc0-verifier Initializes a Verifier Router PDA + adds a Groth16 verifier entry for a selector.")
 	fmt.Fprintln(w, "  pda       Prints the derived Intent/Fill PDAs for deterministic testing.")
 	fmt.Fprintln(w, "  keygen    Generates a new Solana CLI JSON keypair file (0600).")
 }

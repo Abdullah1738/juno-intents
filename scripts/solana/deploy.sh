@@ -14,6 +14,9 @@ WORKDIR_OVERRIDE=""
 FEE_BPS="25"
 FEE_COLLECTOR_PUBKEY=""
 
+VERIFIER_ROUTER_PROGRAM_ID=""
+VERIFIER_PROGRAM_ID=""
+
 JUNOCASH_CHAIN=""
 JUNOCASH_GENESIS_HASH=""
 
@@ -32,6 +35,8 @@ Usage:
     --cluster devnet|mainnet|localnet \
     --admin <pubkey> \
     --fee-collector <pubkey> \
+    --verifier-router-program <pubkey> \
+    --verifier-program <pubkey> \
     --operator <pubkey> --operator <pubkey> \
     [--junocash-chain mainnet|testnet|regtest] \
     [--junocash-genesis-hash <hex32>] \
@@ -82,6 +87,10 @@ while [[ $# -gt 0 ]]; do
       FEE_BPS="${2:-}"; shift 2 ;;
     --fee-collector)
       FEE_COLLECTOR_PUBKEY="${2:-}"; shift 2 ;;
+    --verifier-router-program)
+      VERIFIER_ROUTER_PROGRAM_ID="${2:-}"; shift 2 ;;
+    --verifier-program)
+      VERIFIER_PROGRAM_ID="${2:-}"; shift 2 ;;
     --operator)
       CRP_OPERATORS+=("${2:-}"); shift 2 ;;
     --threshold)
@@ -126,6 +135,14 @@ if [[ -z "${REFUND_PUBKEY}" ]]; then
 fi
 if [[ -z "${FEE_COLLECTOR_PUBKEY}" ]]; then
   echo "--fee-collector is required" >&2
+  exit 2
+fi
+if [[ -z "${VERIFIER_ROUTER_PROGRAM_ID}" ]]; then
+  echo "--verifier-router-program is required" >&2
+  exit 2
+fi
+if [[ -z "${VERIFIER_PROGRAM_ID}" ]]; then
+  echo "--verifier-program is required" >&2
   exit 2
 fi
 if [[ "${#CRP_OPERATORS[@]}" -lt 2 ]]; then
@@ -376,20 +393,26 @@ INIT_CRP_ARGS=(
 for op in "${CRP_OPERATORS[@]}"; do
   INIT_CRP_ARGS+=(--operator "${op}")
 done
-SOLANA_RPC_URL="${RPC_URL}" go run ./cmd/juno-intents init-crp "${INIT_CRP_ARGS[@]}" >/dev/null
+(cd "${ROOT}" && SOLANA_RPC_URL="${RPC_URL}" go run ./cmd/juno-intents init-crp "${INIT_CRP_ARGS[@]}") >/dev/null
 
 echo "initializing IEP config..." >&2
-SOLANA_RPC_URL="${RPC_URL}" go run ./cmd/juno-intents init-iep \
+RISC0_ROUTER_PDA="$(cd "${ROOT}" && go run ./cmd/juno-intents risc0-pda --verifier-router-program-id "${VERIFIER_ROUTER_PROGRAM_ID}" --print router)"
+RISC0_VERIFIER_ENTRY_PDA="$(cd "${ROOT}" && go run ./cmd/juno-intents risc0-pda --verifier-router-program-id "${VERIFIER_ROUTER_PROGRAM_ID}" --print verifier-entry)"
+(cd "${ROOT}" && SOLANA_RPC_URL="${RPC_URL}" go run ./cmd/juno-intents init-iep \
   --iep-program-id "${IEP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --fee-bps "${FEE_BPS}" \
   --fee-collector "${FEE_COLLECTOR_PUBKEY}" \
   --checkpoint-registry-program "${CRP_PROGRAM_ID}" \
   --receipt-verifier-program "${RV_PROGRAM_ID}" \
-  --payer-keypair "${PAYER_KEYPAIR}" >/dev/null
+  --verifier-router-program "${VERIFIER_ROUTER_PROGRAM_ID}" \
+  --verifier-router "${RISC0_ROUTER_PDA}" \
+  --verifier-entry "${RISC0_VERIFIER_ENTRY_PDA}" \
+  --verifier-program "${VERIFIER_PROGRAM_ID}" \
+  --payer-keypair "${PAYER_KEYPAIR}") >/dev/null
 
-CRP_CONFIG_PDA="$(go run ./cmd/juno-intents pda --program-id "${CRP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
-IEP_CONFIG_PDA="$(go run ./cmd/juno-intents pda --program-id "${IEP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
+CRP_CONFIG_PDA="$(cd "${ROOT}" && go run ./cmd/juno-intents pda --program-id "${CRP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
+IEP_CONFIG_PDA="$(cd "${ROOT}" && go run ./cmd/juno-intents pda --program-id "${IEP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
 
 if [[ -z "${NAME}" ]]; then
   NAME="${CLUSTER}-${ts}"
@@ -409,6 +432,10 @@ export DEPLOY_RECORD_CRP_CONFIG="${CRP_CONFIG_PDA}"
 export DEPLOY_RECORD_IEP_CONFIG="${IEP_CONFIG_PDA}"
 export DEPLOY_RECORD_FEE_BPS="${FEE_BPS}"
 export DEPLOY_RECORD_FEE_COLLECTOR="${FEE_COLLECTOR_PUBKEY}"
+export DEPLOY_RECORD_VERIFIER_ROUTER_PROGRAM_ID="${VERIFIER_ROUTER_PROGRAM_ID}"
+export DEPLOY_RECORD_VERIFIER_ROUTER="${RISC0_ROUTER_PDA}"
+export DEPLOY_RECORD_VERIFIER_ENTRY="${RISC0_VERIFIER_ENTRY_PDA}"
+export DEPLOY_RECORD_VERIFIER_PROGRAM_ID="${VERIFIER_PROGRAM_ID}"
 export DEPLOY_RECORD_CRP_THRESHOLD="${CRP_THRESHOLD}"
 export DEPLOY_RECORD_CRP_CONFLICT_THRESHOLD="${CRP_CONFLICT_THRESHOLD}"
 export DEPLOY_RECORD_CRP_DELAY_SLOTS="${CRP_FINALIZATION_DELAY_SLOTS}"
@@ -445,6 +472,10 @@ entry = {
     "iep_config": os.environ["DEPLOY_RECORD_IEP_CONFIG"],
     "fee_bps": int(os.environ["DEPLOY_RECORD_FEE_BPS"]),
     "fee_collector": os.environ["DEPLOY_RECORD_FEE_COLLECTOR"],
+    "verifier_router_program_id": os.environ.get("DEPLOY_RECORD_VERIFIER_ROUTER_PROGRAM_ID") or None,
+    "verifier_router": os.environ.get("DEPLOY_RECORD_VERIFIER_ROUTER") or None,
+    "verifier_entry": os.environ.get("DEPLOY_RECORD_VERIFIER_ENTRY") or None,
+    "verifier_program_id": os.environ.get("DEPLOY_RECORD_VERIFIER_PROGRAM_ID") or None,
     "crp_threshold": int(os.environ["DEPLOY_RECORD_CRP_THRESHOLD"]),
     "crp_conflict_threshold": int(os.environ["DEPLOY_RECORD_CRP_CONFLICT_THRESHOLD"]),
     "crp_finalization_delay_slots": int(os.environ["DEPLOY_RECORD_CRP_DELAY_SLOTS"]),
@@ -452,7 +483,14 @@ entry = {
     "upgrade_mode": "final",
 }
 
-for k in ["junocash_chain", "junocash_genesis_hash"]:
+for k in [
+    "junocash_chain",
+    "junocash_genesis_hash",
+    "verifier_router_program_id",
+    "verifier_router",
+    "verifier_entry",
+    "verifier_program_id",
+]:
     if entry.get(k) is None:
         entry.pop(k, None)
 
