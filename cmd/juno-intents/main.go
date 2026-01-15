@@ -12,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Abdullah1738/juno-intents/offchain/solana"
+	"github.com/Abdullah1738/juno-intents/offchain/solvernet"
 )
 
 const (
@@ -51,6 +54,8 @@ func run(argv []string) error {
 		return cmdInitIEP(argv[1:])
 	case "pda":
 		return cmdPDA(argv[1:])
+	case "keygen":
+		return cmdKeygen(argv[1:])
 	default:
 		return fmt.Errorf("unknown command: %s", argv[0])
 	}
@@ -67,6 +72,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  juno-intents init-crp --crp-program-id <pubkey> --deployment-id <hex32> --admin <pubkey> --threshold <u8> --conflict-threshold <u8> --finalization-delay-slots <u64> --operator <pubkey> [--operator <pubkey>...] [--payer-keypair <path>] [--dry-run]")
 	fmt.Fprintln(w, "  juno-intents init-iep --iep-program-id <pubkey> --deployment-id <hex32> --fee-bps <u16> --fee-collector <pubkey> --checkpoint-registry-program <pubkey> --receipt-verifier-program <pubkey> [--payer-keypair <path>] [--dry-run]")
 	fmt.Fprintln(w, "  juno-intents pda --program-id <pubkey> --deployment-id <hex32> --intent-nonce <hex32> [--print <field>]")
+	fmt.Fprintln(w, "  juno-intents keygen [--out <path>] [--force]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  witness   Generate a v1 receipt witness hex from your local junocash wallet (prints hex to stdout).")
@@ -76,6 +82,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  init-crp  Initializes a CRP config PDA (one-time deploy step).")
 	fmt.Fprintln(w, "  init-iep  Initializes an IEP config PDA (one-time deploy step).")
 	fmt.Fprintln(w, "  pda       Prints the derived Intent/Fill PDAs for deterministic testing.")
+	fmt.Fprintln(w, "  keygen    Generates a new Solana CLI JSON keypair file (0600).")
 }
 
 func cmdWitness(argv []string) error {
@@ -183,6 +190,37 @@ func cmdProveCI(argv []string) error {
 	fmt.Fprintf(os.Stderr, "dispatched run id: %d\n", runID)
 
 	return ghRunWatch(gh, runID)
+}
+
+func cmdKeygen(argv []string) error {
+	fs := flag.NewFlagSet("keygen", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	var (
+		out   string
+		force bool
+	)
+	fs.StringVar(&out, "out", solvernet.DefaultSolanaKeypairPath(), "Output keypair path (Solana CLI JSON format)")
+	fs.BoolVar(&force, "force", false, "Overwrite existing file if set")
+
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if len(fs.Args()) != 0 {
+		return fmt.Errorf("unexpected args: %v", fs.Args())
+	}
+	if strings.TrimSpace(out) == "" {
+		return errors.New("--out is required")
+	}
+
+	pub, err := solvernet.GenerateSolanaKeypairFile(out, force)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("pubkey_base58=%s\n", solana.Pubkey(pub).Base58())
+	fmt.Printf("keypair_file=%s\n", out)
+	return nil
 }
 
 func generateWitnessHex(cargo string, walletWitnessArgs []string) (string, error) {
