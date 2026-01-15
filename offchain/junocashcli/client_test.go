@@ -8,9 +8,11 @@ import (
 func TestParseBlockJSON_Golden(t *testing.T) {
 	raw := `{
   "hash": "aa",
+  "confirmations": 42,
   "height": 123,
   "previousblockhash": "bb",
-  "finalorchardroot": "cc"
+  "finalorchardroot": "cc",
+  "tx": ["deadbeef"]
 }`
 	b, err := ParseBlockJSON(strings.NewReader(raw))
 	if err != nil {
@@ -20,4 +22,3 @@ func TestParseBlockJSON_Golden(t *testing.T) {
 		t.Fatalf("unexpected block: %+v", b)
 	}
 }
-

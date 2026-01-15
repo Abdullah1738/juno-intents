@@ -88,7 +88,6 @@ type Block struct {
 func ParseBlockJSON(r io.Reader) (Block, error) {
 	var b Block
 	dec := json.NewDecoder(r)
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(&b); err != nil {
 		return Block{}, err
 	}
@@ -112,4 +111,3 @@ func (c *Client) Block(ctx context.Context, blockHash string) (Block, error) {
 	}
 	return b, nil
 }
-
