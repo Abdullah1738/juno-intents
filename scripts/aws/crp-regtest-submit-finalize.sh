@@ -34,6 +34,9 @@ MINE_BLOCKS="${JUNO_CRP_REGTEST_MINE_BLOCKS:-3}"
 
 CONFIG_SCAN_LIMIT="${JUNO_CRP_CONFIG_SCAN_LIMIT:-200}"
 CHECKPOINT_SCAN_LIMIT="${JUNO_CRP_CHECKPOINT_SCAN_LIMIT:-200}"
+SSM_TIMEOUT_SECONDS="${JUNO_SSM_TIMEOUT_SECONDS:-7200}"
+
+PAYER_KEYPAIR_FILE=""
 
 usage() {
   cat <<'USAGE' >&2
@@ -42,7 +45,8 @@ Usage:
     --deployment <name> \
     --eif-release-tag <tag> \
     --operator1-sealed-key <path> \
-    --operator2-sealed-key <path>
+    --operator2-sealed-key <path> \
+    [--payer-keypair <path>]
 
 Environment:
   JUNO_AWS_REGION                    (default: us-east-1)
@@ -65,10 +69,12 @@ Environment:
   JUNO_CRP_REGTEST_MINE_BLOCKS       (default: 3; must be > lag)
   JUNO_CRP_CONFIG_SCAN_LIMIT         (default: 200)
   JUNO_CRP_CHECKPOINT_SCAN_LIMIT     (default: 200)
+  JUNO_SSM_TIMEOUT_SECONDS           (default: 7200)
 
 Notes:
   - Uses a single enclave host instance to submit the same checkpoint twice (two operator sealed keys), then finalizes via finalize-pending.
   - Runs a local junocash regtest (Docker) inside the EC2 instance.
+  - If --payer-keypair is not provided, generates a fresh devnet payer and funds it via scripts/aws/devnet-airdrop.sh.
   - All AWS calls use: --profile juno
   - The instance is ALWAYS terminated on exit (success/failure).
 USAGE
@@ -92,6 +98,8 @@ while [[ $# -gt 0 ]]; do
       OP1_SEALED_KEY_FILE="${2:-}"; shift 2 ;;
     --operator2-sealed-key)
       OP2_SEALED_KEY_FILE="${2:-}"; shift 2 ;;
+    --payer-keypair)
+      PAYER_KEYPAIR_FILE="${2:-}"; shift 2 ;;
     *)
       echo "unexpected argument: $1" >&2
       usage
@@ -180,6 +188,44 @@ with open(path,"rb") as f:
 PY
 )"
 OP2_SEALED_B64="$(python3 - "${OP2_SEALED_KEY_FILE}" <<'PY'
+import base64,sys
+path=sys.argv[1]
+with open(path,"rb") as f:
+  print(base64.b64encode(f.read()).decode("ascii"))
+PY
+)"
+
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+WORKDIR="${ROOT}/tmp/aws/crp-regtest-smoke/${ts}"
+mkdir -p "${WORKDIR}"
+
+if [[ -z "${PAYER_KEYPAIR_FILE}" ]]; then
+  if ! command -v go >/dev/null; then
+    echo "missing required command: go (needed to generate payer keypair)" >&2
+    exit 1
+  fi
+  PAYER_KEYPAIR_FILE="${WORKDIR}/payer.json"
+  echo "generating devnet payer keypair..." >&2
+  KEYGEN_OUT="$(go run ./cmd/juno-intents keygen --out "${PAYER_KEYPAIR_FILE}" --force)"
+  PAYER_PUBKEY="$(printf '%s\n' "${KEYGEN_OUT}" | sed -nE 's/^pubkey_base58=(.+)$/\1/p' | head -n 1)"
+  if [[ -z "${PAYER_PUBKEY}" ]]; then
+    echo "failed to parse payer pubkey from keygen output" >&2
+    printf '%s\n' "${KEYGEN_OUT}" >&2
+    exit 1
+  fi
+  echo "payer_pubkey=${PAYER_PUBKEY}" >&2
+
+  echo "funding payer via devnet airdrop..." >&2
+  scripts/aws/devnet-airdrop.sh --pubkey "${PAYER_PUBKEY}" --sol 1 --rpc-url "${DEPLOY_RPC_URL}" >/dev/null
+else
+  if [[ ! -f "${PAYER_KEYPAIR_FILE}" ]]; then
+    echo "--payer-keypair not found: ${PAYER_KEYPAIR_FILE}" >&2
+    exit 1
+  fi
+  echo "using existing payer keypair: ${PAYER_KEYPAIR_FILE}" >&2
+fi
+
+PAYER_JSON_B64="$(python3 - "${PAYER_KEYPAIR_FILE}" <<'PY'
 import base64,sys
 path=sys.argv[1]
 with open(path,"rb") as f:
@@ -345,32 +391,33 @@ import sys
 
 region = os.environ["REGION"]
 instance_id = os.environ["INSTANCE_ID"]
+timeout_seconds = os.environ.get("SSM_TIMEOUT_SECONDS", "").strip()
 commands_json = sys.argv[1]
 cmds = json.loads(commands_json)
 
 payload = json.dumps({"commands": cmds})
-out = subprocess.check_output(
-    [
-        "aws",
-        "--profile",
-        "juno",
-        "--region",
-        region,
-        "ssm",
-        "send-command",
-        "--document-name",
-        "AWS-RunShellScript",
-        "--targets",
-        f"Key=InstanceIds,Values={instance_id}",
-        "--parameters",
-        payload,
-        "--query",
-        "Command.CommandId",
-        "--output",
-        "text",
-    ],
-    text=True,
-)
+args = [
+    "aws",
+    "--profile",
+    "juno",
+    "--region",
+    region,
+    "ssm",
+    "send-command",
+    "--document-name",
+    "AWS-RunShellScript",
+    "--targets",
+    f"Key=InstanceIds,Values={instance_id}",
+    "--parameters",
+    payload,
+    "--query",
+    "Command.CommandId",
+    "--output",
+    "text",
+]
+if timeout_seconds:
+    args += ["--timeout-seconds", timeout_seconds]
+out = subprocess.check_output(args, text=True)
 print(out.strip())
 PY
 }
@@ -378,7 +425,13 @@ PY
 wait_ssm() {
   local command_id="$1"
   local status="InProgress"
-  for _ in $(seq 1 720); do
+  local interval_s=5
+  local max_wait_s="${SSM_TIMEOUT_SECONDS}"
+  if [[ -z "${max_wait_s}" || "${max_wait_s}" -le 0 ]]; then
+    max_wait_s=7200
+  fi
+  local max_iters="$(( (max_wait_s + interval_s - 1) / interval_s + 60 ))"
+  for _ in $(seq 1 "${max_iters}"); do
     status="$(awsj ssm get-command-invocation \
       --command-id "${command_id}" \
       --instance-id "${INSTANCE_ID}" \
@@ -389,16 +442,17 @@ wait_ssm() {
         break
         ;;
       *)
-        sleep 5
+        sleep "${interval_s}"
         ;;
     esac
   done
   echo "${status}"
 }
 
-export REGION INSTANCE_ID RELEASE_REPO RELEASE_TAG git_sha eif_sha256 KMS_KEY_ID KMS_VSOCK_PORT ENCLAVE_CID ENCLAVE_PORT ENCLAVE_MEM_MIB ENCLAVE_CPU_COUNT
+export REGION INSTANCE_ID RELEASE_REPO RELEASE_TAG git_sha eif_sha256 KMS_KEY_ID KMS_VSOCK_PORT ENCLAVE_CID ENCLAVE_PORT ENCLAVE_MEM_MIB ENCLAVE_CPU_COUNT SSM_TIMEOUT_SECONDS
 export OP1_SEALED_B64 OP2_SEALED_B64 OP1_EXPECTED OP2_EXPECTED DEPLOYMENT_NAME DEPLOYMENT_FILE DEPLOY_RPC_URL LAG MINE_BLOCKS CONFIG_SCAN_LIMIT CHECKPOINT_SCAN_LIMIT
 export DEPLOYMENTS_JSON_B64
+export PAYER_JSON_B64
 
 CMDS="$(
   python3 - <<'PY'
@@ -425,6 +479,7 @@ lag=os.environ["LAG"]
 mine_blocks=os.environ["MINE_BLOCKS"]
 cfg_scan=os.environ["CONFIG_SCAN_LIMIT"]
 chk_scan=os.environ["CHECKPOINT_SCAN_LIMIT"]
+payer_b64=os.environ["PAYER_JSON_B64"]
 
 cmds=[
   "set -euo pipefail",
@@ -432,6 +487,7 @@ cmds=[
   f"export DEPLOYMENTS_JSON_B64='{deployments_b64}'",
   f"export OP1_SEALED_B64='{op1_b64}'",
   f"export OP2_SEALED_B64='{op2_b64}'",
+  f"export PAYER_JSON_B64='{payer_b64}'",
   "sudo dnf install -y git docker python3 curl-minimal >/tmp/dnf-install.log 2>&1 || { tail -n 200 /tmp/dnf-install.log >&2; exit 1; }",
   "sudo systemctl enable --now docker",
   "sudo dnf install -y aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel >/tmp/dnf-nitro.log 2>&1 || sudo dnf install -y aws-nitro-enclaves-cli >/tmp/dnf-nitro.log 2>&1 || { tail -n 200 /tmp/dnf-nitro.log >&2; exit 1; }",
@@ -465,13 +521,7 @@ cmds=[
   "mkdir -p tmp/bin",
   "docker run --rm -v \"$PWD\":/src -w /src \"$BUILDER_IMAGE\" go build -trimpath -buildvcs=false -mod=readonly -ldflags \"-s -w -buildid=\" -o ./tmp/bin/nitro-operator ./cmd/nitro-operator >/dev/null",
   "docker run --rm -v \"$PWD\":/src -w /src \"$BUILDER_IMAGE\" go build -trimpath -buildvcs=false -mod=readonly -ldflags \"-s -w -buildid=\" -o ./tmp/bin/crp-operator ./cmd/crp-operator >/dev/null",
-  "docker run --rm -v \"$PWD\":/src -w /src \"$BUILDER_IMAGE\" go build -trimpath -buildvcs=false -mod=readonly -ldflags \"-s -w -buildid=\" -o ./tmp/bin/juno-intents ./cmd/juno-intents >/dev/null",
-  "KEYGEN_OUT=\"$(./tmp/bin/juno-intents keygen --out ./tmp/payer.json)\"",
-  "PAYER_PUBKEY=\"$(printf '%s\n' \"${KEYGEN_OUT}\" | sed -nE 's/^pubkey_base58=(.+)$/\\1/p' | head -n 1)\"",
-  "export PAYER_PUBKEY",
-  "if [[ -z \"${PAYER_PUBKEY}\" ]]; then echo \"failed to parse payer pubkey\" >&2; exit 1; fi",
-  "echo \"payer_pubkey=${PAYER_PUBKEY}\"",
-  "python3 - <<'PYAIR'\nimport json,os,time,urllib.request\nrpc_url=os.environ['DEPLOY_RPC_URL']\npubkey=os.environ['PAYER_PUBKEY']\ntarget=2_000_000_000\nchunk=1_000_000_000\n\ndef rpc(method, params):\n    req={'jsonrpc':'2.0','id':1,'method':method,'params':params}\n    data=json.dumps(req).encode()\n    r=urllib.request.Request(rpc_url, data=data, headers={'Content-Type':'application/json'})\n    with urllib.request.urlopen(r, timeout=30) as resp:\n        out=json.loads(resp.read().decode())\n    if 'error' in out:\n        raise RuntimeError(out['error'])\n    return out['result']\n\ndef get_balance():\n    res=rpc('getBalance',[pubkey,{'commitment':'confirmed'}])\n    return int(res['value'])\n\nsleep_s=6\nbal=get_balance()\nprint(f\"balance={bal} target={target}\")\nattempts=0\nwhile bal < target and attempts < 120:\n    attempts += 1\n    try:\n        sig=rpc('requestAirdrop',[pubkey,chunk])\n        print(f\"airdrop[{attempts}] sig={sig}\")\n        sleep_s=15\n    except Exception as e:\n        msg=str(e)\n        print(f\"airdrop[{attempts}] error={msg}\")\n        if '429' in msg or 'Too Many Requests' in msg:\n            sleep_s=min(sleep_s*2,120)\n        else:\n            sleep_s=min(max(sleep_s,15),120)\n    time.sleep(sleep_s)\n    bal=get_balance()\n    print(f\"balance={bal}\")\n\nif bal < target:\n    raise SystemExit(f\"still underfunded: balance={bal} target={target}\")\nprint('funded')\nPYAIR",
+  "python3 - <<'PYPAYER'\nimport base64,os\nraw=base64.b64decode(os.environ['PAYER_JSON_B64'].encode('ascii'))\nos.makedirs('tmp', exist_ok=True)\nopen('tmp/payer.json','wb').write(raw)\nos.chmod('tmp/payer.json', 0o600)\nprint('payer_keypair=tmp/payer.json')\nPYPAYER",
   "scripts/junocash/regtest/up.sh",
   f"scripts/junocash/regtest/cli.sh generate {mine_blocks} >/dev/null",
   "TIP=\"$(scripts/junocash/regtest/cli.sh getblockcount)\"",
