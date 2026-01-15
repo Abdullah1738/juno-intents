@@ -14,6 +14,9 @@ WORKDIR_OVERRIDE=""
 FEE_BPS="25"
 FEE_COLLECTOR_PUBKEY=""
 
+JUNOCASH_CHAIN=""
+JUNOCASH_GENESIS_HASH=""
+
 CRP_THRESHOLD="2"
 CRP_CONFLICT_THRESHOLD="2"
 CRP_FINALIZATION_DELAY_SLOTS="0"
@@ -30,6 +33,8 @@ Usage:
     --admin <pubkey> \
     --fee-collector <pubkey> \
     --operator <pubkey> --operator <pubkey> \
+    [--junocash-chain mainnet|testnet|regtest] \
+    [--junocash-genesis-hash <hex32>] \
     [--deployment-id <hex32>] \
     [--workdir <path>] \
     [--rpc-url <url>] \
@@ -61,6 +66,10 @@ while [[ $# -gt 0 ]]; do
       RPC_URL="${2:-}"; shift 2 ;;
     --deployment-id)
       DEPLOYMENT_ID_HEX="${2:-}"; shift 2 ;;
+    --junocash-chain)
+      JUNOCASH_CHAIN="${2:-}"; shift 2 ;;
+    --junocash-genesis-hash)
+      JUNOCASH_GENESIS_HASH="${2:-}"; shift 2 ;;
     --workdir)
       WORKDIR_OVERRIDE="${2:-}"; shift 2 ;;
     --name)
@@ -210,6 +219,23 @@ if [[ "${#DEPLOYMENT_ID_HEX}" -ne 64 ]]; then
   exit 2
 fi
 echo -n "${DEPLOYMENT_ID_HEX}" >"${DEPLOYMENT_ID_FILE}"
+
+if [[ -n "${JUNOCASH_CHAIN}" ]]; then
+  case "${JUNOCASH_CHAIN}" in
+    mainnet|testnet|regtest) ;;
+    *)
+      echo "--junocash-chain must be one of: mainnet|testnet|regtest" >&2
+      exit 2
+      ;;
+  esac
+fi
+if [[ -n "${JUNOCASH_GENESIS_HASH}" ]]; then
+  JUNOCASH_GENESIS_HASH="${JUNOCASH_GENESIS_HASH#0x}"
+  if [[ "${#JUNOCASH_GENESIS_HASH}" -ne 64 ]]; then
+    echo "--junocash-genesis-hash must be 32-byte hex (64 chars)" >&2
+    exit 2
+  fi
+fi
 
 echo "deployment_id: ${DEPLOYMENT_ID_HEX}" >&2
 echo "crp_program_id: ${CRP_PROGRAM_ID}" >&2
@@ -387,6 +413,8 @@ export DEPLOY_RECORD_CRP_THRESHOLD="${CRP_THRESHOLD}"
 export DEPLOY_RECORD_CRP_CONFLICT_THRESHOLD="${CRP_CONFLICT_THRESHOLD}"
 export DEPLOY_RECORD_CRP_DELAY_SLOTS="${CRP_FINALIZATION_DELAY_SLOTS}"
 export DEPLOY_RECORD_CRP_OPERATORS_JSON="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "${CRP_OPERATORS[@]}")"
+export DEPLOY_RECORD_JUNOCASH_CHAIN="${JUNOCASH_CHAIN}"
+export DEPLOY_RECORD_JUNOCASH_GENESIS_HASH="${JUNOCASH_GENESIS_HASH}"
 
 python3 - <<'PY'
 import json
@@ -407,6 +435,8 @@ entry = {
     "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
     "deployment_id": os.environ["DEPLOY_RECORD_DEPLOYMENT_ID"],
+    "junocash_chain": os.environ.get("DEPLOY_RECORD_JUNOCASH_CHAIN") or None,
+    "junocash_genesis_hash": os.environ.get("DEPLOY_RECORD_JUNOCASH_GENESIS_HASH") or None,
     "admin": os.environ["DEPLOY_RECORD_ADMIN"],
     "checkpoint_registry_program_id": os.environ["DEPLOY_RECORD_CRP_PROGRAM_ID"],
     "intent_escrow_program_id": os.environ["DEPLOY_RECORD_IEP_PROGRAM_ID"],
@@ -421,6 +451,10 @@ entry = {
     "crp_operators": json.loads(os.environ["DEPLOY_RECORD_CRP_OPERATORS_JSON"]),
     "upgrade_mode": "final",
 }
+
+for k in ["junocash_chain", "junocash_genesis_hash"]:
+    if entry.get(k) is None:
+        entry.pop(k, None)
 
 reg.setdefault("deployments", [])
 reg["deployments"].append(entry)
