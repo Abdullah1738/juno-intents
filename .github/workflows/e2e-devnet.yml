@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       deployment:
-        description: "Deployment name from deployments.json"
+        description: "Base deployment name from deployments.json (workflow creates a fresh deployment_id + config PDAs per run)"
         required: true
         type: string
       net_amount_a:
@@ -187,9 +187,158 @@ jobs:
           echo "HELIUS_CLUSTER=devnet" >> "$GITHUB_ENV"
           echo "HELIUS_RPC_URL=${devnet_url}" >> "$GITHUB_ENV"
 
+      - name: Prepare ephemeral deployment (init CRP + IEP)
+        run: |
+          set -euo pipefail
+
+          base_deployment="${{ github.event.inputs.deployment }}"
+          e2e_deployment="e2e-${GITHUB_RUN_ID}"
+          deployment_id="$(openssl rand -hex 32)"
+
+          echo "base_deployment=${base_deployment}" >&2
+          echo "e2e_deployment=${e2e_deployment}" >&2
+          echo "deployment_id=${deployment_id}" >&2
+
+          while IFS='=' read -r k v; do
+            export "${k}=${v}"
+          done < <(python3 - "${base_deployment}" <<'PY'
+          import json,sys
+          name=sys.argv[1]
+          with open("deployments.json","r",encoding="utf-8") as f:
+            reg=json.load(f)
+          entry=None
+          for it in reg.get("deployments") or []:
+            if it.get("name")==name:
+              entry=it
+              break
+          if entry is None:
+            raise SystemExit(f"deployment not found: {name}")
+          def emit(k, v):
+            if v is None:
+              return
+            print(f"{k}={v}")
+          emit("RPC_URL", entry.get("rpc_url"))
+          emit("ADMIN", entry.get("admin"))
+          emit("FEE_BPS", entry.get("fee_bps"))
+          emit("FEE_COLLECTOR", entry.get("fee_collector"))
+          emit("CRP_PROGRAM_ID", entry.get("checkpoint_registry_program_id"))
+          emit("IEP_PROGRAM_ID", entry.get("intent_escrow_program_id"))
+          emit("RV_PROGRAM_ID", entry.get("receipt_verifier_program_id"))
+          emit("VERIFIER_ROUTER_PROGRAM_ID", entry.get("verifier_router_program_id"))
+          emit("VERIFIER_ROUTER", entry.get("verifier_router"))
+          emit("VERIFIER_ENTRY", entry.get("verifier_entry"))
+          emit("VERIFIER_PROGRAM_ID", entry.get("verifier_program_id"))
+          emit("JUNOCASH_CHAIN", entry.get("junocash_chain"))
+          emit("JUNOCASH_GENESIS_HASH", entry.get("junocash_genesis_hash"))
+          emit("ADDRESS_LOOKUP_TABLE", entry.get("address_lookup_table"))
+          PY
+          )
+
+          if [[ -z "${RPC_URL:-}" || -z "${ADMIN:-}" || -z "${FEE_BPS:-}" || -z "${FEE_COLLECTOR:-}" ]]; then
+            echo "base deployment missing required fields (rpc_url/admin/fee_bps/fee_collector)" >&2
+            exit 1
+          fi
+          if [[ -z "${CRP_PROGRAM_ID:-}" || -z "${IEP_PROGRAM_ID:-}" || -z "${RV_PROGRAM_ID:-}" ]]; then
+            echo "base deployment missing required program IDs (CRP/IEP/RV)" >&2
+            exit 1
+          fi
+          if [[ -z "${VERIFIER_ROUTER_PROGRAM_ID:-}" || -z "${VERIFIER_ROUTER:-}" || -z "${VERIFIER_ENTRY:-}" || -z "${VERIFIER_PROGRAM_ID:-}" ]]; then
+            echo "base deployment missing required verifier router fields" >&2
+            exit 1
+          fi
+          if [[ -z "${JUNOCASH_CHAIN:-}" || -z "${JUNOCASH_GENESIS_HASH:-}" ]]; then
+            echo "base deployment missing required JunoCash chain info (junocash_chain/junocash_genesis_hash)" >&2
+            exit 1
+          fi
+
+          op1_pub="$(solana-keygen pubkey /tmp/juno-secrets/crp-operator-1.json)"
+          op2_pub="$(solana-keygen pubkey /tmp/juno-secrets/crp-operator-2.json)"
+
+          rpc="${HELIUS_RPC_URL:-${RPC_URL}}"
+          echo "solana_rpc_url=${rpc}" >&2
+
+          crp_log="$(SOLANA_RPC_URL="${rpc}" go run ./cmd/juno-intents init-crp \
+            --crp-program-id "${CRP_PROGRAM_ID}" \
+            --deployment-id "${deployment_id}" \
+            --admin "${ADMIN}" \
+            --threshold 2 \
+            --conflict-threshold 2 \
+            --finalization-delay-slots 0 \
+            --operator "${op1_pub}" \
+            --operator "${op2_pub}" \
+            --payer-keypair /tmp/juno-secrets/solver.json 2>&1)"
+          echo "${crp_log}" >&2
+          crp_config="$(printf '%s\n' "${crp_log}" | sed -nE 's/^crp_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' | tail -n 1)"
+          if [[ -z "${crp_config}" ]]; then
+            echo "failed to parse crp_config from init-crp output" >&2
+            exit 1
+          fi
+
+          iep_log="$(SOLANA_RPC_URL="${rpc}" go run ./cmd/juno-intents init-iep \
+            --iep-program-id "${IEP_PROGRAM_ID}" \
+            --deployment-id "${deployment_id}" \
+            --fee-bps "${FEE_BPS}" \
+            --fee-collector "${FEE_COLLECTOR}" \
+            --checkpoint-registry-program "${CRP_PROGRAM_ID}" \
+            --receipt-verifier-program "${RV_PROGRAM_ID}" \
+            --verifier-router-program "${VERIFIER_ROUTER_PROGRAM_ID}" \
+            --verifier-router "${VERIFIER_ROUTER}" \
+            --verifier-entry "${VERIFIER_ENTRY}" \
+            --verifier-program "${VERIFIER_PROGRAM_ID}" \
+            --payer-keypair /tmp/juno-secrets/solver.json 2>&1)"
+          echo "${iep_log}" >&2
+          iep_config="$(printf '%s\n' "${iep_log}" | sed -nE 's/^iep_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' | tail -n 1)"
+          if [[ -z "${iep_config}" ]]; then
+            echo "failed to parse iep_config from init-iep output" >&2
+            exit 1
+          fi
+
+          tmp_deployments="/tmp/juno-deployments-e2e.json"
+          python3 - <<PY
+          import json,time
+          entry = {
+            "name": "${e2e_deployment}",
+            "cluster": "devnet",
+            "rpc_url": "${RPC_URL}",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "deployment_id": "${deployment_id}",
+            "junocash_chain": "${JUNOCASH_CHAIN}",
+            "junocash_genesis_hash": "${JUNOCASH_GENESIS_HASH}",
+            "admin": "${ADMIN}",
+            "checkpoint_registry_program_id": "${CRP_PROGRAM_ID}",
+            "intent_escrow_program_id": "${IEP_PROGRAM_ID}",
+            "receipt_verifier_program_id": "${RV_PROGRAM_ID}",
+            "crp_config": "${crp_config}",
+            "iep_config": "${iep_config}",
+            "fee_bps": int("${FEE_BPS}"),
+            "fee_collector": "${FEE_COLLECTOR}",
+            "verifier_router_program_id": "${VERIFIER_ROUTER_PROGRAM_ID}",
+            "verifier_router": "${VERIFIER_ROUTER}",
+            "verifier_entry": "${VERIFIER_ENTRY}",
+            "verifier_program_id": "${VERIFIER_PROGRAM_ID}",
+            "crp_threshold": 2,
+            "crp_conflict_threshold": 2,
+            "crp_finalization_delay_slots": 0,
+            "crp_operators": ["${op1_pub}","${op2_pub}"],
+            "upgrade_mode": "final",
+          }
+          alt = "${ADDRESS_LOOKUP_TABLE:-}"
+          if alt:
+            entry["address_lookup_table"] = alt
+          out = {"deployments": [entry]}
+          with open("${tmp_deployments}", "w", encoding="utf-8") as f:
+            json.dump(out, f, indent=2, sort_keys=True)
+            f.write("\\n")
+          PY
+
+          echo "JUNO_E2E_DEPLOYMENT_NAME=${e2e_deployment}" >> "$GITHUB_ENV"
+          echo "JUNO_E2E_DEPLOYMENT_FILE=${tmp_deployments}" >> "$GITHUB_ENV"
+
       - name: Run devnet e2e (both directions)
         env:
           RUST_LOG: info
         run: |
           set -euo pipefail
-          ./scripts/e2e/devnet-testnet.sh --deployment "${{ github.event.inputs.deployment }}"
+          ./scripts/e2e/devnet-testnet.sh \
+            --deployment "${JUNO_E2E_DEPLOYMENT_NAME}" \
+            --deployment-file "${JUNO_E2E_DEPLOYMENT_FILE}"
