@@ -24,12 +24,13 @@ func cmdInitCRP(argv []string) error {
 	fs.SetOutput(io.Discard)
 
 	var (
-		crpProgramStr string
-		deploymentHex string
-		adminStr      string
-		threshold     uint
-		conflict      uint
-		delaySlots    uint64
+		crpProgramStr              string
+		operatorRegistryProgramStr string
+		deploymentHex              string
+		adminStr                   string
+		threshold                  uint
+		conflict                   uint
+		delaySlots                 uint64
 
 		payerPath string
 		operators multiString
@@ -37,6 +38,7 @@ func cmdInitCRP(argv []string) error {
 	)
 
 	fs.StringVar(&crpProgramStr, "crp-program-id", "", "CRP program id (base58)")
+	fs.StringVar(&operatorRegistryProgramStr, "operator-registry-program", "", "Operator registry program id (base58); if set, initializes CRP config v2")
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
 	fs.StringVar(&adminStr, "admin", "", "Admin pubkey (base58)")
 	fs.UintVar(&threshold, "threshold", 0, "t-of-n threshold (u8)")
@@ -68,6 +70,17 @@ func cmdInitCRP(argv []string) error {
 	crpProgram, err := solana.ParsePubkey(crpProgramStr)
 	if err != nil {
 		return fmt.Errorf("parse --crp-program-id: %w", err)
+	}
+	var operatorRegistryProgram solana.Pubkey
+	if strings.TrimSpace(operatorRegistryProgramStr) != "" {
+		pk, err := solana.ParsePubkey(operatorRegistryProgramStr)
+		if err != nil {
+			return fmt.Errorf("parse --operator-registry-program: %w", err)
+		}
+		operatorRegistryProgram = pk
+		if operatorRegistryProgram == (solana.Pubkey{}) {
+			return errors.New("--operator-registry-program must be non-zero")
+		}
 	}
 	deploymentID, err := protocol.ParseDeploymentIDHex(strings.TrimPrefix(strings.TrimSpace(deploymentHex), "0x"))
 	if err != nil {
@@ -104,7 +117,12 @@ func cmdInitCRP(argv []string) error {
 			{Pubkey: cfgPDA, IsSigner: false, IsWritable: true},
 			{Pubkey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
 		},
-		Data: encodeCrpInitialize([32]byte(deploymentID), admin, uint8(threshold), uint8(conflict), delaySlots, operatorPubkeys),
+		Data: func() []byte {
+			if operatorRegistryProgram != (solana.Pubkey{}) {
+				return encodeCrpInitializeV2([32]byte(deploymentID), admin, uint8(threshold), uint8(conflict), delaySlots, operatorRegistryProgram, operatorPubkeys)
+			}
+			return encodeCrpInitialize([32]byte(deploymentID), admin, uint8(threshold), uint8(conflict), delaySlots, operatorPubkeys)
+		}(),
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -310,6 +328,38 @@ func encodeCrpInitialize(
 	var tmp8 [8]byte
 	binary.LittleEndian.PutUint64(tmp8[:], finalizationDelaySlots)
 	out = append(out, tmp8[:]...)
+
+	var tmp4 [4]byte
+	binary.LittleEndian.PutUint32(tmp4[:], uint32(len(operators)))
+	out = append(out, tmp4[:]...)
+	for _, pk := range operators {
+		out = append(out, pk[:]...)
+	}
+	return out
+}
+
+func encodeCrpInitializeV2(
+	deploymentID [32]byte,
+	admin solana.Pubkey,
+	threshold uint8,
+	conflictThreshold uint8,
+	finalizationDelaySlots uint64,
+	operatorRegistryProgram solana.Pubkey,
+	operators []solana.Pubkey,
+) []byte {
+	// Borsh enum variant index (u8) for InitializeV2 is 5.
+	out := make([]byte, 0, 1+32+32+1+1+8+32+4+(len(operators)*32))
+	out = append(out, 5)
+	out = append(out, deploymentID[:]...)
+	out = append(out, admin[:]...)
+	out = append(out, threshold)
+	out = append(out, conflictThreshold)
+
+	var tmp8 [8]byte
+	binary.LittleEndian.PutUint64(tmp8[:], finalizationDelaySlots)
+	out = append(out, tmp8[:]...)
+
+	out = append(out, operatorRegistryProgram[:]...)
 
 	var tmp4 [4]byte
 	binary.LittleEndian.PutUint32(tmp4[:], uint32(len(operators)))
