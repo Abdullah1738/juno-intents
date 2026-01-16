@@ -134,35 +134,52 @@ wait_for_account() {
   return 1
 }
 
-parse_spl_pubkey_json() {
+confirm_sig() {
+  local sig="$1"
+  local attempts="${2:-30}"
+  for _ in $(seq 1 "${attempts}"); do
+    if solana -u "${SOLANA_RPC_URL}" confirm "${sig}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "failed to confirm signature: ${sig}" >&2
+  return 1
+}
+
+parse_spl_address() {
   python3 -c 'import json,re,sys
-def find_base58(x):
-  if isinstance(x, str) and re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", x):
-    return x
-  if isinstance(x, dict):
-    for v in x.values():
-      r=find_base58(v)
-      if r:
-        return r
-  if isinstance(x, list):
-    for v in x:
-      r=find_base58(v)
-      if r:
-        return r
-  return None
 raw=sys.stdin.read().strip()
 if not raw:
   raise SystemExit("empty spl-token output")
 try:
   data=json.loads(raw)
-  pk=find_base58(data)
-  if pk:
-    print(pk); raise SystemExit(0)
+  addr=((data.get("commandOutput") or {}).get("address") or "").strip()
+  if addr:
+    print(addr); raise SystemExit(0)
 except Exception:
   pass
 m=re.search(r"[1-9A-HJ-NP-Za-km-z]{32,44}", raw)
 if not m:
   raise SystemExit("no base58 pubkey in output")
+print(m.group(0))'
+}
+
+parse_spl_signature() {
+  python3 -c 'import json,re,sys
+raw=sys.stdin.read().strip()
+if not raw:
+  raise SystemExit("empty spl-token output")
+try:
+  data=json.loads(raw)
+  sig=(((((data.get("commandOutput") or {}).get("transactionData") or {}).get("signature")) or "").strip())
+  if sig:
+    print(sig); raise SystemExit(0)
+except Exception:
+  pass
+m=re.search(r"[1-9A-HJ-NP-Za-km-z]{80,100}", raw)
+if not m:
+  raise SystemExit("no signature in output")
 print(m.group(0))'
 }
 
@@ -274,35 +291,51 @@ if ! MINT_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-token --decimals 0 --ow
   printf '%s\n' "${MINT_OUT}" >&2
   exit 1
 fi
-if ! MINT="$(parse_spl_pubkey_json <<<"${MINT_OUT}")"; then
+if ! MINT="$(parse_spl_address <<<"${MINT_OUT}")"; then
   echo "failed to parse mint from spl-token output" >&2
   printf '%s\n' "${MINT_OUT}" >&2 || true
   exit 1
+fi
+MINT_SIG="$(parse_spl_signature <<<"${MINT_OUT}" || true)"
+if [[ -n "${MINT_SIG}" ]]; then
+  confirm_sig "${MINT_SIG}" 60
 fi
 
 if ! SOLVER_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${SOLVER_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact 2>&1)"; then
   printf '%s\n' "${SOLVER_TA_OUT}" >&2
   exit 1
 fi
-if ! SOLVER_TA="$(parse_spl_pubkey_json <<<"${SOLVER_TA_OUT}")"; then
+if ! SOLVER_TA="$(parse_spl_address <<<"${SOLVER_TA_OUT}")"; then
   printf '%s\n' "${SOLVER_TA_OUT}" >&2
   exit 1
+fi
+SOLVER_TA_SIG="$(parse_spl_signature <<<"${SOLVER_TA_OUT}" || true)"
+if [[ -n "${SOLVER_TA_SIG}" ]]; then
+  confirm_sig "${SOLVER_TA_SIG}" 60
 fi
 if ! CREATOR_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${CREATOR_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact 2>&1)"; then
   printf '%s\n' "${CREATOR_TA_OUT}" >&2
   exit 1
 fi
-if ! CREATOR_TA="$(parse_spl_pubkey_json <<<"${CREATOR_TA_OUT}")"; then
+if ! CREATOR_TA="$(parse_spl_address <<<"${CREATOR_TA_OUT}")"; then
   printf '%s\n' "${CREATOR_TA_OUT}" >&2
   exit 1
+fi
+CREATOR_TA_SIG="$(parse_spl_signature <<<"${CREATOR_TA_OUT}" || true)"
+if [[ -n "${CREATOR_TA_SIG}" ]]; then
+  confirm_sig "${CREATOR_TA_SIG}" 60
 fi
 if ! FEE_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${FEE_COLLECTOR_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact 2>&1)"; then
   printf '%s\n' "${FEE_TA_OUT}" >&2
   exit 1
 fi
-if ! FEE_TA="$(parse_spl_pubkey_json <<<"${FEE_TA_OUT}")"; then
+if ! FEE_TA="$(parse_spl_address <<<"${FEE_TA_OUT}")"; then
   printf '%s\n' "${FEE_TA_OUT}" >&2
   exit 1
+fi
+FEE_TA_SIG="$(parse_spl_signature <<<"${FEE_TA_OUT}" || true)"
+if [[ -n "${FEE_TA_SIG}" ]]; then
+  confirm_sig "${FEE_TA_SIG}" 60
 fi
 for v in SOLVER_TA CREATOR_TA FEE_TA; do
   if [[ -z "${!v}" ]]; then
@@ -316,15 +349,24 @@ echo "solver_ta=${SOLVER_TA}" >&2
 echo "creator_ta=${CREATOR_TA}" >&2
 echo "fee_ta=${FEE_TA}" >&2
 
-echo "waiting for accounts to be visible..." >&2
-wait_for_account "${MINT}" 90
-wait_for_account "${SOLVER_TA}" 90
-wait_for_account "${CREATOR_TA}" 90
-wait_for_account "${FEE_TA}" 90
-
 echo "minting tokens..." >&2
-spl-token -u "${SOLANA_RPC_URL}" mint "${MINT}" 1000000 "${SOLVER_TA}" --mint-authority "${SOLVER_KEYPAIR}" --fee-payer "${SOLVER_KEYPAIR}" >/dev/null
-spl-token -u "${SOLANA_RPC_URL}" mint "${MINT}" 1000000 "${CREATOR_TA}" --mint-authority "${SOLVER_KEYPAIR}" --fee-payer "${SOLVER_KEYPAIR}" >/dev/null
+for target in "${SOLVER_TA}" "${CREATOR_TA}"; do
+  ok=0
+  last_err=""
+  for _ in $(seq 1 20); do
+    if out="$(spl-token -u "${SOLANA_RPC_URL}" mint "${MINT}" 1000000 "${target}" --mint-authority "${SOLVER_KEYPAIR}" --fee-payer "${SOLVER_KEYPAIR}" 2>&1)"; then
+      ok=1
+      break
+    fi
+    last_err="${out}"
+    sleep 2
+  done
+  if [[ "${ok}" != "1" ]]; then
+    echo "spl-token mint failed for ${target}" >&2
+    printf '%s\n' "${last_err}" >&2
+    exit 1
+  fi
+done
 
 slot="$(solana -u "${SOLANA_RPC_URL}" slot | tr -d '\r\n ' )"
 if [[ -z "${slot}" ]]; then
