@@ -74,7 +74,9 @@ func compileV0Message(
 	// Fee payer must be a writable signer.
 	touch(feePayer, true, true)
 
+	programIDs := make(map[Pubkey]struct{}, len(instructions))
 	for _, ix := range instructions {
+		programIDs[ix.ProgramID] = struct{}{}
 		touch(ix.ProgramID, false, false)
 		for _, am := range ix.Accounts {
 			touch(am.Pubkey, am.IsSigner, am.IsWritable)
@@ -106,6 +108,9 @@ func compileV0Message(
 	selected := make(map[Pubkey]lookupRef, 64)
 	for pk, ai := range infos {
 		if ai.IsSigner {
+			continue
+		}
+		if _, ok := programIDs[pk]; ok {
 			continue
 		}
 		if _, ok := lookupAccountKeys[pk]; ok {

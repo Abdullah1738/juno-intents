@@ -159,7 +159,7 @@ func TestBuildAndSignV0Transaction_UsesLookupTable(t *testing.T) {
 
 	lt := LookupTable{
 		AccountKey: lookupKey,
-		Addresses:  append([]Pubkey{SystemProgramID}, others...),
+		Addresses:  append([]Pubkey{}, others...),
 	}
 	v0, err := BuildAndSignV0Transaction(
 		blockhash,
