@@ -10,6 +10,7 @@ NET_AMOUNT_A="${JUNO_E2E_NET_AMOUNT_A:-1000}"
 NET_AMOUNT_B="${JUNO_E2E_NET_AMOUNT_B:-1000}"
 JUNOCASH_SEND_AMOUNT_A="${JUNO_E2E_JUNOCASH_SEND_AMOUNT_A:-1.0}"
 JUNOCASH_SEND_AMOUNT_B="${JUNO_E2E_JUNOCASH_SEND_AMOUNT_B:-0.5}"
+JUNOCASH_SEND_MINCONF="${JUNO_E2E_JUNOCASH_SEND_MINCONF:-}"
 
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
@@ -29,6 +30,7 @@ Environment (optional):
   JUNO_E2E_NET_AMOUNT_B            (default: 1000)
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_A  (default: 1.0)
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_B  (default: 0.5)
+  JUNO_E2E_JUNOCASH_SEND_MINCONF   (default: regtest=1, testnet=10)
   JUNO_E2E_PRIORITY_LEVEL          (default: Medium)
   JUNO_E2E_SOLVER_KEYPAIR          (optional: funded Solana CLI JSON keypair path; skips airdrop)
   JUNO_E2E_CREATOR_KEYPAIR         (optional: funded Solana CLI JSON keypair path; skips airdrop)
@@ -328,6 +330,15 @@ echo "deployment: ${DEPLOYMENT_NAME}" >&2
 echo "solana_rpc_url: $(redact_url "${SOLANA_RPC_URL}")" >&2
 echo "junocash_chain: ${JUNOCASH_CHAIN}" >&2
 
+if [[ -z "${JUNOCASH_SEND_MINCONF}" ]]; then
+  if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+    JUNOCASH_SEND_MINCONF="1"
+  else
+    JUNOCASH_SEND_MINCONF="10"
+  fi
+fi
+echo "junocash_send_minconf=${JUNOCASH_SEND_MINCONF}" >&2
+
 echo "building Go CLIs..." >&2
 GO_INTENTS="${WORKDIR}/juno-intents"
 GO_CRP="${WORKDIR}/crp-operator"
@@ -590,7 +601,7 @@ echo "fill_id_a=${FILL_ID_A}" >&2
 
 echo "sending JunoCash payment user->solver (amount=${JUNOCASH_SEND_AMOUNT_A})..." >&2
 recipients_a="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_UA}" "${JUNOCASH_SEND_AMOUNT_A}")"
-opid_a="$(jcli z_sendmany "${USER_UA}" "${recipients_a}" | parse_junocash_opid)"
+opid_a="$(jcli z_sendmany "${USER_UA}" "${recipients_a}" "${JUNOCASH_SEND_MINCONF}" | parse_junocash_opid)"
 
 echo "waiting for sendmany operation (A)..." >&2
 txid_a="$(wait_for_op_txid "${opid_a}" 1800)"
@@ -687,7 +698,7 @@ echo "fill_id_b=${FILL_ID_B}" >&2
 
 echo "sending JunoCash payment solver->user (amount=${JUNOCASH_SEND_AMOUNT_B})..." >&2
 recipients_b="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${USER_UA}" "${JUNOCASH_SEND_AMOUNT_B}")"
-opid_b="$(jcli z_sendmany "${SOLVER_UA}" "${recipients_b}" | parse_junocash_opid)"
+opid_b="$(jcli z_sendmany "${SOLVER_UA}" "${recipients_b}" "${JUNOCASH_SEND_MINCONF}" | parse_junocash_opid)"
 
 echo "waiting for sendmany operation (B)..." >&2
 txid_b="$(wait_for_op_txid "${opid_b}" 1800)"
