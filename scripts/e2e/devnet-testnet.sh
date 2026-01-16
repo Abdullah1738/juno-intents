@@ -11,6 +11,7 @@ NET_AMOUNT_B="${JUNO_E2E_NET_AMOUNT_B:-1000}"
 JUNOCASH_SEND_AMOUNT_A="${JUNO_E2E_JUNOCASH_SEND_AMOUNT_A:-1.0}"
 JUNOCASH_SEND_AMOUNT_B="${JUNO_E2E_JUNOCASH_SEND_AMOUNT_B:-0.5}"
 JUNOCASH_SEND_MINCONF="${JUNO_E2E_JUNOCASH_SEND_MINCONF:-}"
+JUNOCASH_SHIELD_LIMIT="${JUNO_E2E_JUNOCASH_SHIELD_LIMIT:-10}"
 
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
@@ -31,6 +32,7 @@ Environment (optional):
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_A  (default: 1.0)
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_B  (default: 0.5)
   JUNO_E2E_JUNOCASH_SEND_MINCONF   (default: regtest=1, testnet=10)
+  JUNO_E2E_JUNOCASH_SHIELD_LIMIT   (default: 10)
   JUNO_E2E_PRIORITY_LEVEL          (default: Medium)
   JUNO_E2E_SOLVER_KEYPAIR          (optional: funded Solana CLI JSON keypair path; skips airdrop)
   JUNO_E2E_CREATOR_KEYPAIR         (optional: funded Solana CLI JSON keypair path; skips airdrop)
@@ -338,6 +340,7 @@ if [[ -z "${JUNOCASH_SEND_MINCONF}" ]]; then
   fi
 fi
 echo "junocash_send_minconf=${JUNOCASH_SEND_MINCONF}" >&2
+echo "junocash_shield_limit=${JUNOCASH_SHIELD_LIMIT}" >&2
 
 echo "building Go CLIs..." >&2
 GO_INTENTS="${WORKDIR}/juno-intents"
@@ -533,7 +536,7 @@ echo "user_ua=${USER_UA}" >&2
 echo "solver_ua=${SOLVER_UA}" >&2
 
 echo "shielding coinbase to user orchard UA..." >&2
-opid="$(jcli z_shieldcoinbase "*" "${USER_UA}" null 1 | parse_junocash_opid)"
+opid="$(jcli z_shieldcoinbase "*" "${USER_UA}" null "${JUNOCASH_SHIELD_LIMIT}" | parse_junocash_opid)"
 
 echo "waiting for shield operation..." >&2
 txid_shield="$(wait_for_op_txid "${opid}" 1800)"
