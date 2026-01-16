@@ -410,11 +410,14 @@ min_creator_lamports="${JUNO_E2E_MIN_CREATOR_LAMPORTS:-500000000}"
 solver_balance_now="$(solana -u "${SOLANA_RPC_URL}" balance "${SOLVER_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
 solver2_balance_now="$(solana -u "${SOLANA_RPC_URL}" balance "${SOLVER2_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
 creator_balance_now="$(solana -u "${SOLANA_RPC_URL}" balance "${CREATOR_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
+if [[ ! "${solver_balance_now}" =~ ^[0-9]+$ ]]; then solver_balance_now="0"; fi
+if [[ ! "${solver2_balance_now}" =~ ^[0-9]+$ ]]; then solver2_balance_now="0"; fi
+if [[ ! "${creator_balance_now}" =~ ^[0-9]+$ ]]; then creator_balance_now="0"; fi
 if [[ "${solver_balance_now}" =~ ^[0-9]+$ && "${solver_balance_now}" -lt "${min_solver_lamports}" ]]; then
   echo "solver balance low (${solver_balance_now} lamports); airdropping 2 SOL..." >&2
   airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
 fi
-if [[ "${solver2_balance_now}" =~ ^[0-9]+$ && "${solver2_balance_now}" -lt "${min_solver2_lamports}" ]]; then
+if [[ "${solver2_balance_now}" -lt "${min_solver2_lamports}" ]]; then
   if [[ -z "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then
     echo "solver2 balance low (${solver2_balance_now} lamports); funding from solver..." >&2
     tx_out="$(solana -u "${SOLANA_RPC_URL}" transfer --allow-unfunded-recipient "${SOLVER2_PUBKEY}" 0.5 --keypair "${SOLVER_KEYPAIR}" 2>&1)" || {
