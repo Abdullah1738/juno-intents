@@ -290,14 +290,6 @@ fi
 
 SOLANA_RPC_URL="${SOLANA_RPC_URL:-${DEPLOY_RPC_URL}}"
 
-if [[ -n "${HELIUS_RPC_URL:-}" ]]; then
-  if curl -fsS -X POST -H 'Content-Type: application/json' \
-    --data '{"jsonrpc":"2.0","id":1,"method":"getMinimumBalanceForRentExemption","params":[0]}' \
-    "${HELIUS_RPC_URL}" >/dev/null 2>&1; then
-    SOLANA_RPC_URL="${HELIUS_RPC_URL}"
-  fi
-fi
-
 export SOLANA_RPC_URL
 
 JUNOCASH_CHAIN="$(printf '%s' "${JUNOCASH_CHAIN_EXPECTED}" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\r\n')"

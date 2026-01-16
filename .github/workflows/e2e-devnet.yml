@@ -254,7 +254,7 @@ jobs:
           op1_pub="$(solana-keygen pubkey /tmp/juno-secrets/crp-operator-1.json)"
           op2_pub="$(solana-keygen pubkey /tmp/juno-secrets/crp-operator-2.json)"
 
-          rpc="${HELIUS_RPC_URL:-${RPC_URL}}"
+          rpc="${RPC_URL}"
           echo "solana_rpc_url=${rpc}" >&2
 
           crp_log=""
