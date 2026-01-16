@@ -53,7 +53,7 @@ func (s *Solver) Quote(ctx context.Context, req protocol.QuoteRequest) (SignedQu
 
 	quoteID := protocol.DeriveQuoteID(s.DeploymentID, s.SolverPubkey, req.RFQNonce)
 
-	required, err := s.Strategy.QuoteRequiredZatoshi(req.NetAmount)
+	required, err := s.Strategy.QuoteZatoshi(req.NetAmount, req.Direction)
 	if err != nil {
 		return SignedQuoteResponseJSON{}, err
 	}
@@ -114,4 +114,3 @@ func (s *Solver) Quote(ctx context.Context, req protocol.QuoteRequest) (SignedQu
 
 	return NewSignedQuoteResponse(q, s.PrivKey, hint)
 }
-

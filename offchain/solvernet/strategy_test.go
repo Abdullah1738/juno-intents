@@ -1,6 +1,10 @@
 package solvernet
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Abdullah1738/juno-intents/protocol"
+)
 
 func TestFixedPriceStrategy_QuoteRequiredZatoshi(t *testing.T) {
 	t.Parallel()
@@ -35,3 +39,19 @@ func TestFixedPriceStrategy_QuoteRequiredZatoshi(t *testing.T) {
 	}
 }
 
+func TestFixedPriceStrategy_QuoteZatoshi_DirectionB(t *testing.T) {
+	t.Parallel()
+
+	s := FixedPriceStrategy{
+		ZatoshiPerTokenUnit: 100,
+		SpreadBps:           100,
+	}
+	got, err := s.QuoteZatoshi(10, protocol.DirectionB)
+	if err != nil {
+		t.Fatalf("QuoteZatoshi: %v", err)
+	}
+	// base=1000, spread=1% => payout floor(1000*0.99)=990
+	if got != 990 {
+		t.Fatalf("got=%d want=990", got)
+	}
+}

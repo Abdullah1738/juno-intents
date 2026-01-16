@@ -51,7 +51,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  solvernet announce --deployment-id <hex32> --quote-url <url> [--keypair <path>]")
 	fmt.Fprintln(w, "  solvernet serve --listen :8080 --deployment-id <hex32> --quote-url <url> --price-zat-per-token-unit <u64> [--spread-bps <u16>] [--keypair <path>]")
-	fmt.Fprintln(w, "  solvernet rfq --deployment-id <hex32> --mint <base58> --net-amount <u64> --solana-recipient <base58> --intent-expiry-slot <u64> --announcement-url <url> [--announcement-url <url>...]")
+	fmt.Fprintln(w, "  solvernet rfq --deployment-id <hex32> --direction A|B --mint <base58> --net-amount <u64> --solana-recipient <base58> --intent-expiry-slot <u64> --announcement-url <url> [--announcement-url <url>...]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Environment:")
 	fmt.Fprintln(w, "  HELIUS_API_KEY / HELIUS_CLUSTER or HELIUS_RPC_URL (optional; enables fee hints)")
@@ -215,6 +215,7 @@ func cmdRFQ(argv []string) error {
 
 	var (
 		deploymentHex     string
+		direction         string
 		mint             string
 		netAmount        string
 		solanaRecipient  string
@@ -223,6 +224,7 @@ func cmdRFQ(argv []string) error {
 		rfqNonceHex      string
 	)
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
+	fs.StringVar(&direction, "direction", "A", "Direction: A (JunoCash->Solana) or B (Solana->JunoCash)")
 	fs.StringVar(&mint, "mint", "", "SPL token mint pubkey (base58)")
 	fs.StringVar(&netAmount, "net-amount", "", "Net amount (u64)")
 	fs.StringVar(&solanaRecipient, "solana-recipient", "", "Recipient pubkey (base58)")
@@ -241,6 +243,16 @@ func cmdRFQ(argv []string) error {
 		return fmt.Errorf("parse deployment id: %w", err)
 	}
 
+	var dir protocol.Direction
+	switch strings.ToUpper(strings.TrimSpace(direction)) {
+	case "A":
+		dir = protocol.DirectionA
+	case "B":
+		dir = protocol.DirectionB
+	default:
+		return fmt.Errorf("invalid --direction: %q (want A or B)", direction)
+	}
+
 	var rfqNonce [32]byte
 	if rfqNonceHex != "" {
 		b, err := hex32(rfqNonceHex)
@@ -257,7 +269,7 @@ func cmdRFQ(argv []string) error {
 	reqJSON := solvernet.QuoteRequestJSON{
 		DeploymentID:     deploymentID.Hex(),
 		RFQNonce:         hex.EncodeToString(rfqNonce[:]),
-		Direction:        uint8(protocol.DirectionA),
+		Direction:        uint8(dir),
 		Mint:             mint,
 		NetAmount:        netAmount,
 		SolanaRecipient:  solanaRecipient,
@@ -304,6 +316,9 @@ func cmdRFQ(argv []string) error {
 	}
 
 	sort.Slice(quotes, func(i, j int) bool {
+		if dir == protocol.DirectionB {
+			return quotes[i].Q.JunocashAmountRequired > quotes[j].Q.JunocashAmountRequired
+		}
 		return quotes[i].Q.JunocashAmountRequired < quotes[j].Q.JunocashAmountRequired
 	})
 
