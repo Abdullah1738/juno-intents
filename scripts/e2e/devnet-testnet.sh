@@ -233,6 +233,7 @@ for it in (d.get("deployments") or []):
     print("deployment_id="+str(it.get("deployment_id","")).strip())
     print("fee_bps="+str(it.get("fee_bps","")).strip())
     print("fee_collector="+str(it.get("fee_collector","")).strip())
+    print("junocash_chain="+str(it.get("junocash_chain","")).strip())
     sys.exit(0)
 raise SystemExit("deployment not found")
 PY
@@ -243,8 +244,9 @@ DEPLOY_RPC_URL="$(printf '%s\n' "${DEPLOY_INFO}" | sed -nE 's/^rpc_url=(.+)$/\1/
 DEPLOYMENT_ID_HEX="$(printf '%s\n' "${DEPLOY_INFO}" | sed -nE 's/^deployment_id=(.+)$/\1/p' | head -n 1)"
 FEE_BPS="$(printf '%s\n' "${DEPLOY_INFO}" | sed -nE 's/^fee_bps=(.+)$/\1/p' | head -n 1)"
 FEE_COLLECTOR_PUBKEY="$(printf '%s\n' "${DEPLOY_INFO}" | sed -nE 's/^fee_collector=(.+)$/\1/p' | head -n 1)"
+JUNOCASH_CHAIN_EXPECTED="$(printf '%s\n' "${DEPLOY_INFO}" | sed -nE 's/^junocash_chain=(.+)$/\1/p' | head -n 1)"
 
-if [[ -z "${DEPLOY_RPC_URL}" || -z "${DEPLOYMENT_ID_HEX}" || -z "${FEE_BPS}" || -z "${FEE_COLLECTOR_PUBKEY}" ]]; then
+if [[ -z "${DEPLOY_RPC_URL}" || -z "${DEPLOYMENT_ID_HEX}" || -z "${FEE_BPS}" || -z "${FEE_COLLECTOR_PUBKEY}" || -z "${JUNOCASH_CHAIN_EXPECTED}" ]]; then
   echo "failed to parse deployment fields" >&2
   printf '%s\n' "${DEPLOY_INFO}" >&2
   exit 1
@@ -266,18 +268,43 @@ fi
 
 export SOLANA_RPC_URL
 
+JUNOCASH_CHAIN="$(printf '%s' "${JUNOCASH_CHAIN_EXPECTED}" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\r\n')"
+JUNOCASH_CLI=""
+JUNOCASH_UP=""
+JUNOCASH_DOWN=""
+JUNOCASH_DATA_DIR=""
+case "${JUNOCASH_CHAIN}" in
+  regtest)
+    JUNOCASH_CLI="scripts/junocash/regtest/cli.sh"
+    JUNOCASH_UP="scripts/junocash/regtest/up.sh"
+    JUNOCASH_DOWN="scripts/junocash/regtest/down.sh"
+    JUNOCASH_DATA_DIR="${JUNO_REGTEST_DATA_DIR:-tmp/junocash-regtest}"
+    ;;
+  testnet)
+    JUNOCASH_CLI="scripts/junocash/testnet/cli.sh"
+    JUNOCASH_UP="scripts/junocash/testnet/up.sh"
+    JUNOCASH_DOWN="scripts/junocash/testnet/down.sh"
+    JUNOCASH_DATA_DIR="${JUNO_TESTNET_DATA_DIR_A:-tmp/junocash-testnet-a}"
+    ;;
+  *)
+    echo "unsupported deployment junocash_chain: ${JUNOCASH_CHAIN_EXPECTED}" >&2
+    exit 2
+    ;;
+esac
+
 ts="$(date -u +%Y%m%dT%H%M%SZ)"
 WORKDIR="${ROOT}/tmp/e2e/devnet-testnet/${DEPLOYMENT_NAME}/${ts}"
 mkdir -p "${WORKDIR}"
 
 cleanup() {
-  scripts/junocash/testnet/down.sh >/dev/null 2>&1 || true
+  "${JUNOCASH_DOWN}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 echo "workdir: ${WORKDIR}" >&2
 echo "deployment: ${DEPLOYMENT_NAME}" >&2
 echo "solana_rpc_url: $(redact_url "${SOLANA_RPC_URL}")" >&2
+echo "junocash_chain: ${JUNOCASH_CHAIN}" >&2
 
 echo "building Go CLIs..." >&2
 GO_INTENTS="${WORKDIR}/juno-intents"
@@ -390,7 +417,9 @@ for target in "${SOLVER_TA}" "${CREATOR_TA}"; do
   fi
 done
 
-slot="$(solana -u "${SOLANA_RPC_URL}" slot | tr -d '\r\n ' )"
+slot="$(curl -fsS -X POST -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"getLatestBlockhash"}' \
+  "${SOLANA_RPC_URL}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["context"]["slot"])' | tr -d '\r\n ' )"
 if [[ -z "${slot}" ]]; then
   echo "failed to fetch current slot" >&2
   exit 1
@@ -398,13 +427,17 @@ fi
 EXPIRY_SLOT="$((slot + 5000))"
 echo "expiry_slot=${EXPIRY_SLOT}" >&2
 
-echo "starting JunoCash testnet docker harness..." >&2
-scripts/junocash/testnet/up.sh >/dev/null
+echo "starting JunoCash ${JUNOCASH_CHAIN} docker harness..." >&2
+"${JUNOCASH_UP}" >/dev/null
 
-jcli() { scripts/junocash/testnet/cli.sh "$@"; }
+jcli() { "${JUNOCASH_CLI}" "$@"; }
 
 echo "mining initial blocks for coinbase maturity..." >&2
-scripts/junocash/testnet/mine.sh 110 >/dev/null
+if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+  jcli generate 110 >/dev/null
+else
+  scripts/junocash/testnet/mine.sh 110 >/dev/null
+fi
 
 echo "creating JunoCash accounts + orchard UAs..." >&2
 USER_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
@@ -438,7 +471,11 @@ if [[ -z "${txid_shield}" ]]; then
 fi
 
 echo "mining block to include shield tx..." >&2
-scripts/junocash/testnet/mine.sh 1 >/dev/null
+if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+  jcli generate 1 >/dev/null
+else
+  scripts/junocash/testnet/mine.sh 1 >/dev/null
+fi
 
 echo "waiting for orchard note to be spendable..." >&2
 for _ in $(seq 1 120); do
@@ -448,12 +485,14 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 
-DATA_DIR="${JUNO_TESTNET_DATA_DIR_A:-tmp/junocash-testnet-a}"
+DATA_DIR="${JUNOCASH_DATA_DIR}"
 wallet_candidates=(
   "${DATA_DIR}/wallet.dat"
   "${DATA_DIR}/testnet3/wallet.dat"
+  "${DATA_DIR}/regtest/wallet.dat"
   "${DATA_DIR}/wallets/wallet.dat"
   "${DATA_DIR}/testnet3/wallets/wallet.dat"
+  "${DATA_DIR}/regtest/wallets/wallet.dat"
 )
 WALLET_DAT=""
 for p in "${wallet_candidates[@]}"; do
@@ -515,7 +554,11 @@ echo "txid_a=${txid_a}" >&2
 
 height_a_before="$(jcli getblockcount)"
 echo "mining block to include payment tx (A)..." >&2
-scripts/junocash/testnet/mine.sh 1 >/dev/null
+if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+  jcli generate 1 >/dev/null
+else
+  scripts/junocash/testnet/mine.sh 1 >/dev/null
+fi
 height_a_after="$(jcli getblockcount)"
 PAYMENT_HEIGHT_A="${height_a_after}"
 echo "payment_height_a=${PAYMENT_HEIGHT_A} (before=${height_a_before} after=${height_a_after})" >&2
@@ -552,7 +595,7 @@ echo "action_a=${ACTION_A}" >&2
 
 echo "generating receipt witness (A)..." >&2
 WITNESS_A="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wallet_witness_v1 -- \
-  --junocash-cli scripts/junocash/testnet/cli.sh \
+  --junocash-cli "${JUNOCASH_CLI}" \
   --wallet "${WALLET_DAT}" \
   --txid "${txid_a}" \
   --action "${ACTION_A}" \
@@ -568,7 +611,11 @@ echo "receiver_tag_a=${RECEIVER_TAG_A}" >&2
 echo "junocash_amount_a_zat=${AMOUNT_A}" >&2
 
 echo "mining 1 extra block (reorg safety)..." >&2
-scripts/junocash/testnet/mine.sh 1 >/dev/null
+if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+  jcli generate 1 >/dev/null
+else
+  scripts/junocash/testnet/mine.sh 1 >/dev/null
+fi
 
 echo "=== Direction B (Solana -> JunoCash) ===" >&2
 
@@ -618,7 +665,11 @@ echo "txid_b=${txid_b}" >&2
 
 height_b_before="$(jcli getblockcount)"
 echo "mining block to include payment tx (B)..." >&2
-scripts/junocash/testnet/mine.sh 1 >/dev/null
+if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+  jcli generate 1 >/dev/null
+else
+  scripts/junocash/testnet/mine.sh 1 >/dev/null
+fi
 height_b_after="$(jcli getblockcount)"
 PAYMENT_HEIGHT_B="${height_b_after}"
 echo "payment_height_b=${PAYMENT_HEIGHT_B} (before=${height_b_before} after=${height_b_after})" >&2
@@ -655,7 +706,7 @@ echo "action_b=${ACTION_B}" >&2
 
 echo "generating receipt witness (B, outgoing via solver ovk)..." >&2
 WITNESS_B="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wallet_witness_v1 -- \
-  --junocash-cli scripts/junocash/testnet/cli.sh \
+  --junocash-cli "${JUNOCASH_CLI}" \
   --wallet "${WALLET_DAT}" \
   --txid "${txid_b}" \
   --action "${ACTION_B}" \
@@ -672,7 +723,11 @@ echo "receiver_tag_b=${RECEIVER_TAG_B}" >&2
 echo "junocash_amount_b_zat=${AMOUNT_B}" >&2
 
 echo "mining 1 extra block (reorg safety)..." >&2
-scripts/junocash/testnet/mine.sh 1 >/dev/null
+if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+  jcli generate 1 >/dev/null
+else
+  scripts/junocash/testnet/mine.sh 1 >/dev/null
+fi
 
 echo "finalizing CRP checkpoints (run-mode, chain verified)..." >&2
 genesis="$(jcli getblockhash 0 | tr -d '\" \r\n')"
@@ -688,8 +743,8 @@ fi
 "${GO_CRP}" run \
   --deployment "${DEPLOYMENT_NAME}" \
   --deployment-file "${DEPLOYMENT_FILE}" \
-  --junocash-cli scripts/junocash/testnet/cli.sh \
-  --junocash-chain testnet \
+  --junocash-cli "${JUNOCASH_CLI}" \
+  --junocash-chain "${JUNOCASH_CHAIN}" \
   --junocash-genesis-hash "${genesis}" \
   --start-height "${start_height}" \
   --lag 1 \
