@@ -600,14 +600,17 @@ PY
 
 rfq_best() {
   # Prints: solver_pubkey_base58 <space> amount_zat_u64
-  python3 - <<'PY'
-import json,sys
+  python3 -c 'import json,sys
 items=json.load(sys.stdin)
-if not items:
+if not isinstance(items, list) or not items:
   raise SystemExit("no quotes")
-q=items[0]["signed"]["quote"]
-print(q["solver_pubkey"], q["junocash_amount_required"])
-PY
+q=((items[0] or {}).get("signed") or {}).get("quote") or {}
+solver=(q.get("solver_pubkey") or "").strip()
+amt=q.get("junocash_amount_required")
+if not solver or amt is None:
+  raise SystemExit("invalid quote")
+print(solver, amt)
+'
 }
 
 select_solver_by_pubkey() {
@@ -1151,8 +1154,7 @@ spl_balance_amount() {
     printf '%s\n' "${out}" >&2
     return 1
   fi
-  python3 - "$token_account" <<'PY' <<<"${out}"
-import json,sys
+  python3 -c 'import json,sys
 token_account=sys.argv[1]
 raw=sys.stdin.read().strip()
 if not raw:
@@ -1165,7 +1167,7 @@ amt=obj.get("amount")
 if amt is None:
   raise SystemExit(f"missing amount in balance output for {token_account}: {raw}")
 print(str(amt))
-PY
+' "${token_account}" <<<"${out}"
 }
 
 echo "verifying balances..." >&2
