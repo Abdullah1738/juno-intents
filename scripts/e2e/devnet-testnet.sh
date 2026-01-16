@@ -13,6 +13,9 @@ JUNOCASH_SEND_AMOUNT_B="${JUNO_E2E_JUNOCASH_SEND_AMOUNT_B:-0.5}"
 
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
+SOLVER_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER_KEYPAIR:-}"
+CREATOR_KEYPAIR_OVERRIDE="${JUNO_E2E_CREATOR_KEYPAIR:-}"
+
 CRP_OPERATOR1_KEYPAIR="${JUNO_E2E_CRP_OPERATOR1_KEYPAIR:-}"
 CRP_OPERATOR2_KEYPAIR="${JUNO_E2E_CRP_OPERATOR2_KEYPAIR:-}"
 
@@ -27,6 +30,8 @@ Environment (optional):
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_A  (default: 1.0)
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_B  (default: 0.5)
   JUNO_E2E_PRIORITY_LEVEL          (default: Medium)
+  JUNO_E2E_SOLVER_KEYPAIR          (optional: funded Solana CLI JSON keypair path; skips airdrop)
+  JUNO_E2E_CREATOR_KEYPAIR         (optional: funded Solana CLI JSON keypair path; skips airdrop)
   JUNO_E2E_CRP_OPERATOR1_KEYPAIR   (optional: Solana CLI JSON keypair path for CRP operator #1)
   JUNO_E2E_CRP_OPERATOR2_KEYPAIR   (optional: Solana CLI JSON keypair path for CRP operator #2)
 
@@ -80,6 +85,14 @@ need_cmd spl-token
 need_cmd cargo
 need_cmd go
 
+if [[ -n "${SOLVER_KEYPAIR_OVERRIDE}" && ! -f "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
+  echo "solver keypair not found: ${SOLVER_KEYPAIR_OVERRIDE}" >&2
+  exit 2
+fi
+if [[ -n "${CREATOR_KEYPAIR_OVERRIDE}" && ! -f "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
+  echo "creator keypair not found: ${CREATOR_KEYPAIR_OVERRIDE}" >&2
+  exit 2
+fi
 if [[ -n "${CRP_OPERATOR1_KEYPAIR}" && ! -f "${CRP_OPERATOR1_KEYPAIR}" ]]; then
   echo "CRP operator #1 keypair not found: ${CRP_OPERATOR1_KEYPAIR}" >&2
   exit 2
@@ -186,11 +199,19 @@ GO_CRP="${WORKDIR}/crp-operator"
 (cd "${ROOT}" && go build -o "${GO_INTENTS}" ./cmd/juno-intents)
 (cd "${ROOT}" && go build -o "${GO_CRP}" ./cmd/crp-operator)
 
-echo "creating Solana keypairs..." >&2
+echo "selecting Solana keypairs..." >&2
 SOLVER_KEYPAIR="${WORKDIR}/solver.json"
 CREATOR_KEYPAIR="${WORKDIR}/creator.json"
-solana-keygen new --no-bip39-passphrase --silent --force -o "${SOLVER_KEYPAIR}"
-solana-keygen new --no-bip39-passphrase --silent --force -o "${CREATOR_KEYPAIR}"
+if [[ -n "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
+  SOLVER_KEYPAIR="${SOLVER_KEYPAIR_OVERRIDE}"
+else
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${SOLVER_KEYPAIR}"
+fi
+if [[ -n "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
+  CREATOR_KEYPAIR="${CREATOR_KEYPAIR_OVERRIDE}"
+else
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${CREATOR_KEYPAIR}"
+fi
 SOLVER_PUBKEY="$(solana-keygen pubkey "${SOLVER_KEYPAIR}")"
 CREATOR_PUBKEY="$(solana-keygen pubkey "${CREATOR_KEYPAIR}")"
 echo "solver_pubkey=${SOLVER_PUBKEY}" >&2
@@ -201,9 +222,15 @@ OP2_KEYPAIR="${CREATOR_KEYPAIR}"
 if [[ -n "${CRP_OPERATOR1_KEYPAIR}" ]]; then OP1_KEYPAIR="${CRP_OPERATOR1_KEYPAIR}"; fi
 if [[ -n "${CRP_OPERATOR2_KEYPAIR}" ]]; then OP2_KEYPAIR="${CRP_OPERATOR2_KEYPAIR}"; fi
 
-echo "funding Solana keypairs via devnet airdrop..." >&2
-airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
-airdrop "${CREATOR_PUBKEY}" 2 "${CREATOR_KEYPAIR}"
+if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" || -z "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
+  echo "funding Solana keypairs via devnet airdrop..." >&2
+fi
+if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
+  airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
+fi
+if [[ -z "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
+  airdrop "${CREATOR_PUBKEY}" 2 "${CREATOR_KEYPAIR}"
+fi
 
 echo "creating SPL mint + token accounts..." >&2
 MINT="$(spl-token -u "${SOLANA_RPC_URL}" create-token --decimals 0 --owner "${SOLVER_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact | parse_spl_pubkey_json)"
