@@ -135,10 +135,19 @@ jobs:
           rzup install rust ${{ env.RISC0_RUST_TOOLCHAIN }}
           rzup install risc0-groth16 0.1.0
 
+      - name: Write CRP operator keypairs
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/juno-secrets
+          printf '%s' "${{ secrets.JUNO_CRP_OPERATOR1_KEYPAIR_JSON }}" > /tmp/juno-secrets/crp-operator-1.json
+          printf '%s' "${{ secrets.JUNO_CRP_OPERATOR2_KEYPAIR_JSON }}" > /tmp/juno-secrets/crp-operator-2.json
+          chmod 600 /tmp/juno-secrets/crp-operator-1.json /tmp/juno-secrets/crp-operator-2.json
+          echo "JUNO_E2E_CRP_OPERATOR1_KEYPAIR=/tmp/juno-secrets/crp-operator-1.json" >> "$GITHUB_ENV"
+          echo "JUNO_E2E_CRP_OPERATOR2_KEYPAIR=/tmp/juno-secrets/crp-operator-2.json" >> "$GITHUB_ENV"
+
       - name: Run devnet e2e (both directions)
         env:
           RUST_LOG: info
         run: |
           set -euo pipefail
           ./scripts/e2e/devnet-testnet.sh --deployment "${{ github.event.inputs.deployment }}"
-

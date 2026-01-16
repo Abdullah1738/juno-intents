@@ -13,6 +13,9 @@ JUNOCASH_SEND_AMOUNT_B="${JUNO_E2E_JUNOCASH_SEND_AMOUNT_B:-0.5}"
 
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
+CRP_OPERATOR1_KEYPAIR="${JUNO_E2E_CRP_OPERATOR1_KEYPAIR:-}"
+CRP_OPERATOR2_KEYPAIR="${JUNO_E2E_CRP_OPERATOR2_KEYPAIR:-}"
+
 usage() {
   cat <<'USAGE' >&2
 Usage:
@@ -24,6 +27,8 @@ Environment (optional):
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_A  (default: 1.0)
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_B  (default: 0.5)
   JUNO_E2E_PRIORITY_LEVEL          (default: Medium)
+  JUNO_E2E_CRP_OPERATOR1_KEYPAIR   (optional: Solana CLI JSON keypair path for CRP operator #1)
+  JUNO_E2E_CRP_OPERATOR2_KEYPAIR   (optional: Solana CLI JSON keypair path for CRP operator #2)
 
 Notes:
   - Starts a local JunoCash "testnet" Docker network (isolated, mined).
@@ -74,6 +79,15 @@ need_cmd solana-keygen
 need_cmd spl-token
 need_cmd cargo
 need_cmd go
+
+if [[ -n "${CRP_OPERATOR1_KEYPAIR}" && ! -f "${CRP_OPERATOR1_KEYPAIR}" ]]; then
+  echo "CRP operator #1 keypair not found: ${CRP_OPERATOR1_KEYPAIR}" >&2
+  exit 2
+fi
+if [[ -n "${CRP_OPERATOR2_KEYPAIR}" && ! -f "${CRP_OPERATOR2_KEYPAIR}" ]]; then
+  echo "CRP operator #2 keypair not found: ${CRP_OPERATOR2_KEYPAIR}" >&2
+  exit 2
+fi
 
 airdrop() {
   local pubkey="$1"
@@ -181,6 +195,11 @@ SOLVER_PUBKEY="$(solana-keygen pubkey "${SOLVER_KEYPAIR}")"
 CREATOR_PUBKEY="$(solana-keygen pubkey "${CREATOR_KEYPAIR}")"
 echo "solver_pubkey=${SOLVER_PUBKEY}" >&2
 echo "creator_pubkey=${CREATOR_PUBKEY}" >&2
+
+OP1_KEYPAIR="${SOLVER_KEYPAIR}"
+OP2_KEYPAIR="${CREATOR_KEYPAIR}"
+if [[ -n "${CRP_OPERATOR1_KEYPAIR}" ]]; then OP1_KEYPAIR="${CRP_OPERATOR1_KEYPAIR}"; fi
+if [[ -n "${CRP_OPERATOR2_KEYPAIR}" ]]; then OP2_KEYPAIR="${CRP_OPERATOR2_KEYPAIR}"; fi
 
 echo "funding Solana keypairs via devnet airdrop..." >&2
 airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
@@ -512,9 +531,9 @@ fi
   --lag 1 \
   --poll-interval 1s \
   --payer-keypair "${SOLVER_KEYPAIR}" \
-  --submit-operator-keypair "${SOLVER_KEYPAIR}" \
-  --finalize-operator-keypair "${SOLVER_KEYPAIR}" \
-  --finalize-operator-keypair "${CREATOR_KEYPAIR}" \
+  --submit-operator-keypair "${OP1_KEYPAIR}" \
+  --finalize-operator-keypair "${OP1_KEYPAIR}" \
+  --finalize-operator-keypair "${OP2_KEYPAIR}" \
   --priority-level "${PRIORITY_LEVEL}" \
   --once >/dev/null
 
