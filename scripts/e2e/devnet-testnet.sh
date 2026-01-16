@@ -248,15 +248,20 @@ if [[ -z "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
 fi
 
 echo "creating SPL mint + token accounts..." >&2
-MINT="$(spl-token -u "${SOLANA_RPC_URL}" create-token --decimals 0 --owner "${SOLVER_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact | parse_spl_pubkey_json)"
+MINT_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-token --decimals 0 --owner "${SOLVER_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact)"
+MINT="$(printf '%s' "${MINT_OUT}" | parse_spl_pubkey_json)"
 if [[ -z "${MINT}" ]]; then
   echo "failed to parse mint from spl-token output" >&2
+  printf '%s\n' "${MINT_OUT}" >&2 || true
   exit 1
 fi
 
-SOLVER_TA="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${SOLVER_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact | parse_spl_pubkey_json)"
-CREATOR_TA="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${CREATOR_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact | parse_spl_pubkey_json)"
-FEE_TA="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${FEE_COLLECTOR_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact | parse_spl_pubkey_json)"
+SOLVER_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${SOLVER_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact)"
+SOLVER_TA="$(printf '%s' "${SOLVER_TA_OUT}" | parse_spl_pubkey_json)"
+CREATOR_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${CREATOR_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact)"
+CREATOR_TA="$(printf '%s' "${CREATOR_TA_OUT}" | parse_spl_pubkey_json)"
+FEE_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${FEE_COLLECTOR_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact)"
+FEE_TA="$(printf '%s' "${FEE_TA_OUT}" | parse_spl_pubkey_json)"
 for v in SOLVER_TA CREATOR_TA FEE_TA; do
   if [[ -z "${!v}" ]]; then
     echo "failed to parse ${v} from spl-token output" >&2
