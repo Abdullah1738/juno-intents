@@ -467,8 +467,7 @@ wait_for_op_txid() {
     fi
 
     parsed=""
-    if parsed="$(printf '%s' "${res}" | python3 - <<'PY'
-import json,sys
+    if parsed="$(python3 -c 'import json,sys
 items=json.load(sys.stdin)
 it=items[0] if items else {}
 status=it.get("status")
@@ -480,25 +479,25 @@ err=it.get("error")
 msg=err.get("message") if isinstance(err, dict) else err
 print(f"status={status} message={msg}")
 sys.exit(2)
-PY
-)"; then
+' <<<"${res}")"; then
       printf '%s\n' "${parsed}"
       return 0
-    fi
-    ec=$?
-    if [[ "${ec}" == "2" ]]; then
-      echo "operation failed: ${parsed} (opid=${opid})" >&2
+    else
+      ec=$?
+      if [[ "${ec}" == "2" ]]; then
+        echo "operation failed: ${parsed} (opid=${opid})" >&2
+        printf '%s\n' "${res}" >&2
+        return 1
+      fi
+      if [[ "${ec}" == "3" ]]; then
+        echo "operation completed without txid (opid=${opid})" >&2
+        printf '%s\n' "${res}" >&2
+        return 1
+      fi
+      echo "unexpected z_getoperationresult parser exit code: ${ec} (opid=${opid})" >&2
       printf '%s\n' "${res}" >&2
       return 1
     fi
-    if [[ "${ec}" == "3" ]]; then
-      echo "operation completed without txid (opid=${opid})" >&2
-      printf '%s\n' "${res}" >&2
-      return 1
-    fi
-    echo "unexpected z_getoperationresult parser exit code: ${ec} (opid=${opid})" >&2
-    printf '%s\n' "${res}" >&2
-    return 1
   done
 
   echo "operation did not complete (opid=${opid})" >&2
