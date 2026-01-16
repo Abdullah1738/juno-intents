@@ -138,9 +138,22 @@ confirm_sig() {
   local sig="$1"
   local attempts="${2:-30}"
   for _ in $(seq 1 "${attempts}"); do
-    if solana -u "${SOLANA_RPC_URL}" confirm "${sig}" >/dev/null 2>&1; then
-      return 0
-    fi
+    out="$(solana -u "${SOLANA_RPC_URL}" confirm "${sig}" --output json-compact 2>/dev/null)" && {
+      if python3 - "${out}" <<'PY'
+import json,sys
+raw=sys.argv[1]
+d=json.loads(raw)
+err=d.get("err")
+if err not in (None, "null", {}):
+  raise SystemExit(1)
+PY
+      then
+        return 0
+      fi
+      echo "transaction failed: ${sig}" >&2
+      printf '%s\n' "${out}" >&2
+      return 1
+    }
     sleep 2
   done
   echo "failed to confirm signature: ${sig}" >&2
