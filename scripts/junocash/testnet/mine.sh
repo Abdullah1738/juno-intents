@@ -13,7 +13,7 @@ jcli() { scripts/junocash/testnet/cli.sh "$@"; }
 
 start="$(jcli getblockcount)"
 target="$((start + want))"
-threads="${JUNO_TESTNET_GENPROCLIMIT:-1}"
+threads="${JUNO_TESTNET_GENPROCLIMIT:--1}"
 
 echo "mining ${want} blocks (from ${start} to ${target})..." >&2
 jcli setgenerate true "${threads}" >/dev/null
@@ -32,4 +32,3 @@ done
 jcli setgenerate false >/dev/null || true
 echo "timed out waiting to reach height ${target}" >&2
 exit 1
-
