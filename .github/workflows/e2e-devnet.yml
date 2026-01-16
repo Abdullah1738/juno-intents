@@ -45,7 +45,6 @@ env:
   RISC0_RUST_TOOLCHAIN: 1.91.1
   RZUP_VERSION: 0.5.1
   SOLANA_CLI_VERSION: 3.1.6
-  SOLANA_RPC_URL: https://rpc.ankr.com/solana_devnet
   HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
   HELIUS_CLUSTER: devnet
   JUNO_E2E_NET_AMOUNT_A: ${{ github.event.inputs.net_amount_a }}
