@@ -196,6 +196,29 @@ if not m:
 print(m.group(0))'
 }
 
+ata_for() {
+  local owner="$1"
+  local mint="$2"
+  if ! out="$(spl-token -u "${SOLANA_RPC_URL}" address --token "${mint}" --owner "${owner}" --verbose --output json-compact 2>&1)"; then
+    printf '%s\n' "${out}" >&2
+    return 1
+  fi
+  python3 -c 'import json,re,sys
+raw=sys.stdin.read().strip()
+try:
+  d=json.loads(raw)
+  for k in ("associatedTokenAddress","associated_token_address","address"):
+    v=(d.get(k) or "").strip()
+    if v:
+      print(v); raise SystemExit(0)
+except Exception:
+  pass
+m=re.search(r"[1-9A-HJ-NP-Za-km-z]{32,44}", raw)
+if not m:
+  raise SystemExit("no base58 pubkey in output")
+print(m.group(0))' <<<"${out}"
+}
+
 DEPLOY_INFO="$(
   python3 - "${DEPLOYMENT_FILE}" "${DEPLOYMENT_NAME}" <<'PY'
 import json,sys
@@ -314,11 +337,11 @@ if [[ -n "${MINT_SIG}" ]]; then
   confirm_sig "${MINT_SIG}" 60
 fi
 
+SOLVER_TA="$(ata_for "${SOLVER_PUBKEY}" "${MINT}")"
+CREATOR_TA="$(ata_for "${CREATOR_PUBKEY}" "${MINT}")"
+FEE_TA="$(ata_for "${FEE_COLLECTOR_PUBKEY}" "${MINT}")"
+
 if ! SOLVER_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${SOLVER_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact 2>&1)"; then
-  printf '%s\n' "${SOLVER_TA_OUT}" >&2
-  exit 1
-fi
-if ! SOLVER_TA="$(parse_spl_address <<<"${SOLVER_TA_OUT}")"; then
   printf '%s\n' "${SOLVER_TA_OUT}" >&2
   exit 1
 fi
@@ -330,10 +353,6 @@ if ! CREATOR_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}"
   printf '%s\n' "${CREATOR_TA_OUT}" >&2
   exit 1
 fi
-if ! CREATOR_TA="$(parse_spl_address <<<"${CREATOR_TA_OUT}")"; then
-  printf '%s\n' "${CREATOR_TA_OUT}" >&2
-  exit 1
-fi
 CREATOR_TA_SIG="$(parse_spl_signature <<<"${CREATOR_TA_OUT}" || true)"
 if [[ -n "${CREATOR_TA_SIG}" ]]; then
   confirm_sig "${CREATOR_TA_SIG}" 60
@@ -342,20 +361,10 @@ if ! FEE_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --o
   printf '%s\n' "${FEE_TA_OUT}" >&2
   exit 1
 fi
-if ! FEE_TA="$(parse_spl_address <<<"${FEE_TA_OUT}")"; then
-  printf '%s\n' "${FEE_TA_OUT}" >&2
-  exit 1
-fi
 FEE_TA_SIG="$(parse_spl_signature <<<"${FEE_TA_OUT}" || true)"
 if [[ -n "${FEE_TA_SIG}" ]]; then
   confirm_sig "${FEE_TA_SIG}" 60
 fi
-for v in SOLVER_TA CREATOR_TA FEE_TA; do
-  if [[ -z "${!v}" ]]; then
-    echo "failed to parse ${v} from spl-token output" >&2
-    exit 1
-  fi
-done
 
 echo "mint=${MINT}" >&2
 echo "solver_ta=${SOLVER_TA}" >&2
