@@ -34,16 +34,14 @@ const ATTESTATION_SEAL_LEN_V1: usize = 260;
 // Current expected MethodID bytes for the RISC Zero operator attestation verifier guest program.
 // This MUST be updated whenever the zkVM method is changed and re-embedded.
 const EXPECTED_IMAGE_ID: [u8; 32] = [
-    0x4d, 0x7f, 0x9b, 0xd7, 0xf3, 0x0b, 0x86, 0x07, 0xf4, 0x0a, 0xbf, 0xa2, 0x40, 0x37,
-    0x77, 0x43, 0x7c, 0x19, 0x5a, 0x43, 0xce, 0x64, 0x1c, 0x3f, 0x9c, 0x39, 0x7b, 0xf1,
-    0x54, 0xd6, 0x88, 0x64,
+    0x4d, 0x7f, 0x9b, 0xd7, 0xf3, 0x0b, 0x86, 0x07, 0xf4, 0x0a, 0xbf, 0xa2, 0x40, 0x37, 0x77, 0x43,
+    0x7c, 0x19, 0x5a, 0x43, 0xce, 0x64, 0x1c, 0x3f, 0x9c, 0x39, 0x7b, 0xf1, 0x54, 0xd6, 0x88, 0x64,
 ];
 
 // Anchor discriminator for verifier_router::verify instruction:
 // sha256("global:verify")[0..8]
-const VERIFIER_ROUTER_VERIFY_DISCRIMINATOR: [u8; 8] = [
-    0x85, 0xa1, 0x8d, 0x30, 0x78, 0xc6, 0x58, 0x96,
-];
+const VERIFIER_ROUTER_VERIFY_DISCRIMINATOR: [u8; 8] =
+    [0x85, 0xa1, 0x8d, 0x30, 0x78, 0xc6, 0x58, 0x96];
 
 // Fixed selector for the RISC0 verifier router.
 const RISC0_VERIFIER_SELECTOR: [u8; 4] = *b"JINT";
@@ -64,8 +62,12 @@ pub enum OrpInstruction {
         verifier_program: Pubkey,
         allowed_measurements: Vec<[u8; 32]>,
     },
-    RegisterOperator { bundle: Vec<u8> },
-    SetOperatorEnabled { enabled: bool },
+    RegisterOperator {
+        bundle: Vec<u8>,
+    },
+    SetOperatorEnabled {
+        enabled: bool,
+    },
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq, Eq)]
@@ -122,7 +124,11 @@ impl From<OrpError> for ProgramError {
 entrypoint!(process_instruction);
 
 #[inline(never)]
-pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
     let ix = OrpInstruction::try_from_slice(data).map_err(|_| OrpError::InvalidInstruction)?;
     match ix {
         OrpInstruction::Initialize {
@@ -148,8 +154,12 @@ pub fn process_instruction(program_id: &Pubkey, accounts: &[AccountInfo], data: 
             verifier_program,
             allowed_measurements,
         ),
-        OrpInstruction::RegisterOperator { bundle } => process_register(program_id, accounts, &bundle),
-        OrpInstruction::SetOperatorEnabled { enabled } => process_set_enabled(program_id, accounts, enabled),
+        OrpInstruction::RegisterOperator { bundle } => {
+            process_register(program_id, accounts, &bundle)
+        }
+        OrpInstruction::SetOperatorEnabled { enabled } => {
+            process_set_enabled(program_id, accounts, enabled)
+        }
     }
 }
 
@@ -198,7 +208,8 @@ fn process_initialize(
         return Err(OrpError::AlreadyInitialized.into());
     }
 
-    let (expected_router, _bump) = Pubkey::find_program_address(&[b"router"], &verifier_router_program);
+    let (expected_router, _bump) =
+        Pubkey::find_program_address(&[b"router"], &verifier_router_program);
     if expected_router != router {
         return Err(OrpError::InvalidVerifierRouter.into());
     }
@@ -218,7 +229,13 @@ fn process_initialize(
     let rent = Rent::get()?;
     let lamports = rent.minimum_balance(CONFIG_LEN_V1);
     invoke_signed(
-        &system_instruction::create_account(admin_ai.key, config_ai.key, lamports, CONFIG_LEN_V1 as u64, program_id),
+        &system_instruction::create_account(
+            admin_ai.key,
+            config_ai.key,
+            lamports,
+            CONFIG_LEN_V1 as u64,
+            program_id,
+        ),
         &[admin_ai.clone(), config_ai.clone(), system_program.clone()],
         &[&[CONFIG_SEED, deployment_id.as_ref(), &[bump]]],
     )?;
@@ -338,14 +355,17 @@ fn process_register(program_id: &Pubkey, accounts: &[AccountInfo], bundle: &[u8]
     if journal.deployment_id != cfg.deployment_id {
         return Err(OrpError::InvalidZkvmJournal.into());
     }
-    if journal.junocash_chain_id != cfg.junocash_chain_id || journal.junocash_genesis_hash != cfg.junocash_genesis_hash {
+    if journal.junocash_chain_id != cfg.junocash_chain_id
+        || journal.junocash_genesis_hash != cfg.junocash_genesis_hash
+    {
         return Err(OrpError::InvalidZkvmJournal.into());
     }
     if !measurement_allowed(&cfg, &journal.measurement) {
         return Err(OrpError::MeasurementNotAllowed.into());
     }
 
-    let (expected_operator, bump) = operator_pda(program_id, &cfg.deployment_id, &journal.operator_pubkey);
+    let (expected_operator, bump) =
+        operator_pda(program_id, &cfg.deployment_id, &journal.operator_pubkey);
     if expected_operator != *operator_ai.key {
         return Err(OrpError::InvalidOperatorPda.into());
     }
@@ -356,8 +376,18 @@ fn process_register(program_id: &Pubkey, accounts: &[AccountInfo], bundle: &[u8]
     let rent = Rent::get()?;
     let lamports = rent.minimum_balance(OPERATOR_LEN_V1);
     invoke_signed(
-        &system_instruction::create_account(admin_ai.key, operator_ai.key, lamports, OPERATOR_LEN_V1 as u64, program_id),
-        &[admin_ai.clone(), operator_ai.clone(), system_program.clone()],
+        &system_instruction::create_account(
+            admin_ai.key,
+            operator_ai.key,
+            lamports,
+            OPERATOR_LEN_V1 as u64,
+            program_id,
+        ),
+        &[
+            admin_ai.clone(),
+            operator_ai.clone(),
+            system_program.clone(),
+        ],
         &[&[
             OPERATOR_SEED,
             cfg.deployment_id.as_ref(),
@@ -378,7 +408,11 @@ fn process_register(program_id: &Pubkey, accounts: &[AccountInfo], bundle: &[u8]
 }
 
 #[inline(never)]
-fn process_set_enabled(program_id: &Pubkey, accounts: &[AccountInfo], enabled: bool) -> ProgramResult {
+fn process_set_enabled(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    enabled: bool,
+) -> ProgramResult {
     // Accounts:
     // 0. admin (signer)
     // 1. config (PDA)
@@ -410,7 +444,8 @@ fn process_set_enabled(program_id: &Pubkey, accounts: &[AccountInfo], enabled: b
     if rec.version != OPERATOR_VERSION_V1 || rec.deployment_id != cfg.deployment_id {
         return Err(OrpError::InvalidAccountData.into());
     }
-    let (expected_operator, _bump) = operator_pda(program_id, &cfg.deployment_id, &rec.operator_pubkey);
+    let (expected_operator, _bump) =
+        operator_pda(program_id, &cfg.deployment_id, &rec.operator_pubkey);
     if expected_operator != *operator_ai.key {
         return Err(OrpError::InvalidOperatorPda.into());
     }
@@ -428,7 +463,11 @@ fn measurement_allowed(cfg: &OrpConfigV1, m: &[u8; 32]) -> bool {
     false
 }
 
-fn validate_config_pda(program_id: &Pubkey, config_ai: &AccountInfo, cfg: &OrpConfigV1) -> ProgramResult {
+fn validate_config_pda(
+    program_id: &Pubkey,
+    config_ai: &AccountInfo,
+    cfg: &OrpConfigV1,
+) -> ProgramResult {
     if cfg.version != CONFIG_VERSION_V1 {
         return Err(OrpError::InvalidAccountData.into());
     }
@@ -484,7 +523,11 @@ fn parse_attestation_bundle_v1(input: &[u8]) -> Result<ParsedBundle<'_>, Program
     }
     let seal = &input[journal_end + 4..];
 
-    Ok(ParsedBundle { image_id, journal, seal })
+    Ok(ParsedBundle {
+        image_id,
+        journal,
+        seal,
+    })
 }
 
 struct AttestationJournalV1 {
@@ -539,8 +582,15 @@ pub fn config_pda(program_id: &Pubkey, deployment_id: &[u8; 32]) -> (Pubkey, u8)
     Pubkey::find_program_address(&[CONFIG_SEED, deployment_id.as_ref()], program_id)
 }
 
-pub fn operator_pda(program_id: &Pubkey, deployment_id: &[u8; 32], operator: &Pubkey) -> (Pubkey, u8) {
-    Pubkey::find_program_address(&[OPERATOR_SEED, deployment_id.as_ref(), operator.as_ref()], program_id)
+pub fn operator_pda(
+    program_id: &Pubkey,
+    deployment_id: &[u8; 32],
+    operator: &Pubkey,
+) -> (Pubkey, u8) {
+    Pubkey::find_program_address(
+        &[OPERATOR_SEED, deployment_id.as_ref(), operator.as_ref()],
+        program_id,
+    )
 }
 
 #[cfg(test)]
@@ -549,10 +599,7 @@ mod tests {
 
     use solana_program_test::{processor, ProgramTest};
     use solana_sdk::{
-        account::Account,
-        instruction::Instruction,
-        signature::Signer,
-        system_program,
+        account::Account, instruction::Instruction, signature::Signer, system_program,
         transaction::Transaction,
     };
 
@@ -564,7 +611,11 @@ mod tests {
         }
     }
 
-    fn mock_verifier_router(_program_id: &Pubkey, _accounts: &[AccountInfo], _data: &[u8]) -> ProgramResult {
+    fn mock_verifier_router(
+        _program_id: &Pubkey,
+        _accounts: &[AccountInfo],
+        _data: &[u8],
+    ) -> ProgramResult {
         Ok(())
     }
 
@@ -588,7 +639,8 @@ mod tests {
 
     fn att_bundle_bytes(journal: &[u8]) -> Vec<u8> {
         assert_eq!(journal.len(), ATTESTATION_JOURNAL_LEN_V1);
-        let mut out = Vec::with_capacity(2 + 1 + 32 + 2 + journal.len() + 4 + ATTESTATION_SEAL_LEN_V1);
+        let mut out =
+            Vec::with_capacity(2 + 1 + 32 + 2 + journal.len() + 4 + ATTESTATION_SEAL_LEN_V1);
         out.extend_from_slice(&ATTESTATION_ZKVM_PROOF_BUNDLE_VERSION_V1.to_le_bytes());
         out.push(ZKVM_PROOF_SYSTEM_RISC0_GROTH16);
         out.extend_from_slice(&EXPECTED_IMAGE_ID);
@@ -618,7 +670,8 @@ mod tests {
         );
 
         // Router PDAs are derived from the verifier_router_program_id.
-        let (router, _bump) = Pubkey::find_program_address(&[b"router"], &verifier_router_program_id);
+        let (router, _bump) =
+            Pubkey::find_program_address(&[b"router"], &verifier_router_program_id);
         let (verifier_entry, _bump) = Pubkey::find_program_address(
             &[b"verifier", RISC0_VERIFIER_SELECTOR.as_ref()],
             &verifier_router_program_id,
@@ -636,7 +689,7 @@ mod tests {
             );
         }
 
-        let (mut banks_client, payer, recent_blockhash) = pt.start().await;
+        let (banks_client, payer, recent_blockhash) = pt.start().await;
 
         let deployment_id = [0x01u8; 32];
         let (config, _bump) = config_pda(&orp_program_id, &deployment_id);
@@ -685,8 +738,15 @@ mod tests {
 
         // Register an operator.
         let operator_pubkey = Pubkey::new_unique();
-        let (operator_pda_key, _bump) = operator_pda(&orp_program_id, &deployment_id, &operator_pubkey);
-        let journal = att_journal_bytes(deployment_id, chain_id, genesis_hash, operator_pubkey, allowed[0]);
+        let (operator_pda_key, _bump) =
+            operator_pda(&orp_program_id, &deployment_id, &operator_pubkey);
+        let journal = att_journal_bytes(
+            deployment_id,
+            chain_id,
+            genesis_hash,
+            operator_pubkey,
+            allowed[0],
+        );
         let bundle = att_bundle_bytes(&journal);
 
         let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
@@ -712,7 +772,11 @@ mod tests {
         );
         banks_client.process_transaction(tx).await.unwrap();
 
-        let rec_ai = banks_client.get_account(operator_pda_key).await.unwrap().unwrap();
+        let rec_ai = banks_client
+            .get_account(operator_pda_key)
+            .await
+            .unwrap()
+            .unwrap();
         let rec = OperatorRecordV1::try_from_slice(&rec_ai.data).unwrap();
         assert_eq!(rec.version, 1);
         assert_eq!(rec.deployment_id, deployment_id);
@@ -739,7 +803,11 @@ mod tests {
         );
         banks_client.process_transaction(tx).await.unwrap();
 
-        let rec_ai = banks_client.get_account(operator_pda_key).await.unwrap().unwrap();
+        let rec_ai = banks_client
+            .get_account(operator_pda_key)
+            .await
+            .unwrap()
+            .unwrap();
         let rec = OperatorRecordV1::try_from_slice(&rec_ai.data).unwrap();
         assert!(!rec.enabled);
     }

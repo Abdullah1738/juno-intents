@@ -2477,11 +2477,16 @@ dependencies = [
 name = "juno-intents-operator-registry"
 version = "0.1.0"
 dependencies = [
+ "anchor-lang",
  "borsh 0.10.4",
+ "groth_16_verifier",
+ "hex",
+ "ownable",
  "solana-program",
  "solana-program-test",
  "solana-sdk",
  "tokio",
+ "verifier_router",
 ]
 
 [[package]]

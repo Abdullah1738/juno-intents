@@ -16,7 +16,11 @@ borsh = "0.10.3"
 solana-program = "2"
 
 [dev-dependencies]
+anchor-lang = "0.31.1"
+hex = "0.4.3"
+ownable = { path = "../../third_party/risc0/risc0-solana/solana-ownable/ownable" }
+groth_16_verifier = { path = "../../third_party/risc0/risc0-solana/solana-verifier/programs/groth_16_verifier", features = ["no-entrypoint"] }
 solana-program-test = "2"
 solana-sdk = "2"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
-
+verifier_router = { path = "../../third_party/risc0/risc0-solana/solana-verifier/programs/verifier_router", features = ["no-entrypoint"] }
