@@ -479,11 +479,12 @@ func cmdIepSettle(argv []string) error {
 		recipientTokenAccountStr string
 		feeTokenAccountStr       string
 
-		bundleHex     string
-		payerPath     string
-		cuLimit       uint
-		priorityLevel string
-		dryRun        bool
+		bundleHex      string
+		lookupTableStr string
+		payerPath      string
+		cuLimit        uint
+		priorityLevel  string
+		dryRun         bool
 	)
 
 	fs.StringVar(&deploymentName, "deployment", "", "Deployment name from deployments.json (fills program ids, configs, and verifier accounts)")
@@ -498,6 +499,7 @@ func cmdIepSettle(argv []string) error {
 	fs.StringVar(&recipientTokenAccountStr, "recipient-token-account", "", "Recipient token account (base58)")
 	fs.StringVar(&feeTokenAccountStr, "fee-token-account", "", "Fee collector token account (base58)")
 	fs.StringVar(&bundleHex, "bundle-hex", "", "ReceiptZKVMProofBundleV1 hex (defaults to JUNO_RECEIPT_ZKVM_BUNDLE_HEX env)")
+	fs.StringVar(&lookupTableStr, "address-lookup-table", "", "Address lookup table account (base58; overrides deployments.json:address_lookup_table)")
 	fs.StringVar(&payerPath, "payer-keypair", solvernet.DefaultSolanaKeypairPath(), "Payer Solana keypair path (Solana CLI JSON format)")
 	fs.UintVar(&cuLimit, "cu-limit", 500_000, "Compute unit limit")
 	fs.StringVar(&priorityLevel, "priority-level", string(helius.PriorityMedium), "Priority level (Min/Low/Medium/High/VeryHigh/UnsafeMax)")
@@ -550,6 +552,9 @@ func cmdIepSettle(argv []string) error {
 	}
 	if strings.TrimSpace(bundleHex) == "" {
 		return errors.New("--bundle-hex or JUNO_RECEIPT_ZKVM_BUNDLE_HEX is required")
+	}
+	if strings.TrimSpace(lookupTableStr) == "" {
+		lookupTableStr = dep.AddressLookupTable
 	}
 
 	iepProgram, err := solana.ParsePubkey(iepProgramStr)
@@ -764,14 +769,38 @@ func cmdIepSettle(argv []string) error {
 	}
 	ixs = append(ixs, ix)
 
-	tx, err := solana.BuildAndSignLegacyTransaction(
-		bh,
-		solana.Pubkey(payerPub),
-		map[solana.Pubkey]ed25519.PrivateKey{solana.Pubkey(payerPub): payerPriv},
-		ixs,
-	)
-	if err != nil {
-		return err
+	signers := map[solana.Pubkey]ed25519.PrivateKey{solana.Pubkey(payerPub): payerPriv}
+
+	var tx []byte
+	if strings.TrimSpace(lookupTableStr) != "" {
+		lookupKey, err := solana.ParsePubkey(lookupTableStr)
+		if err != nil {
+			return fmt.Errorf("parse address lookup table: %w", err)
+		}
+		addrs, err := rpc.AddressLookupTableAddresses(ctx, lookupKey)
+		if err != nil {
+			return fmt.Errorf("fetch address lookup table %s: %w", lookupKey.Base58(), err)
+		}
+		tx, err = solana.BuildAndSignV0Transaction(
+			bh,
+			solana.Pubkey(payerPub),
+			signers,
+			ixs,
+			[]solana.LookupTable{{AccountKey: lookupKey, Addresses: addrs}},
+		)
+		if err != nil {
+			return err
+		}
+	} else {
+		tx, err = solana.BuildAndSignLegacyTransaction(
+			bh,
+			solana.Pubkey(payerPub),
+			signers,
+			ixs,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
 	if dryRun {

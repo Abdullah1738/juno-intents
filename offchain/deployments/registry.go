@@ -34,6 +34,8 @@ type Deployment struct {
 	VerifierRouter          string `json:"verifier_router,omitempty"`
 	VerifierEntry           string `json:"verifier_entry,omitempty"`
 	VerifierProgramID       string `json:"verifier_program_id,omitempty"`
+
+	AddressLookupTable string `json:"address_lookup_table,omitempty"`
 }
 
 func Load(path string) (Registry, error) {
