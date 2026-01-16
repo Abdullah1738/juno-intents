@@ -257,7 +257,8 @@ jobs:
           rpc="${HELIUS_RPC_URL:-${RPC_URL}}"
           echo "solana_rpc_url=${rpc}" >&2
 
-          crp_log="$(SOLANA_RPC_URL="${rpc}" go run ./cmd/juno-intents init-crp \
+          crp_log=""
+          if ! crp_log="$(SOLANA_RPC_URL="${rpc}" go run ./cmd/juno-intents init-crp \
             --crp-program-id "${CRP_PROGRAM_ID}" \
             --deployment-id "${deployment_id}" \
             --admin "${ADMIN}" \
@@ -266,7 +267,11 @@ jobs:
             --finalization-delay-slots 0 \
             --operator "${op1_pub}" \
             --operator "${op2_pub}" \
-            --payer-keypair /tmp/juno-secrets/solver.json 2>&1)"
+            --payer-keypair /tmp/juno-secrets/solver.json 2>&1)"; then
+            printf '%s\n' "${crp_log}" >&2 || true
+            echo "init-crp failed" >&2
+            exit 1
+          fi
           echo "${crp_log}" >&2
           crp_config="$(printf '%s\n' "${crp_log}" | sed -nE 's/^crp_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' | tail -n 1)"
           if [[ -z "${crp_config}" ]]; then
@@ -274,7 +279,8 @@ jobs:
             exit 1
           fi
 
-          iep_log="$(SOLANA_RPC_URL="${rpc}" go run ./cmd/juno-intents init-iep \
+          iep_log=""
+          if ! iep_log="$(SOLANA_RPC_URL="${rpc}" go run ./cmd/juno-intents init-iep \
             --iep-program-id "${IEP_PROGRAM_ID}" \
             --deployment-id "${deployment_id}" \
             --fee-bps "${FEE_BPS}" \
@@ -285,7 +291,11 @@ jobs:
             --verifier-router "${VERIFIER_ROUTER}" \
             --verifier-entry "${VERIFIER_ENTRY}" \
             --verifier-program "${VERIFIER_PROGRAM_ID}" \
-            --payer-keypair /tmp/juno-secrets/solver.json 2>&1)"
+            --payer-keypair /tmp/juno-secrets/solver.json 2>&1)"; then
+            printf '%s\n' "${iep_log}" >&2 || true
+            echo "init-iep failed" >&2
+            exit 1
+          fi
           echo "${iep_log}" >&2
           iep_config="$(printf '%s\n' "${iep_log}" | sed -nE 's/^iep_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' | tail -n 1)"
           if [[ -z "${iep_config}" ]]; then
