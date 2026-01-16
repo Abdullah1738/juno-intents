@@ -369,6 +369,8 @@ echo "solana_cli=$(solana --version)" >&2
 echo "spl_token_cli=$(spl-token --version)" >&2
 solver_balance_lamports="$(solana -u "${SOLANA_RPC_URL}" balance "${SOLVER_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
 echo "solver_balance_lamports=${solver_balance_lamports:-unknown}" >&2
+creator_balance_lamports="$(solana -u "${SOLANA_RPC_URL}" balance "${CREATOR_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
+echo "creator_balance_lamports=${creator_balance_lamports:-unknown}" >&2
 
 OP1_KEYPAIR="${SOLVER_KEYPAIR}"
 OP2_KEYPAIR="${CREATOR_KEYPAIR}"
@@ -382,6 +384,19 @@ if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
   airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
 fi
 if [[ -z "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
+  airdrop "${CREATOR_PUBKEY}" 2 "${CREATOR_KEYPAIR}"
+fi
+
+min_solver_lamports="${JUNO_E2E_MIN_SOLVER_LAMPORTS:-1500000000}"
+min_creator_lamports="${JUNO_E2E_MIN_CREATOR_LAMPORTS:-500000000}"
+solver_balance_now="$(solana -u "${SOLANA_RPC_URL}" balance "${SOLVER_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
+creator_balance_now="$(solana -u "${SOLANA_RPC_URL}" balance "${CREATOR_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
+if [[ "${solver_balance_now}" =~ ^[0-9]+$ && "${solver_balance_now}" -lt "${min_solver_lamports}" ]]; then
+  echo "solver balance low (${solver_balance_now} lamports); airdropping 2 SOL..." >&2
+  airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
+fi
+if [[ "${creator_balance_now}" =~ ^[0-9]+$ && "${creator_balance_now}" -lt "${min_creator_lamports}" ]]; then
+  echo "creator balance low (${creator_balance_now} lamports); airdropping 2 SOL..." >&2
   airdrop "${CREATOR_PUBKEY}" 2 "${CREATOR_KEYPAIR}"
 fi
 
@@ -581,7 +596,8 @@ echo "wallet_dat=${WALLET_DAT}" >&2
 
 echo "=== Direction A (JunoCash -> Solana) ===" >&2
 
-create_intent_a_raw="$("${GO_INTENTS}" iep-create-intent \
+create_intent_a_raw=""
+if ! create_intent_a_raw="$("${GO_INTENTS}" iep-create-intent \
   --deployment "${DEPLOYMENT_NAME}" \
   --mint "${MINT}" \
   --solana-recipient "${CREATOR_PUBKEY}" \
@@ -590,7 +606,10 @@ create_intent_a_raw="$("${GO_INTENTS}" iep-create-intent \
   --direction A \
   --creator-keypair "${CREATOR_KEYPAIR}" \
   --priority-level "${PRIORITY_LEVEL}" \
-  2>&1)"
+  2>&1)"; then
+  printf '%s\n' "${create_intent_a_raw}" >&2
+  exit 1
+fi
 INTENT_A="$(printf '%s\n' "${create_intent_a_raw}" | sed -nE 's/^intent=([1-9A-HJ-NP-Za-km-z]+)$/\1/p' | head -n 1)"
 if [[ -z "${INTENT_A}" ]]; then
   echo "failed to parse intent A" >&2
@@ -675,7 +694,8 @@ fi
 
 echo "=== Direction B (Solana -> JunoCash) ===" >&2
 
-create_intent_b_raw="$("${GO_INTENTS}" iep-create-intent \
+create_intent_b_raw=""
+if ! create_intent_b_raw="$("${GO_INTENTS}" iep-create-intent \
   --deployment "${DEPLOYMENT_NAME}" \
   --mint "${MINT}" \
   --solana-recipient "${CREATOR_PUBKEY}" \
@@ -685,7 +705,10 @@ create_intent_b_raw="$("${GO_INTENTS}" iep-create-intent \
   --creator-keypair "${CREATOR_KEYPAIR}" \
   --creator-source-token-account "${CREATOR_TA}" \
   --priority-level "${PRIORITY_LEVEL}" \
-  2>&1)"
+  2>&1)"; then
+  printf '%s\n' "${create_intent_b_raw}" >&2
+  exit 1
+fi
 INTENT_B="$(printf '%s\n' "${create_intent_b_raw}" | sed -nE 's/^intent=([1-9A-HJ-NP-Za-km-z]+)$/\1/p' | head -n 1)"
 if [[ -z "${INTENT_B}" ]]; then
   echo "failed to parse intent B" >&2
