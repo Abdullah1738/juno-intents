@@ -21,6 +21,7 @@ spl-token = { version = "8.0.0", features = ["no-entrypoint"] }
 anchor-lang = "0.31.1"
 hex = "0.4.3"
 juno-intents-receipt-verifier = { path = "../receipt-verifier", features = ["no-entrypoint"] }
+juno-intents-operator-registry = { path = "../operator-registry", features = ["no-entrypoint"] }
 ownable = { path = "../../third_party/risc0/risc0-solana/solana-ownable/ownable" }
 groth_16_verifier = { path = "../../third_party/risc0/risc0-solana/solana-verifier/programs/groth_16_verifier", features = ["no-entrypoint"] }
 solana-program-test = "2"

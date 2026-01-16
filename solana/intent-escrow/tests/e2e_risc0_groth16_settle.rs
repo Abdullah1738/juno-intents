@@ -19,6 +19,9 @@ use juno_intents_checkpoint_registry::{
     checkpoint_pda as crp_checkpoint_pda, config_pda as crp_config_pda,
     height_pda as crp_height_pda, observation_signing_bytes_v1, CrpInstruction,
 };
+use juno_intents_operator_registry::{
+    config_pda as orp_config_pda, operator_pda as orp_operator_pda, OrpInstruction,
+};
 use juno_intents_intent_escrow::{
     config_pda as iep_config_pda, fill_pda as iep_fill_pda, intent_pda as iep_intent_pda,
     intent_vault_pda as iep_intent_vault_pda, spent_receipt_pda as iep_spent_pda,
@@ -28,6 +31,7 @@ use juno_intents_intent_escrow::{
 const IEP_PROGRAM_ID_BYTES: [u8; 32] = [0xA1u8; 32];
 const CRP_PROGRAM_ID_BYTES: [u8; 32] = [0xA2u8; 32];
 const RECEIPT_VERIFIER_PROGRAM_ID_BYTES: [u8; 32] = [0xA3u8; 32];
+const OPERATOR_REGISTRY_PROGRAM_ID_BYTES: [u8; 32] = [0xA4u8; 32];
 
 const INTENT_NONCE: [u8; 32] = [0x33u8; 32];
 
@@ -54,11 +58,59 @@ fn groth16_verifier_entrypoint(
     risc0_groth16_verifier::entry(program_id, accounts, data)
 }
 
+fn mock_verifier_router(
+    _program_id: &solana_program::pubkey::Pubkey,
+    _accounts: &[solana_program::account_info::AccountInfo],
+    _data: &[u8],
+) -> solana_program::entrypoint::ProgramResult {
+    Ok(())
+}
+
 fn decode_hex_env(key: &str) -> Vec<u8> {
     let s = std::env::var(key).unwrap_or_else(|_| panic!("set {key} to hex bytes"));
     let s = s.trim();
     let s = s.strip_prefix("0x").unwrap_or(s);
     hex::decode(s).unwrap_or_else(|e| panic!("invalid hex in {key}: {e}"))
+}
+
+const ATTESTATION_IMAGE_ID: [u8; 32] = [
+    0x4d, 0x7f, 0x9b, 0xd7, 0xf3, 0x0b, 0x86, 0x07, 0xf4, 0x0a, 0xbf, 0xa2, 0x40, 0x37,
+    0x77, 0x43, 0x7c, 0x19, 0x5a, 0x43, 0xce, 0x64, 0x1c, 0x3f, 0x9c, 0x39, 0x7b, 0xf1,
+    0x54, 0xd6, 0x88, 0x64,
+];
+const ATTESTATION_JOURNAL_LEN_V1: usize = 2 + 32 + 1 + 32 + 32 + 32;
+const ATTESTATION_SEAL_LEN_V1: usize = 260;
+
+fn att_journal_bytes(
+    deployment_id: [u8; 32],
+    chain_id: u8,
+    genesis_hash: [u8; 32],
+    operator_pubkey: Pubkey,
+    measurement: [u8; 32],
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(ATTESTATION_JOURNAL_LEN_V1);
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(deployment_id.as_ref());
+    out.push(chain_id);
+    out.extend_from_slice(genesis_hash.as_ref());
+    out.extend_from_slice(operator_pubkey.as_ref());
+    out.extend_from_slice(measurement.as_ref());
+    assert_eq!(out.len(), ATTESTATION_JOURNAL_LEN_V1);
+    out
+}
+
+fn att_bundle_bytes(journal: &[u8]) -> Vec<u8> {
+    assert_eq!(journal.len(), ATTESTATION_JOURNAL_LEN_V1);
+    let mut out = Vec::with_capacity(2 + 1 + 32 + 2 + journal.len() + 4 + ATTESTATION_SEAL_LEN_V1);
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.push(1u8);
+    out.extend_from_slice(&ATTESTATION_IMAGE_ID);
+    out.extend_from_slice(&(journal.len() as u16).to_le_bytes());
+    out.extend_from_slice(journal);
+    let seal = vec![0u8; ATTESTATION_SEAL_LEN_V1];
+    out.extend_from_slice(&(seal.len() as u32).to_le_bytes());
+    out.extend_from_slice(&seal);
+    out
 }
 
 #[derive(Debug, Clone)]
@@ -174,6 +226,18 @@ fn crp_ix(
     }
 }
 
+fn orp_ix(
+    program_id: solana_sdk::pubkey::Pubkey,
+    accounts: Vec<AccountMeta>,
+    data: OrpInstruction,
+) -> Instruction {
+    Instruction {
+        program_id,
+        accounts,
+        data: data.try_to_vec().expect("borsh encode"),
+    }
+}
+
 fn ed25519_ix(signer: &Keypair, msg: &[u8]) -> Instruction {
     let sig: [u8; 64] = signer.sign_message(msg).into();
     let pk = signer.pubkey().to_bytes();
@@ -252,6 +316,10 @@ async fn settles_real_risc0_groth16_bundle_v1() {
     let crp_program_id = solana_sdk::pubkey::Pubkey::new_from_array(CRP_PROGRAM_ID_BYTES);
     let receipt_verifier_program_id =
         solana_sdk::pubkey::Pubkey::new_from_array(RECEIPT_VERIFIER_PROGRAM_ID_BYTES);
+    let orp_program_id =
+        solana_sdk::pubkey::Pubkey::new_from_array(OPERATOR_REGISTRY_PROGRAM_ID_BYTES);
+    let orp_verifier_router_program_id = Pubkey::new_unique();
+    let orp_verifier_program_id = Pubkey::new_unique();
 
     // Ensure the bundle's fill_id matches the deterministic Fill PDA we use in tests.
     let (intent, _bump) = iep_intent_pda(&iep_program_id, &journal.deployment_id, &INTENT_NONCE);
@@ -279,6 +347,14 @@ async fn settles_real_risc0_groth16_bundle_v1() {
         verifier: risc0_groth16_verifier::ID,
         estopped: false,
     };
+
+    // Configure a mock verifier router stack for operator attestation registration.
+    let (orp_router_pda, _bump) =
+        Pubkey::find_program_address(&[b"router"], &orp_verifier_router_program_id);
+    let (orp_verifier_entry_pda, _bump) = Pubkey::find_program_address(
+        &[b"verifier", b"JINT".as_ref()],
+        &orp_verifier_router_program_id,
+    );
 
     let mut pt = ProgramTest::new(
         "juno_intents_intent_escrow",
@@ -310,6 +386,16 @@ async fn settles_real_risc0_groth16_bundle_v1() {
         risc0_groth16_verifier::ID,
         processor!(groth16_verifier_entrypoint),
     );
+    pt.add_program(
+        "juno_intents_operator_registry",
+        orp_program_id,
+        processor!(juno_intents_operator_registry::process_instruction),
+    );
+    pt.add_program(
+        "mock_verifier_router",
+        orp_verifier_router_program_id,
+        processor!(mock_verifier_router),
+    );
 
     pt.add_account(
         router_pda,
@@ -328,6 +414,36 @@ async fn settles_real_risc0_groth16_bundle_v1() {
             data: anchor_account_data(&verifier_entry),
             owner: risc0_verifier_router::ID,
             executable: false,
+            rent_epoch: 0,
+        },
+    );
+    pt.add_account(
+        orp_router_pda,
+        Account {
+            lamports: 1,
+            data: vec![],
+            owner: system_program::ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    );
+    pt.add_account(
+        orp_verifier_entry_pda,
+        Account {
+            lamports: 1,
+            data: vec![],
+            owner: system_program::ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    );
+    pt.add_account(
+        orp_verifier_program_id,
+        Account {
+            lamports: 1,
+            data: vec![],
+            owner: system_program::ID,
+            executable: true,
             rent_epoch: 0,
         },
     );
@@ -392,10 +508,103 @@ async fn settles_real_risc0_groth16_bundle_v1() {
     );
     banks_client.process_transaction(tx).await.unwrap();
 
+    // Initialize Operator Registry (mock verifier router, measurement allowlist enforced).
+    let (orp_config, _bump) = orp_config_pda(&orp_program_id, &journal.deployment_id);
+    let chain_id = 2u8;
+    let genesis_hash = [0x02u8; 32];
+    let allowed_measurement = [0x11u8; 32];
+    let init_orp = orp_ix(
+        orp_program_id,
+        vec![
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new(orp_config, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        OrpInstruction::Initialize {
+            deployment_id: journal.deployment_id,
+            admin: payer.pubkey(),
+            junocash_chain_id: chain_id,
+            junocash_genesis_hash: genesis_hash,
+            verifier_router_program: orp_verifier_router_program_id,
+            router: orp_router_pda,
+            verifier_entry: orp_verifier_entry_pda,
+            verifier_program: orp_verifier_program_id,
+            allowed_measurements: vec![allowed_measurement],
+        },
+    );
+    let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[init_orp],
+        Some(&payer.pubkey()),
+        &[&payer],
+        recent_blockhash,
+    );
+    banks_client.process_transaction(tx).await.unwrap();
+
     // Initialize CRP.
     let (crp_config, _bump) = crp_config_pda(&crp_program_id, &journal.deployment_id);
     let op1 = Keypair::new();
     let op2 = Keypair::new();
+    let (op1_rec, _bump) = orp_operator_pda(&orp_program_id, &journal.deployment_id, &op1.pubkey());
+    let (op2_rec, _bump) = orp_operator_pda(&orp_program_id, &journal.deployment_id, &op2.pubkey());
+
+    let reg_op1 = {
+        let j = att_journal_bytes(
+            journal.deployment_id,
+            chain_id,
+            genesis_hash,
+            op1.pubkey(),
+            allowed_measurement,
+        );
+        let bundle = att_bundle_bytes(&j);
+        orp_ix(
+            orp_program_id,
+            vec![
+                AccountMeta::new(payer.pubkey(), true),
+                AccountMeta::new_readonly(orp_config, false),
+                AccountMeta::new(op1_rec, false),
+                AccountMeta::new_readonly(system_program::ID, false),
+                AccountMeta::new_readonly(orp_verifier_router_program_id, false),
+                AccountMeta::new_readonly(orp_router_pda, false),
+                AccountMeta::new_readonly(orp_verifier_entry_pda, false),
+                AccountMeta::new_readonly(orp_verifier_program_id, false),
+            ],
+            OrpInstruction::RegisterOperator { bundle },
+        )
+    };
+    let reg_op2 = {
+        let j = att_journal_bytes(
+            journal.deployment_id,
+            chain_id,
+            genesis_hash,
+            op2.pubkey(),
+            allowed_measurement,
+        );
+        let bundle = att_bundle_bytes(&j);
+        orp_ix(
+            orp_program_id,
+            vec![
+                AccountMeta::new(payer.pubkey(), true),
+                AccountMeta::new_readonly(orp_config, false),
+                AccountMeta::new(op2_rec, false),
+                AccountMeta::new_readonly(system_program::ID, false),
+                AccountMeta::new_readonly(orp_verifier_router_program_id, false),
+                AccountMeta::new_readonly(orp_router_pda, false),
+                AccountMeta::new_readonly(orp_verifier_entry_pda, false),
+                AccountMeta::new_readonly(orp_verifier_program_id, false),
+            ],
+            OrpInstruction::RegisterOperator { bundle },
+        )
+    };
+    let recent_blockhash = banks_client.get_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[reg_op1, reg_op2],
+        Some(&payer.pubkey()),
+        &[&payer],
+        recent_blockhash,
+    );
+    banks_client.process_transaction(tx).await.unwrap();
+
     let init_crp = crp_ix(
         crp_program_id,
         vec![
@@ -403,12 +612,13 @@ async fn settles_real_risc0_groth16_bundle_v1() {
             AccountMeta::new(crp_config, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
-        CrpInstruction::Initialize {
+        CrpInstruction::InitializeV2 {
             deployment_id: journal.deployment_id,
             admin: payer.pubkey(),
             threshold: 1,
             conflict_threshold: 2,
             finalization_delay_slots: 0,
+            operator_registry_program: orp_program_id,
             operators: vec![op1.pubkey(), op2.pubkey()],
         },
     );
@@ -442,6 +652,7 @@ async fn settles_real_risc0_groth16_bundle_v1() {
             AccountMeta::new(crp_checkpoint, false),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(solana_program::sysvar::instructions::ID, false),
+            AccountMeta::new_readonly(op1_rec, false),
         ],
         CrpInstruction::SubmitObservation {
             height: 1,
@@ -471,6 +682,7 @@ async fn settles_real_risc0_groth16_bundle_v1() {
             AccountMeta::new(crp_height, false),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(solana_program::sysvar::instructions::ID, false),
+            AccountMeta::new_readonly(op1_rec, false),
         ],
         CrpInstruction::FinalizeCheckpoint { sig_count: 1 },
     );

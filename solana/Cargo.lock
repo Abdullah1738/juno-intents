@@ -2462,6 +2462,7 @@ dependencies = [
  "groth_16_verifier",
  "hex",
  "juno-intents-checkpoint-registry",
+ "juno-intents-operator-registry",
  "juno-intents-receipt-verifier",
  "ownable",
  "solana-program",
