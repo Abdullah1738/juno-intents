@@ -47,6 +47,7 @@ env:
   SOLANA_CLI_VERSION: 3.1.6
   HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
   HELIUS_CLUSTER: devnet
+  SOLANA_RPC_URL: https://devnet.helius-rpc.com/?api-key=${{ secrets.HELIUS_API_KEY }}
   JUNO_E2E_NET_AMOUNT_A: ${{ github.event.inputs.net_amount_a }}
   JUNO_E2E_NET_AMOUNT_B: ${{ github.event.inputs.net_amount_b }}
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_A: ${{ github.event.inputs.junocash_amount_a }}
