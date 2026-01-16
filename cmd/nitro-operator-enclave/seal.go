@@ -214,6 +214,22 @@ func initSigningKey(ctx context.Context, state *enclaveState, p initSigningKeyPa
 	}, nil
 }
 
+func attestOperator(ctx context.Context, operatorPub ed25519.PublicKey) ([]byte, error) {
+	if len(operatorPub) != ed25519.PublicKeySize {
+		return nil, errors.New("invalid_operator_pubkey")
+	}
+
+	handle, err := enclave.GetOrInitializeHandle()
+	if err != nil {
+		return nil, errors.New("nsm_unavailable")
+	}
+	doc, err := handle.Attest(enclave.AttestationOptions{PublicKey: operatorPub})
+	if err != nil {
+		return nil, errors.New("attestation_failed")
+	}
+	return doc, nil
+}
+
 func stringsTrim(s string) string {
 	return strings.TrimSpace(strings.Trim(s, "\""))
 }

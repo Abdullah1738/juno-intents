@@ -197,6 +197,18 @@ func handleConn(ctx context.Context, c net.Conn, state *enclaveState) error {
 				break
 			}
 			resp.Result = out
+		case "attest_operator":
+			pub, ok := state.Pubkey()
+			if !ok {
+				resp.Error = "not_initialized"
+				break
+			}
+			doc, err := attestOperator(ctx, pub)
+			if err != nil {
+				resp.Error = err.Error()
+				break
+			}
+			resp.Result = hex.EncodeToString(doc)
 		default:
 			resp.Error = "unknown_method"
 		}
