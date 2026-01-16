@@ -353,7 +353,7 @@ echo "minting tokens..." >&2
 for target in "${SOLVER_TA}" "${CREATOR_TA}"; do
   ok=0
   last_err=""
-  for _ in $(seq 1 20); do
+  for _ in $(seq 1 120); do
     if out="$(spl-token -u "${SOLANA_RPC_URL}" mint "${MINT}" 1000000 "${target}" --mint-authority "${SOLVER_KEYPAIR}" --fee-payer "${SOLVER_KEYPAIR}" 2>&1)"; then
       ok=1
       break
