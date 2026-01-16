@@ -867,9 +867,30 @@ echo "settling on Solana..." >&2
   --payer-keypair "${SOLVER_KEYPAIR}" \
   --priority-level "${PRIORITY_LEVEL}" >/dev/null
 
+spl_balance_amount() {
+  local token_account="$1"
+  local out
+  if ! out="$(spl-token -u "${SOLANA_RPC_URL}" balance --address "${token_account}" --output json-compact)"; then
+    echo "spl-token balance failed for ${token_account}" >&2
+    return 1
+  fi
+  python3 -c 'import json,sys
+raw=sys.stdin.read().strip()
+if not raw:
+  raise SystemExit("empty spl-token balance output")
+obj=json.loads(raw)
+amt=obj.get("amount")
+if amt is None:
+  raise SystemExit("missing amount in balance output")
+print(str(amt))' <<<"${out}"
+}
+
 echo "verifying balances..." >&2
-echo "creator_balance=$(spl-token -u "${SOLANA_RPC_URL}" balance "${CREATOR_TA}" --output json-compact | python3 -c 'import json,sys; print(json.load(sys.stdin).get("amount",""))')" >&2
-echo "solver_balance=$(spl-token -u "${SOLANA_RPC_URL}" balance "${SOLVER_TA}" --output json-compact | python3 -c 'import json,sys; print(json.load(sys.stdin).get("amount",""))')" >&2
-echo "fee_balance=$(spl-token -u "${SOLANA_RPC_URL}" balance "${FEE_TA}" --output json-compact | python3 -c 'import json,sys; print(json.load(sys.stdin).get("amount",""))')" >&2
+creator_balance="$(spl_balance_amount "${CREATOR_TA}")"
+solver_balance="$(spl_balance_amount "${SOLVER_TA}")"
+fee_balance="$(spl_balance_amount "${FEE_TA}")"
+echo "creator_balance=${creator_balance}" >&2
+echo "solver_balance=${solver_balance}" >&2
+echo "fee_balance=${fee_balance}" >&2
 
 echo "e2e ok" >&2
