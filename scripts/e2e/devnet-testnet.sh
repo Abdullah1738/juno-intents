@@ -219,6 +219,26 @@ if not m:
 print(m.group(0))' <<<"${out}"
 }
 
+parse_junocash_opid() {
+  python3 -c 'import json,re,sys
+raw=sys.stdin.read().strip()
+if not raw:
+  raise SystemExit("empty output")
+try:
+  data=json.loads(raw)
+  if isinstance(data, dict) and "opid" in data:
+    print(str(data["opid"])); raise SystemExit(0)
+  if isinstance(data, str) and data:
+    print(data); raise SystemExit(0)
+except Exception:
+  pass
+raw=raw.strip().strip("\"")
+m=re.search(r"opid[-A-Za-z0-9]+", raw)
+if m:
+  print(m.group(0)); raise SystemExit(0)
+print(raw)'
+}
+
 DEPLOY_INFO="$(
   python3 - "${DEPLOYMENT_FILE}" "${DEPLOYMENT_NAME}" <<'PY'
 import json,sys
@@ -450,7 +470,7 @@ echo "user_ua=${USER_UA}" >&2
 echo "solver_ua=${SOLVER_UA}" >&2
 
 echo "shielding coinbase to user orchard UA..." >&2
-opid="$(jcli z_shieldcoinbase "*" "${USER_UA}" null 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
+opid="$(jcli z_shieldcoinbase "*" "${USER_UA}" null 1 | parse_junocash_opid)"
 
 echo "waiting for shield operation..." >&2
 txid_shield=""
@@ -532,7 +552,7 @@ echo "fill_id_a=${FILL_ID_A}" >&2
 
 echo "sending JunoCash payment user->solver (amount=${JUNOCASH_SEND_AMOUNT_A})..." >&2
 recipients_a="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_UA}" "${JUNOCASH_SEND_AMOUNT_A}")"
-opid_a="$(jcli z_sendmany "${USER_UA}" "${recipients_a}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
+opid_a="$(jcli z_sendmany "${USER_UA}" "${recipients_a}" | parse_junocash_opid)"
 
 echo "waiting for sendmany operation (A)..." >&2
 txid_a=""
@@ -643,7 +663,7 @@ echo "fill_id_b=${FILL_ID_B}" >&2
 
 echo "sending JunoCash payment solver->user (amount=${JUNOCASH_SEND_AMOUNT_B})..." >&2
 recipients_b="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${USER_UA}" "${JUNOCASH_SEND_AMOUNT_B}")"
-opid_b="$(jcli z_sendmany "${SOLVER_UA}" "${recipients_b}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
+opid_b="$(jcli z_sendmany "${SOLVER_UA}" "${recipients_b}" | parse_junocash_opid)"
 
 echo "waiting for sendmany operation (B)..." >&2
 txid_b=""
