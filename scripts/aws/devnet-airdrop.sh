@@ -16,6 +16,7 @@ RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
 PUBKEY=""
 TARGET_LAMPORTS=""
 CHUNK_LAMPORTS="1000000000"
+SSM_TIMEOUT_SECONDS="${JUNO_SSM_TIMEOUT_SECONDS:-7200}"
 
 usage() {
   cat <<'USAGE' >&2
@@ -29,6 +30,7 @@ Environment:
   JUNO_AIRDROP_AMI_ID              (default: pinned AL2023 us-east-1)
   JUNO_AIRDROP_INSTANCE_TYPE       (default: t3.micro)
   JUNO_NITRO_INSTANCE_PROFILE_NAME (default: terraform output instance_profile_name, else juno-intents-nitro-operator)
+  JUNO_SSM_TIMEOUT_SECONDS         (default: 7200)
   SOLANA_RPC_URL                   (default: https://api.devnet.solana.com)
 
 Notes:
@@ -215,7 +217,8 @@ PY
 wait_ssm() {
   local command_id="$1"
   local status="InProgress"
-  for _ in $(seq 1 600); do
+  local loops="$(( (SSM_TIMEOUT_SECONDS + 1) / 2 ))"
+  for _ in $(seq 1 "${loops}"); do
     status="$(awsj ssm get-command-invocation \
       --command-id "${command_id}" \
       --instance-id "${INSTANCE_ID}" \
