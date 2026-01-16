@@ -621,11 +621,10 @@ height_a_after="$(jcli getblockcount)"
 PAYMENT_HEIGHT_A="${height_a_after}"
 echo "payment_height_a=${PAYMENT_HEIGHT_A} (before=${height_a_before} after=${height_a_after})" >&2
 
-echo "waiting for solver orchard note to appear (A)..." >&2
-ACTION_A=""
-for _ in $(seq 1 120); do
-  ACTION_A="$(jcli z_listunspent 1 9999999 false | python3 - "${txid_a}" "${SOLVER_ACCOUNT}" <<'PY'
-import json,sys
+  echo "waiting for solver orchard note to appear (A)..." >&2
+  ACTION_A=""
+  for _ in $(seq 1 120); do
+  ACTION_A="$(jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys
 txid=sys.argv[1].strip().lower()
 acct=int(sys.argv[2])
 notes=json.load(sys.stdin)
@@ -641,12 +640,11 @@ for n in notes:
   print(n.get("outindex"))
   sys.exit(0)
 sys.exit(1)
-PY
-)" && break || true
-  sleep 1
-done
-if [[ -z "${ACTION_A}" ]]; then
-  echo "failed to find solver note outindex for tx A" >&2
+' "${txid_a}" "${SOLVER_ACCOUNT}")" && break || true
+    sleep 1
+  done
+  if [[ -z "${ACTION_A}" ]]; then
+    echo "failed to find solver note outindex for tx A" >&2
   exit 1
 fi
 echo "action_a=${ACTION_A}" >&2
@@ -721,8 +719,7 @@ echo "payment_height_b=${PAYMENT_HEIGHT_B} (before=${height_b_before} after=${he
 echo "waiting for user orchard note to appear (B)..." >&2
 ACTION_B=""
 for _ in $(seq 1 120); do
-  ACTION_B="$(jcli z_listunspent 1 9999999 false | python3 - "${txid_b}" "${USER_ACCOUNT}" <<'PY'
-import json,sys
+  ACTION_B="$(jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys
 txid=sys.argv[1].strip().lower()
 acct=int(sys.argv[2])
 notes=json.load(sys.stdin)
@@ -738,8 +735,7 @@ for n in notes:
   print(n.get("outindex"))
   sys.exit(0)
 sys.exit(1)
-PY
-)" && break || true
+' "${txid_b}" "${USER_ACCOUNT}")" && break || true
   sleep 1
 done
 if [[ -z "${ACTION_B}" ]]; then
