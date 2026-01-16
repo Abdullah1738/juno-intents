@@ -108,6 +108,7 @@ jobs:
             tar -xjf /tmp/solana-release.tar.bz2 -C "$HOME/.local/share/solana"
           fi
           echo "${SOLANA_DIR}/bin" >> "$GITHUB_PATH"
+          export PATH="${SOLANA_DIR}/bin:$PATH"
           solana --version
           spl-token --version
 
