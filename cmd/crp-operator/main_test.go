@@ -89,17 +89,65 @@ func TestDecodeCrpConfigV1_Golden(t *testing.T) {
 	// paused
 	b[wantLen-1] = 0
 
-	out, err := decodeCrpConfigV1(b)
+	out, err := decodeCrpConfig(b)
 	if err != nil {
-		t.Fatalf("decodeCrpConfigV1: %v", err)
+		t.Fatalf("decodeCrpConfig: %v", err)
 	}
 	if out.Version != 1 || out.Threshold != 3 || out.ConflictThreshold != 5 || out.FinalizationDelaySlots != 9 || out.OperatorCount != 2 || out.Paused {
 		t.Fatalf("unexpected decoded fields: %+v", out)
+	}
+	if out.OperatorRegistryProgram != (solana.Pubkey{}) {
+		t.Fatalf("unexpected operator registry program in v1: %x", out.OperatorRegistryProgram)
 	}
 	for i := 0; i < 32; i++ {
 		if out.DeploymentID[i] != 0x11 || out.Admin[i] != 0x22 {
 			t.Fatalf("id mismatch at %d", i)
 		}
+		if out.Operators[0][i] != 0x44 || out.Operators[1][i] != 0x55 {
+			t.Fatalf("operator mismatch at %d", i)
+		}
+	}
+}
+
+func TestDecodeCrpConfigV2_Golden(t *testing.T) {
+	const wantLen = 1101 + 32
+	b := make([]byte, wantLen)
+	b[0] = 2 // version
+	for i := 0; i < 32; i++ {
+		b[1+i] = 0x11  // deployment id
+		b[33+i] = 0x22 // admin
+	}
+	b[65] = 3 // threshold
+	b[66] = 5 // conflict threshold
+	// finalization_delay_slots = 9
+	b[67] = 9
+	// operator_registry_program starts at 75
+	for i := 0; i < 32; i++ {
+		b[75+i] = 0x66
+	}
+	b[107] = 2 // operator_count
+	// operators start at 108
+	off := 108
+	for i := 0; i < 32; i++ {
+		b[off+i] = 0x44
+		b[off+32+i] = 0x55
+	}
+	// paused
+	b[wantLen-1] = 0
+
+	out, err := decodeCrpConfig(b)
+	if err != nil {
+		t.Fatalf("decodeCrpConfig: %v", err)
+	}
+	if out.Version != 2 || out.Threshold != 3 || out.ConflictThreshold != 5 || out.FinalizationDelaySlots != 9 || out.OperatorCount != 2 || out.Paused {
+		t.Fatalf("unexpected decoded fields: %+v", out)
+	}
+	for i := 0; i < 32; i++ {
+		if out.OperatorRegistryProgram[i] != 0x66 {
+			t.Fatalf("operator registry mismatch at %d", i)
+		}
+	}
+	for i := 0; i < 32; i++ {
 		if out.Operators[0][i] != 0x44 || out.Operators[1][i] != 0x55 {
 			t.Fatalf("operator mismatch at %d", i)
 		}

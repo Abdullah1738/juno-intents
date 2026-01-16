@@ -211,6 +211,31 @@ func cmdSubmit(argv []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
+	rpc, err := solanarpc.ClientFromEnv()
+	if err != nil {
+		return err
+	}
+
+	// If CRP config is v2, enforce attested operator identity by supplying the operator record PDA.
+	cfgRaw, err := rpc.AccountDataBase64(ctx, cfg.Base58())
+	if err != nil {
+		return fmt.Errorf("fetch config: %w", err)
+	}
+	parsedCfg, err := decodeCrpConfig(cfgRaw)
+	if err != nil {
+		return fmt.Errorf("decode config: %w", err)
+	}
+	if parsedCfg.Version == 2 && parsedCfg.OperatorRegistryProgram != (solana.Pubkey{}) {
+		opRec, _, err := solana.FindProgramAddress(
+			[][]byte{[]byte("operator"), deploymentID[:], operatorPub[:]},
+			parsedCfg.OperatorRegistryProgram,
+		)
+		if err != nil {
+			return fmt.Errorf("derive operator record pda: %w", err)
+		}
+		crpIx.Accounts = append(crpIx.Accounts, solana.AccountMeta{Pubkey: opRec, IsSigner: false, IsWritable: false})
+	}
+
 	var microLamports uint64
 	var feeKeys []string
 	if hc, err := helius.ClientFromEnv(); err == nil {
@@ -243,11 +268,6 @@ func cmdSubmit(argv []string) error {
 		ixs = append(ixs, solana.ComputeBudgetSetComputeUnitPrice(microLamports))
 	}
 	ixs = append(ixs, edIx, crpIx)
-
-	rpc, err := solanarpc.ClientFromEnv()
-	if err != nil {
-		return err
-	}
 	bh, err := rpc.LatestBlockhash(ctx)
 	if err != nil {
 		return err
@@ -367,6 +387,15 @@ func cmdFinalize(argv []string) error {
 		return err
 	}
 
+	cfgRaw, err := rpc.AccountDataBase64(ctx, cfg.Base58())
+	if err != nil {
+		return fmt.Errorf("fetch config: %w", err)
+	}
+	crpCfg, err := decodeCrpConfig(cfgRaw)
+	if err != nil {
+		return fmt.Errorf("decode config: %w", err)
+	}
+
 	// Read the checkpoint from chain to ensure we sign exactly what will be verified.
 	cpRaw, err := rpc.AccountDataBase64(ctx, checkpoint.Base58())
 	if err != nil {
@@ -392,6 +421,7 @@ func cmdFinalize(argv []string) error {
 	signingBytes := obs.SigningBytes(deploymentID)
 
 	var edIxs []solana.Instruction
+	var signerPubs []solana.Pubkey
 	for _, p := range operatorPaths {
 		opPriv, opPub, err := solvernet.LoadSolanaKeypair(p)
 		if err != nil {
@@ -401,6 +431,7 @@ func cmdFinalize(argv []string) error {
 		var sig64 [64]byte
 		copy(sig64[:], sig)
 		edIxs = append(edIxs, solana.Ed25519VerifyInstruction(sig64, solana.Pubkey(opPub), signingBytes))
+		signerPubs = append(signerPubs, solana.Pubkey(opPub))
 	}
 
 	// Optional: estimate priority fee via Helius.
@@ -440,6 +471,18 @@ func cmdFinalize(argv []string) error {
 			{Pubkey: solana.InstructionsSysvarID, IsSigner: false, IsWritable: false},
 		},
 		Data: encodeCrpFinalize(uint8(len(edIxs))),
+	}
+	if crpCfg.Version == 2 && crpCfg.OperatorRegistryProgram != (solana.Pubkey{}) {
+		for _, pk := range signerPubs {
+			opRec, _, err := solana.FindProgramAddress(
+				[][]byte{[]byte("operator"), deploymentID[:], pk[:]},
+				crpCfg.OperatorRegistryProgram,
+			)
+			if err != nil {
+				return fmt.Errorf("derive operator record pda: %w", err)
+			}
+			finalizeIx.Accounts = append(finalizeIx.Accounts, solana.AccountMeta{Pubkey: opRec, IsSigner: false, IsWritable: false})
+		}
 	}
 
 	var ixs []solana.Instruction
@@ -603,7 +646,7 @@ func cmdFinalizeAuto(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("fetch config: %w", err)
 	}
-	crpCfg, err := decodeCrpConfigV1(cfgRaw)
+	crpCfg, err := decodeCrpConfig(cfgRaw)
 	if err != nil {
 		return fmt.Errorf("decode config: %w", err)
 	}
@@ -722,7 +765,7 @@ func cmdFinalizePending(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("fetch config: %w", err)
 	}
-	crpCfg, err := decodeCrpConfigV1(cfgRaw)
+	crpCfg, err := decodeCrpConfig(cfgRaw)
 	if err != nil {
 		return fmt.Errorf("decode config: %w", err)
 	}
@@ -844,7 +887,7 @@ func finalizeCheckpointAuto(
 	crpProgram solana.Pubkey,
 	deploymentID protocol.DeploymentID,
 	cfg solana.Pubkey,
-	crpCfg crpConfigV1,
+	crpCfg crpConfig,
 	checkpoint solana.Pubkey,
 	cp crpCheckpointV1,
 	scanLimit uint,
@@ -862,9 +905,7 @@ func finalizeCheckpointAuto(
 
 	allowed := make(map[solana.Pubkey]struct{}, int(crpCfg.OperatorCount))
 	for i := 0; i < int(crpCfg.OperatorCount) && i < len(crpCfg.Operators); i++ {
-		var pk solana.Pubkey
-		copy(pk[:], crpCfg.Operators[i][:])
-		allowed[pk] = struct{}{}
+		allowed[crpCfg.Operators[i]] = struct{}{}
 	}
 
 	obs := protocol.CheckpointObservation{
@@ -954,6 +995,18 @@ func finalizeCheckpointAuto(
 			{Pubkey: solana.InstructionsSysvarID, IsSigner: false, IsWritable: false},
 		},
 		Data: encodeCrpFinalize(uint8(len(edIxs))),
+	}
+	if crpCfg.Version == 2 && crpCfg.OperatorRegistryProgram != (solana.Pubkey{}) {
+		for _, s := range collected[:crpCfg.Threshold] {
+			opRec, _, err := solana.FindProgramAddress(
+				[][]byte{[]byte("operator"), deploymentID[:], s.Pubkey[:]},
+				crpCfg.OperatorRegistryProgram,
+			)
+			if err != nil {
+				return fmt.Errorf("derive operator record pda: %w", err)
+			}
+			finalizeIx.Accounts = append(finalizeIx.Accounts, solana.AccountMeta{Pubkey: opRec, IsSigner: false, IsWritable: false})
+		}
 	}
 
 	var ixs []solana.Instruction
@@ -1067,23 +1120,32 @@ func cmdDeployments(argv []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	const crpConfigLenV1 = 1101
-	accounts, err := rpc.ProgramAccountsByDataSizeBase64(ctx, crpProgram.Base58(), crpConfigLenV1)
+	const (
+		crpConfigLenV1 = 1101
+		crpConfigLenV2 = 1101 + 32
+	)
+	accountsV1, err := rpc.ProgramAccountsByDataSizeBase64(ctx, crpProgram.Base58(), crpConfigLenV1)
 	if err != nil {
 		return err
 	}
+	accountsV2, err := rpc.ProgramAccountsByDataSizeBase64(ctx, crpProgram.Base58(), crpConfigLenV2)
+	if err != nil {
+		return err
+	}
+	accounts := append(accountsV1, accountsV2...)
 	if len(accounts) == 0 {
 		return errors.New("no CRP config accounts found (wrong program id or no deployments?)")
 	}
 
 	for _, a := range accounts {
-		cfg, err := decodeCrpConfigV1(a.Data)
+		cfg, err := decodeCrpConfig(a.Data)
 		if err != nil {
 			return fmt.Errorf("decode config %s: %w", a.Pubkey, err)
 		}
-		fmt.Printf("deployment_id=%s config=%s threshold=%d conflict_threshold=%d delay_slots=%d operators=%d paused=%v\n",
+		fmt.Printf("deployment_id=%s config=%s version=%d threshold=%d conflict_threshold=%d delay_slots=%d operators=%d paused=%v\n",
 			hex.EncodeToString(cfg.DeploymentID[:]),
 			a.Pubkey,
+			cfg.Version,
 			cfg.Threshold,
 			cfg.ConflictThreshold,
 			cfg.FinalizationDelaySlots,
@@ -1232,39 +1294,92 @@ func decodeCrpCheckpointV1(b []byte) (crpCheckpointV1, error) {
 	return out, nil
 }
 
-type crpConfigV1 struct {
-	Version                uint8
-	DeploymentID           [32]byte
-	Admin                  [32]byte
+type crpConfig struct {
+	Version uint8
+
+	DeploymentID           protocol.DeploymentID
+	Admin                  solana.Pubkey
 	Threshold              uint8
 	ConflictThreshold      uint8
 	FinalizationDelaySlots uint64
-	OperatorCount          uint8
-	Operators              [32][32]byte
-	Paused                 bool
+
+	OperatorRegistryProgram solana.Pubkey // v2 only; zero in v1.
+
+	OperatorCount uint8
+	Operators     [32]solana.Pubkey
+	Paused        bool
 }
 
-func decodeCrpConfigV1(b []byte) (crpConfigV1, error) {
-	const wantLen = 1 + 32 + 32 + 1 + 1 + 8 + 1 + (32 * 32) + 1
-	if len(b) < wantLen {
-		return crpConfigV1{}, fmt.Errorf("config too short: %d < %d", len(b), wantLen)
+func decodeCrpConfig(b []byte) (crpConfig, error) {
+	if len(b) < 1 {
+		return crpConfig{}, errors.New("empty config")
 	}
-
-	var out crpConfigV1
-	out.Version = b[0]
-	copy(out.DeploymentID[:], b[1:33])
-	copy(out.Admin[:], b[33:65])
-	out.Threshold = b[65]
-	out.ConflictThreshold = b[66]
-	out.FinalizationDelaySlots = binary.LittleEndian.Uint64(b[67:75])
-	out.OperatorCount = b[75]
-	off := 76
-	for i := 0; i < 32; i++ {
-		copy(out.Operators[i][:], b[off:off+32])
-		off += 32
+	switch b[0] {
+	case 1:
+		// V1:
+		//   version_u8 ||
+		//   deployment_id (32) ||
+		//   admin (32) ||
+		//   threshold_u8 ||
+		//   conflict_threshold_u8 ||
+		//   finalization_delay_slots_u64_le ||
+		//   operator_count_u8 ||
+		//   operators (32*32) ||
+		//   paused_u8
+		const wantLen = 1 + 32 + 32 + 1 + 1 + 8 + 1 + (32 * 32) + 1
+		if len(b) < wantLen {
+			return crpConfig{}, fmt.Errorf("config too short: %d < %d", len(b), wantLen)
+		}
+		var out crpConfig
+		out.Version = 1
+		copy(out.DeploymentID[:], b[1:33])
+		copy(out.Admin[:], b[33:65])
+		out.Threshold = b[65]
+		out.ConflictThreshold = b[66]
+		out.FinalizationDelaySlots = binary.LittleEndian.Uint64(b[67:75])
+		out.OperatorCount = b[75]
+		off := 76
+		for i := 0; i < 32; i++ {
+			copy(out.Operators[i][:], b[off:off+32])
+			off += 32
+		}
+		out.Paused = b[wantLen-1] != 0
+		return out, nil
+	case 2:
+		// V2:
+		//   version_u8 ||
+		//   deployment_id (32) ||
+		//   admin (32) ||
+		//   threshold_u8 ||
+		//   conflict_threshold_u8 ||
+		//   finalization_delay_slots_u64_le ||
+		//   operator_registry_program (32) ||
+		//   operator_count_u8 ||
+		//   operators (32*32) ||
+		//   paused_u8
+		const wantLen = 1101 + 32
+		if len(b) < wantLen {
+			return crpConfig{}, fmt.Errorf("config too short: %d < %d", len(b), wantLen)
+		}
+		var out crpConfig
+		out.Version = 2
+		copy(out.DeploymentID[:], b[1:33])
+		copy(out.Admin[:], b[33:65])
+		out.Threshold = b[65]
+		out.ConflictThreshold = b[66]
+		out.FinalizationDelaySlots = binary.LittleEndian.Uint64(b[67:75])
+		copy(out.OperatorRegistryProgram[:], b[75:107])
+		out.OperatorCount = b[107]
+		off := 108
+		for i := 0; i < 32; i++ {
+			copy(out.Operators[i][:], b[off:off+32])
+			off += 32
+		}
+		out.Paused = b[wantLen-1] != 0
+		return out, nil
+	default:
+		return crpConfig{}, fmt.Errorf("unknown crp config version: %d", b[0])
 	}
-	out.Paused = b[wantLen-1] != 0
-	return out, nil
 }
 
 func base64Std(b []byte) string {
@@ -1495,7 +1610,7 @@ func cmdRun(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("fetch config: %w", err)
 	}
-	cfg, err := decodeCrpConfigV1(cfgRaw)
+	cfg, err := decodeCrpConfig(cfgRaw)
 	if err != nil {
 		return fmt.Errorf("decode config: %w", err)
 	}
@@ -1664,6 +1779,17 @@ func cmdRun(argv []string) error {
 					Data: encodeCrpSubmitObservation(nextHeight, blockHash, orchardRoot, prevHash),
 				},
 			)
+			if cfg.Version == 2 && cfg.OperatorRegistryProgram != (solana.Pubkey{}) {
+				opRec, _, err := solana.FindProgramAddress(
+					[][]byte{[]byte("operator"), deploymentID[:], opPub[:]},
+					cfg.OperatorRegistryProgram,
+				)
+				if err != nil {
+					cancel()
+					return fmt.Errorf("derive operator record pda: %w", err)
+				}
+				ixs[len(ixs)-1].Accounts = append(ixs[len(ixs)-1].Accounts, solana.AccountMeta{Pubkey: opRec, IsSigner: false, IsWritable: false})
+			}
 
 			bhSol, err := rpc.LatestBlockhash(ctx)
 			if err != nil {
@@ -1757,6 +1883,7 @@ func cmdRun(argv []string) error {
 				signingBytes := obs.SigningBytes(deploymentID)
 
 				var edIxs []solana.Instruction
+				var signerPubs []solana.Pubkey
 				for _, priv := range finalizePrivs[:cfg.Threshold] {
 					pub := priv.Public().(ed25519.PublicKey)
 					var pk [32]byte
@@ -1765,6 +1892,7 @@ func cmdRun(argv []string) error {
 					var sig64 [64]byte
 					copy(sig64[:], sig)
 					edIxs = append(edIxs, solana.Ed25519VerifyInstruction(sig64, solana.Pubkey(pk), signingBytes))
+					signerPubs = append(signerPubs, solana.Pubkey(pk))
 				}
 
 				feeKeys := []string{
@@ -1800,7 +1928,7 @@ func cmdRun(argv []string) error {
 					ixs = append(ixs, solana.ComputeBudgetSetComputeUnitPrice(microLamports))
 				}
 				ixs = append(ixs, edIxs...)
-				ixs = append(ixs, solana.Instruction{
+				finalizeIx := solana.Instruction{
 					ProgramID: solana.Pubkey(crpProgram),
 					Accounts: []solana.AccountMeta{
 						{Pubkey: solana.Pubkey(payerPub), IsSigner: true, IsWritable: true},
@@ -1811,7 +1939,21 @@ func cmdRun(argv []string) error {
 						{Pubkey: solana.InstructionsSysvarID, IsSigner: false, IsWritable: false},
 					},
 					Data: encodeCrpFinalize(uint8(len(edIxs))),
-				})
+				}
+				if cfg.Version == 2 && cfg.OperatorRegistryProgram != (solana.Pubkey{}) {
+					for _, pk := range signerPubs {
+						opRec, _, err := solana.FindProgramAddress(
+							[][]byte{[]byte("operator"), deploymentID[:], pk[:]},
+							cfg.OperatorRegistryProgram,
+						)
+						if err != nil {
+							cancel()
+							return fmt.Errorf("derive operator record pda: %w", err)
+						}
+						finalizeIx.Accounts = append(finalizeIx.Accounts, solana.AccountMeta{Pubkey: opRec, IsSigner: false, IsWritable: false})
+					}
+				}
+				ixs = append(ixs, finalizeIx)
 
 				bhSol, err := rpc.LatestBlockhash(ctx)
 				if err != nil {
