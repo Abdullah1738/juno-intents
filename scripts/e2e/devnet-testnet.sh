@@ -971,7 +971,7 @@ WITNESS_B="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/hos
   --wallet "${WALLET_DAT}" \
   --txid "${txid_b}" \
   --action "${ACTION_B}" \
-  --unified-address "${SOLVER_UA}" \
+  --unified-address "${SOLVER_B_UA}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --fill-id "${FILL_ID_B}")"
 
@@ -1099,27 +1099,43 @@ echo "settling on Solana..." >&2
 spl_balance_amount() {
   local token_account="$1"
   local out
-  if ! out="$(spl-token -u "${SOLANA_RPC_URL}" balance --address "${token_account}" --output json-compact)"; then
+  if ! out="$(spl-token -u "${SOLANA_RPC_URL}" balance --address "${token_account}" --output json-compact 2>&1)"; then
     echo "spl-token balance failed for ${token_account}" >&2
+    printf '%s\n' "${out}" >&2
     return 1
   fi
-  python3 -c 'import json,sys
+  python3 - "$token_account" <<'PY' <<<"${out}"
+import json,sys
+token_account=sys.argv[1]
 raw=sys.stdin.read().strip()
 if not raw:
-  raise SystemExit("empty spl-token balance output")
-obj=json.loads(raw)
+  raise SystemExit(f"empty spl-token balance output for {token_account}")
+try:
+  obj=json.loads(raw)
+except Exception:
+  raise SystemExit(f"invalid spl-token balance json for {token_account}: {raw}")
 amt=obj.get("amount")
 if amt is None:
-  raise SystemExit("missing amount in balance output")
-print(str(amt))' <<<"${out}"
+  raise SystemExit(f"missing amount in balance output for {token_account}: {raw}")
+print(str(amt))
+PY
 }
 
 echo "verifying balances..." >&2
 creator_balance="$(spl_balance_amount "${CREATOR_TA}")"
 solver_balance="$(spl_balance_amount "${SOLVER_TA}")"
+solver2_balance="$(spl_balance_amount "${SOLVER2_TA}")"
 fee_balance="$(spl_balance_amount "${FEE_TA}")"
+for name in creator_balance solver_balance solver2_balance fee_balance; do
+  val="${!name:-}"
+  if [[ ! "${val}" =~ ^[0-9]+$ ]]; then
+    echo "invalid ${name}: ${val}" >&2
+    exit 1
+  fi
+done
 echo "creator_balance=${creator_balance}" >&2
 echo "solver_balance=${solver_balance}" >&2
+echo "solver2_balance=${solver2_balance}" >&2
 echo "fee_balance=${fee_balance}" >&2
 
 echo "e2e ok" >&2
