@@ -117,9 +117,7 @@ airdrop() {
 }
 
 parse_spl_pubkey_json() {
-  python3 - <<'PY'
-import json,re,sys
-
+  python3 -c 'import json,re,sys
 def find_base58(x):
   if isinstance(x, str) and re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", x):
     return x
@@ -134,28 +132,20 @@ def find_base58(x):
       if r:
         return r
   return None
-
-raw = sys.stdin.read()
-raw = raw.strip()
+raw=sys.stdin.read().strip()
 if not raw:
   raise SystemExit("empty spl-token output")
-
-# First try JSON (spl-token --output json/json-compact).
 try:
-  data = json.loads(raw)
-  pk = find_base58(data)
+  data=json.loads(raw)
+  pk=find_base58(data)
   if pk:
-    print(pk)
-    raise SystemExit(0)
+    print(pk); raise SystemExit(0)
 except Exception:
   pass
-
-# Fallback: extract the first base58-looking pubkey from plain text output.
-m = re.search(r"[1-9A-HJ-NP-Za-km-z]{32,44}", raw)
+m=re.search(r"[1-9A-HJ-NP-Za-km-z]{32,44}", raw)
 if not m:
   raise SystemExit("no base58 pubkey in output")
-print(m.group(0))
-PY
+print(m.group(0))'
 }
 
 DEPLOY_INFO="$(
