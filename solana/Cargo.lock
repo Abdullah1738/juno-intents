@@ -2473,6 +2473,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "juno-intents-operator-registry"
+version = "0.1.0"
+dependencies = [
+ "borsh 0.10.4",
+ "solana-program",
+ "solana-program-test",
+ "solana-sdk",
+ "tokio",
+]
+
+[[package]]
 name = "juno-intents-receipt-verifier"
 version = "0.1.0"
 dependencies = [
