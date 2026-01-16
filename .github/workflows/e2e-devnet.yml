@@ -44,6 +44,7 @@ env:
   RUST_TOOLCHAIN: 1.91.1
   RISC0_RUST_TOOLCHAIN: 1.91.1
   RZUP_VERSION: 0.5.1
+  SOLANA_CLI_VERSION: 3.1.6
   HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
   HELIUS_CLUSTER: devnet
   JUNO_E2E_NET_AMOUNT_A: ${{ github.event.inputs.net_amount_a }}
@@ -97,10 +98,16 @@ jobs:
       - name: Install Solana CLI
         run: |
           set -euo pipefail
-          if ! command -v solana >/dev/null; then
-            curl -sSfL --retry 8 --retry-delay 5 --retry-all-errors https://release.solana.com/stable/install | sh
+          SOLANA_DIR="$HOME/.local/share/solana/solana-release"
+          if [[ ! -x "${SOLANA_DIR}/bin/solana" ]]; then
+            rm -rf "${SOLANA_DIR}"
+            mkdir -p "$HOME/.local/share/solana"
+            curl -sSfL --retry 8 --retry-delay 5 --retry-all-errors \
+              "https://github.com/anza-xyz/agave/releases/download/v${SOLANA_CLI_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2" \
+              -o /tmp/solana-release.tar.bz2
+            tar -xjf /tmp/solana-release.tar.bz2 -C "$HOME/.local/share/solana"
           fi
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          echo "${SOLANA_DIR}/bin" >> "$GITHUB_PATH"
           solana --version
           spl-token --version
 
