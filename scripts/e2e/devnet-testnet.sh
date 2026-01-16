@@ -232,6 +232,9 @@ SOLVER_PUBKEY="$(solana-keygen pubkey "${SOLVER_KEYPAIR}")"
 CREATOR_PUBKEY="$(solana-keygen pubkey "${CREATOR_KEYPAIR}")"
 echo "solver_pubkey=${SOLVER_PUBKEY}" >&2
 echo "creator_pubkey=${CREATOR_PUBKEY}" >&2
+echo "solana_cli=$(solana --version)" >&2
+echo "spl_token_cli=$(spl-token --version)" >&2
+echo "solver_balance_lamports=$(solana -u \"${SOLANA_RPC_URL}\" balance \"${SOLVER_PUBKEY}\" --lamports | tr -d '\\r\\n')" >&2
 
 OP1_KEYPAIR="${SOLVER_KEYPAIR}"
 OP2_KEYPAIR="${CREATOR_KEYPAIR}"
@@ -253,8 +256,7 @@ if ! MINT_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-token --decimals 0 --ow
   printf '%s\n' "${MINT_OUT}" >&2
   exit 1
 fi
-MINT="$(printf '%s' "${MINT_OUT}" | parse_spl_pubkey_json)"
-if [[ -z "${MINT}" ]]; then
+if ! MINT="$(printf '%s' "${MINT_OUT}" | parse_spl_pubkey_json)"; then
   echo "failed to parse mint from spl-token output" >&2
   printf '%s\n' "${MINT_OUT}" >&2 || true
   exit 1
@@ -264,17 +266,26 @@ if ! SOLVER_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" 
   printf '%s\n' "${SOLVER_TA_OUT}" >&2
   exit 1
 fi
-SOLVER_TA="$(printf '%s' "${SOLVER_TA_OUT}" | parse_spl_pubkey_json)"
+if ! SOLVER_TA="$(printf '%s' "${SOLVER_TA_OUT}" | parse_spl_pubkey_json)"; then
+  printf '%s\n' "${SOLVER_TA_OUT}" >&2
+  exit 1
+fi
 if ! CREATOR_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${CREATOR_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact 2>&1)"; then
   printf '%s\n' "${CREATOR_TA_OUT}" >&2
   exit 1
 fi
-CREATOR_TA="$(printf '%s' "${CREATOR_TA_OUT}" | parse_spl_pubkey_json)"
+if ! CREATOR_TA="$(printf '%s' "${CREATOR_TA_OUT}" | parse_spl_pubkey_json)"; then
+  printf '%s\n' "${CREATOR_TA_OUT}" >&2
+  exit 1
+fi
 if ! FEE_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${FEE_COLLECTOR_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact 2>&1)"; then
   printf '%s\n' "${FEE_TA_OUT}" >&2
   exit 1
 fi
-FEE_TA="$(printf '%s' "${FEE_TA_OUT}" | parse_spl_pubkey_json)"
+if ! FEE_TA="$(printf '%s' "${FEE_TA_OUT}" | parse_spl_pubkey_json)"; then
+  printf '%s\n' "${FEE_TA_OUT}" >&2
+  exit 1
+fi
 for v in SOLVER_TA CREATOR_TA FEE_TA; do
   if [[ -z "${!v}" ]]; then
     echo "failed to parse ${v} from spl-token output" >&2
