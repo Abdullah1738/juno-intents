@@ -16,6 +16,7 @@ JUNOCASH_SHIELD_LIMIT="${JUNO_E2E_JUNOCASH_SHIELD_LIMIT:-10}"
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
 SOLVER_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER_KEYPAIR:-}"
+SOLVER2_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER2_KEYPAIR:-}"
 CREATOR_KEYPAIR_OVERRIDE="${JUNO_E2E_CREATOR_KEYPAIR:-}"
 
 CRP_OPERATOR1_KEYPAIR="${JUNO_E2E_CRP_OPERATOR1_KEYPAIR:-}"
@@ -35,6 +36,7 @@ Environment (optional):
   JUNO_E2E_JUNOCASH_SHIELD_LIMIT   (default: 10)
   JUNO_E2E_PRIORITY_LEVEL          (default: Medium)
   JUNO_E2E_SOLVER_KEYPAIR          (optional: funded Solana CLI JSON keypair path; skips airdrop)
+  JUNO_E2E_SOLVER2_KEYPAIR         (optional: funded Solana CLI JSON keypair path for second solver)
   JUNO_E2E_CREATOR_KEYPAIR         (optional: funded Solana CLI JSON keypair path; skips airdrop)
   JUNO_E2E_CRP_OPERATOR1_KEYPAIR   (optional: Solana CLI JSON keypair path for CRP operator #1)
   JUNO_E2E_CRP_OPERATOR2_KEYPAIR   (optional: Solana CLI JSON keypair path for CRP operator #2)
@@ -96,6 +98,10 @@ redact_url() {
 
 if [[ -n "${SOLVER_KEYPAIR_OVERRIDE}" && ! -f "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
   echo "solver keypair not found: ${SOLVER_KEYPAIR_OVERRIDE}" >&2
+  exit 2
+fi
+if [[ -n "${SOLVER2_KEYPAIR_OVERRIDE}" && ! -f "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then
+  echo "solver2 keypair not found: ${SOLVER2_KEYPAIR_OVERRIDE}" >&2
   exit 2
 fi
 if [[ -n "${CREATOR_KEYPAIR_OVERRIDE}" && ! -f "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
@@ -322,7 +328,16 @@ ts="$(date -u +%Y%m%dT%H%M%SZ)"
 WORKDIR="${ROOT}/tmp/e2e/devnet-testnet/${DEPLOYMENT_NAME}/${ts}"
 mkdir -p "${WORKDIR}"
 
+SOLVERNET1_PID=""
+SOLVERNET2_PID=""
+
 cleanup() {
+  if [[ -n "${SOLVERNET1_PID}" ]]; then
+    kill "${SOLVERNET1_PID}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${SOLVERNET2_PID}" ]]; then
+    kill "${SOLVERNET2_PID}" >/dev/null 2>&1 || true
+  fi
   "${JUNOCASH_DOWN}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -345,16 +360,24 @@ echo "junocash_shield_limit=${JUNOCASH_SHIELD_LIMIT}" >&2
 echo "building Go CLIs..." >&2
 GO_INTENTS="${WORKDIR}/juno-intents"
 GO_CRP="${WORKDIR}/crp-operator"
+GO_SOLVERNET="${WORKDIR}/solvernet"
 (cd "${ROOT}" && go build -o "${GO_INTENTS}" ./cmd/juno-intents)
 (cd "${ROOT}" && go build -o "${GO_CRP}" ./cmd/crp-operator)
+(cd "${ROOT}" && go build -o "${GO_SOLVERNET}" ./cmd/solvernet)
 
 echo "selecting Solana keypairs..." >&2
 SOLVER_KEYPAIR="${WORKDIR}/solver.json"
+SOLVER2_KEYPAIR="${WORKDIR}/solver2.json"
 CREATOR_KEYPAIR="${WORKDIR}/creator.json"
 if [[ -n "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
   SOLVER_KEYPAIR="${SOLVER_KEYPAIR_OVERRIDE}"
 else
   solana-keygen new --no-bip39-passphrase --silent --force -o "${SOLVER_KEYPAIR}"
+fi
+if [[ -n "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then
+  SOLVER2_KEYPAIR="${SOLVER2_KEYPAIR_OVERRIDE}"
+else
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${SOLVER2_KEYPAIR}"
 fi
 if [[ -n "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
   CREATOR_KEYPAIR="${CREATOR_KEYPAIR_OVERRIDE}"
@@ -362,8 +385,10 @@ else
   solana-keygen new --no-bip39-passphrase --silent --force -o "${CREATOR_KEYPAIR}"
 fi
 SOLVER_PUBKEY="$(solana-keygen pubkey "${SOLVER_KEYPAIR}")"
+SOLVER2_PUBKEY="$(solana-keygen pubkey "${SOLVER2_KEYPAIR}")"
 CREATOR_PUBKEY="$(solana-keygen pubkey "${CREATOR_KEYPAIR}")"
 echo "solver_pubkey=${SOLVER_PUBKEY}" >&2
+echo "solver2_pubkey=${SOLVER2_PUBKEY}" >&2
 echo "creator_pubkey=${CREATOR_PUBKEY}" >&2
 echo "solana_cli=$(solana --version)" >&2
 echo "spl_token_cli=$(spl-token --version)" >&2
@@ -377,23 +402,32 @@ OP2_KEYPAIR="${CREATOR_KEYPAIR}"
 if [[ -n "${CRP_OPERATOR1_KEYPAIR}" ]]; then OP1_KEYPAIR="${CRP_OPERATOR1_KEYPAIR}"; fi
 if [[ -n "${CRP_OPERATOR2_KEYPAIR}" ]]; then OP2_KEYPAIR="${CRP_OPERATOR2_KEYPAIR}"; fi
 
-if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" || -z "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
+if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" || -z "${SOLVER2_KEYPAIR_OVERRIDE}" || -z "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
   echo "funding Solana keypairs via devnet airdrop..." >&2
 fi
 if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
   airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
+fi
+if [[ -z "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then
+  airdrop "${SOLVER2_PUBKEY}" 2 "${SOLVER2_KEYPAIR}"
 fi
 if [[ -z "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
   airdrop "${CREATOR_PUBKEY}" 2 "${CREATOR_KEYPAIR}"
 fi
 
 min_solver_lamports="${JUNO_E2E_MIN_SOLVER_LAMPORTS:-1500000000}"
+min_solver2_lamports="${JUNO_E2E_MIN_SOLVER2_LAMPORTS:-500000000}"
 min_creator_lamports="${JUNO_E2E_MIN_CREATOR_LAMPORTS:-500000000}"
 solver_balance_now="$(solana -u "${SOLANA_RPC_URL}" balance "${SOLVER_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
+solver2_balance_now="$(solana -u "${SOLANA_RPC_URL}" balance "${SOLVER2_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
 creator_balance_now="$(solana -u "${SOLANA_RPC_URL}" balance "${CREATOR_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
 if [[ "${solver_balance_now}" =~ ^[0-9]+$ && "${solver_balance_now}" -lt "${min_solver_lamports}" ]]; then
   echo "solver balance low (${solver_balance_now} lamports); airdropping 2 SOL..." >&2
   airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
+fi
+if [[ "${solver2_balance_now}" =~ ^[0-9]+$ && "${solver2_balance_now}" -lt "${min_solver2_lamports}" ]]; then
+  echo "solver2 balance low (${solver2_balance_now} lamports); airdropping 2 SOL..." >&2
+  airdrop "${SOLVER2_PUBKEY}" 2 "${SOLVER2_KEYPAIR}"
 fi
 if [[ "${creator_balance_now}" =~ ^[0-9]+$ && "${creator_balance_now}" -lt "${min_creator_lamports}" ]]; then
   echo "creator balance low (${creator_balance_now} lamports); airdropping 2 SOL..." >&2
@@ -416,6 +450,7 @@ if [[ -n "${MINT_SIG}" ]]; then
 fi
 
 SOLVER_TA="$(ata_for "${SOLVER_PUBKEY}" "${MINT}")"
+SOLVER2_TA="$(ata_for "${SOLVER2_PUBKEY}" "${MINT}")"
 CREATOR_TA="$(ata_for "${CREATOR_PUBKEY}" "${MINT}")"
 FEE_TA="$(ata_for "${FEE_COLLECTOR_PUBKEY}" "${MINT}")"
 
@@ -426,6 +461,14 @@ fi
 SOLVER_TA_SIG="$(parse_spl_signature <<<"${SOLVER_TA_OUT}" || true)"
 if [[ -n "${SOLVER_TA_SIG}" ]]; then
   confirm_sig "${SOLVER_TA_SIG}" 60
+fi
+if ! SOLVER2_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${SOLVER2_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact 2>&1)"; then
+  printf '%s\n' "${SOLVER2_TA_OUT}" >&2
+  exit 1
+fi
+SOLVER2_TA_SIG="$(parse_spl_signature <<<"${SOLVER2_TA_OUT}" || true)"
+if [[ -n "${SOLVER2_TA_SIG}" ]]; then
+  confirm_sig "${SOLVER2_TA_SIG}" 60
 fi
 if ! CREATOR_TA_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-account "${MINT}" --owner "${CREATOR_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact 2>&1)"; then
   printf '%s\n' "${CREATOR_TA_OUT}" >&2
@@ -446,11 +489,12 @@ fi
 
 echo "mint=${MINT}" >&2
 echo "solver_ta=${SOLVER_TA}" >&2
+echo "solver2_ta=${SOLVER2_TA}" >&2
 echo "creator_ta=${CREATOR_TA}" >&2
 echo "fee_ta=${FEE_TA}" >&2
 
 echo "minting tokens..." >&2
-for target in "${SOLVER_TA}" "${CREATOR_TA}"; do
+for target in "${SOLVER_TA}" "${SOLVER2_TA}" "${CREATOR_TA}"; do
   ok=0
   last_err=""
   for _ in $(seq 1 120); do
@@ -478,10 +522,100 @@ fi
 EXPIRY_SLOT="$((slot + 5000))"
 echo "expiry_slot=${EXPIRY_SLOT}" >&2
 
+echo "starting solvernet quote servers..." >&2
+SOLVERNET1_LISTEN="${JUNO_E2E_SOLVERNET1_LISTEN:-127.0.0.1:8081}"
+SOLVERNET2_LISTEN="${JUNO_E2E_SOLVERNET2_LISTEN:-127.0.0.1:8082}"
+SOLVERNET1_QUOTE_URL="http://${SOLVERNET1_LISTEN}/v1/quote"
+SOLVERNET2_QUOTE_URL="http://${SOLVERNET2_LISTEN}/v1/quote"
+SOLVERNET1_ANN_URL="http://${SOLVERNET1_LISTEN}/v1/announcement"
+SOLVERNET2_ANN_URL="http://${SOLVERNET2_LISTEN}/v1/announcement"
+
+SOLVERNET1_PRICE="${JUNO_E2E_SOLVERNET1_PRICE_ZAT_PER_UNIT:-100000}"
+SOLVERNET1_SPREAD="${JUNO_E2E_SOLVERNET1_SPREAD_BPS:-0}"
+SOLVERNET2_PRICE="${JUNO_E2E_SOLVERNET2_PRICE_ZAT_PER_UNIT:-110000}"
+SOLVERNET2_SPREAD="${JUNO_E2E_SOLVERNET2_SPREAD_BPS:-500}"
+
+"${GO_SOLVERNET}" serve \
+  --listen "${SOLVERNET1_LISTEN}" \
+  --deployment-id "${DEPLOYMENT_ID_HEX}" \
+  --quote-url "${SOLVERNET1_QUOTE_URL}" \
+  --price-zat-per-token-unit "${SOLVERNET1_PRICE}" \
+  --spread-bps "${SOLVERNET1_SPREAD}" \
+  --keypair "${SOLVER_KEYPAIR}" \
+  --priority-level "${PRIORITY_LEVEL}" \
+  >"${WORKDIR}/solvernet1.log" 2>&1 &
+SOLVERNET1_PID="$!"
+
+"${GO_SOLVERNET}" serve \
+  --listen "${SOLVERNET2_LISTEN}" \
+  --deployment-id "${DEPLOYMENT_ID_HEX}" \
+  --quote-url "${SOLVERNET2_QUOTE_URL}" \
+  --price-zat-per-token-unit "${SOLVERNET2_PRICE}" \
+  --spread-bps "${SOLVERNET2_SPREAD}" \
+  --keypair "${SOLVER2_KEYPAIR}" \
+  --priority-level "${PRIORITY_LEVEL}" \
+  >"${WORKDIR}/solvernet2.log" 2>&1 &
+SOLVERNET2_PID="$!"
+
+for _ in $(seq 1 60); do
+  if curl -fsS "${SOLVERNET1_ANN_URL}" >/dev/null 2>&1 && curl -fsS "${SOLVERNET2_ANN_URL}" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+if ! curl -fsS "${SOLVERNET1_ANN_URL}" >/dev/null 2>&1; then
+  echo "solvernet1 announcement not reachable: ${SOLVERNET1_ANN_URL}" >&2
+  exit 1
+fi
+if ! curl -fsS "${SOLVERNET2_ANN_URL}" >/dev/null 2>&1; then
+  echo "solvernet2 announcement not reachable: ${SOLVERNET2_ANN_URL}" >&2
+  exit 1
+fi
+
 echo "starting JunoCash ${JUNOCASH_CHAIN} docker harness..." >&2
 "${JUNOCASH_UP}" >/dev/null
 
 jcli() { "${JUNOCASH_CLI}" "$@"; }
+
+zat_to_junocash_amount() {
+  local zat="$1"
+  python3 - "$zat" <<'PY'
+import sys
+zat=int(sys.argv[1])
+coin=100000000
+whole=zat//coin
+frac=zat%coin
+print(f"{whole}.{frac:08d}")
+PY
+}
+
+rfq_best() {
+  # Prints: solver_pubkey_base58 <space> amount_zat_u64
+  python3 - <<'PY'
+import json,sys
+items=json.load(sys.stdin)
+if not items:
+  raise SystemExit("no quotes")
+q=items[0]["signed"]["quote"]
+print(q["solver_pubkey"], q["junocash_amount_required"])
+PY
+}
+
+select_solver_by_pubkey() {
+  local solver_pubkey="$1"
+  case "${solver_pubkey}" in
+    "${SOLVER_PUBKEY}")
+      echo "${SOLVER_KEYPAIR} ${SOLVER_TA} ${SOLVER1_ACCOUNT} ${SOLVER1_UA}"
+      ;;
+    "${SOLVER2_PUBKEY}")
+      echo "${SOLVER2_KEYPAIR} ${SOLVER2_TA} ${SOLVER2_ACCOUNT} ${SOLVER2_UA}"
+      ;;
+    *)
+      echo "unknown solver pubkey: ${solver_pubkey}" >&2
+      return 1
+      ;;
+  esac
+}
 
 wait_for_op_txid() {
   local opid="$1"
@@ -542,13 +676,17 @@ fi
 
 echo "creating JunoCash accounts + orchard UAs..." >&2
 USER_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
-SOLVER_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
+SOLVER1_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
+SOLVER2_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
 USER_UA="$(jcli z_getaddressforaccount "${USER_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
-SOLVER_UA="$(jcli z_getaddressforaccount "${SOLVER_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
+SOLVER1_UA="$(jcli z_getaddressforaccount "${SOLVER1_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
+SOLVER2_UA="$(jcli z_getaddressforaccount "${SOLVER2_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
 echo "user_account=${USER_ACCOUNT}" >&2
-echo "solver_account=${SOLVER_ACCOUNT}" >&2
+echo "solver1_account=${SOLVER1_ACCOUNT}" >&2
+echo "solver2_account=${SOLVER2_ACCOUNT}" >&2
 echo "user_ua=${USER_UA}" >&2
-echo "solver_ua=${SOLVER_UA}" >&2
+echo "solver1_ua=${SOLVER1_UA}" >&2
+echo "solver2_ua=${SOLVER2_UA}" >&2
 
 echo "shielding coinbase to user orchard UA..." >&2
 opid="$(jcli z_shieldcoinbase "*" "${USER_UA}" null "${JUNOCASH_SHIELD_LIMIT}" | parse_junocash_opid)"
@@ -622,8 +760,27 @@ echo "intent_a=${INTENT_A}" >&2
 FILL_ID_A="$("${GO_INTENTS}" iep-pdas --deployment "${DEPLOYMENT_NAME}" --deployment-file "${DEPLOYMENT_FILE}" --intent "${INTENT_A}" --print fill-id-hex)"
 echo "fill_id_a=${FILL_ID_A}" >&2
 
-echo "sending JunoCash payment user->solver (amount=${JUNOCASH_SEND_AMOUNT_A})..." >&2
-recipients_a="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_UA}" "${JUNOCASH_SEND_AMOUNT_A}")"
+echo "requesting solver quotes (A)..." >&2
+rfq_a="$("${GO_SOLVERNET}" rfq \
+  --deployment-id "${DEPLOYMENT_ID_HEX}" \
+  --direction A \
+  --mint "${MINT}" \
+  --net-amount "${NET_AMOUNT_A}" \
+  --solana-recipient "${CREATOR_PUBKEY}" \
+  --intent-expiry-slot "${EXPIRY_SLOT}" \
+  --announcement-url "${SOLVERNET1_ANN_URL}" \
+  --announcement-url "${SOLVERNET2_ANN_URL}" \
+  2>/dev/null)"
+printf '%s\n' "${rfq_a}" >"${WORKDIR}/rfq_a.json"
+read -r SOLVER_A_PUBKEY AMOUNT_A_ZAT <<<"$(rfq_best <<<"${rfq_a}")"
+read -r SOLVER_A_KEYPAIR SOLVER_A_TA SOLVER_A_ACCOUNT SOLVER_A_UA <<<"$(select_solver_by_pubkey "${SOLVER_A_PUBKEY}")"
+PAYMENT_AMOUNT_A_STR="$(zat_to_junocash_amount "${AMOUNT_A_ZAT}")"
+echo "solver_a_pubkey=${SOLVER_A_PUBKEY}" >&2
+echo "solver_a_ua=${SOLVER_A_UA}" >&2
+echo "quote_amount_a_zat=${AMOUNT_A_ZAT} (${PAYMENT_AMOUNT_A_STR})" >&2
+
+echo "sending JunoCash payment user->solver (amount=${PAYMENT_AMOUNT_A_STR})..." >&2
+recipients_a="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_A_UA}" "${PAYMENT_AMOUNT_A_STR}")"
 opid_a="$(jcli z_sendmany "${USER_UA}" "${recipients_a}" "${JUNOCASH_SEND_MINCONF}" | parse_junocash_opid)"
 
 echo "waiting for sendmany operation (A)..." >&2
@@ -660,7 +817,7 @@ for n in notes:
   print(n.get("outindex"))
   sys.exit(0)
 sys.exit(1)
-' "${txid_a}" "${SOLVER_ACCOUNT}")" && break || true
+' "${txid_a}" "${SOLVER_A_ACCOUNT}")" && break || true
     sleep 1
   done
   if [[ -z "${ACTION_A}" ]]; then
@@ -682,6 +839,10 @@ INPUTS_A="$("${GO_INTENTS}" receipt-inputs --witness-hex "${WITNESS_A}" --json=f
 AMOUNT_A="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^amount=([0-9]+)$/\1/p' | head -n 1)"
 RECEIVER_TAG_A="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^receiver_tag=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
 ORCHARD_ROOT_A="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^orchard_root=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
+if [[ -n "${AMOUNT_A_ZAT:-}" && "${AMOUNT_A}" != "${AMOUNT_A_ZAT}" ]]; then
+  echo "quote/witness amount mismatch (A): quote=${AMOUNT_A_ZAT} witness=${AMOUNT_A}" >&2
+  exit 1
+fi
 echo "orchard_root_a=${ORCHARD_ROOT_A}" >&2
 echo "receiver_tag_a=${RECEIVER_TAG_A}" >&2
 echo "junocash_amount_a_zat=${AMOUNT_A}" >&2
@@ -722,9 +883,44 @@ echo "intent_b=${INTENT_B}" >&2
 FILL_ID_B="$("${GO_INTENTS}" iep-pdas --deployment "${DEPLOYMENT_NAME}" --deployment-file "${DEPLOYMENT_FILE}" --intent "${INTENT_B}" --print fill-id-hex)"
 echo "fill_id_b=${FILL_ID_B}" >&2
 
-echo "sending JunoCash payment solver->user (amount=${JUNOCASH_SEND_AMOUNT_B})..." >&2
-recipients_b="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${USER_UA}" "${JUNOCASH_SEND_AMOUNT_B}")"
-opid_b="$(jcli z_sendmany "${SOLVER_UA}" "${recipients_b}" "${JUNOCASH_SEND_MINCONF}" | parse_junocash_opid)"
+echo "requesting solver quotes (B)..." >&2
+rfq_b="$("${GO_SOLVERNET}" rfq \
+  --deployment-id "${DEPLOYMENT_ID_HEX}" \
+  --direction B \
+  --mint "${MINT}" \
+  --net-amount "${NET_AMOUNT_B}" \
+  --solana-recipient "${CREATOR_PUBKEY}" \
+  --intent-expiry-slot "${EXPIRY_SLOT}" \
+  --announcement-url "${SOLVERNET1_ANN_URL}" \
+  --announcement-url "${SOLVERNET2_ANN_URL}" \
+  2>/dev/null)"
+printf '%s\n' "${rfq_b}" >"${WORKDIR}/rfq_b.json"
+read -r SOLVER_B_PUBKEY AMOUNT_B_ZAT <<<"$(rfq_best <<<"${rfq_b}")"
+read -r SOLVER_B_KEYPAIR SOLVER_B_TA SOLVER_B_ACCOUNT SOLVER_B_UA <<<"$(select_solver_by_pubkey "${SOLVER_B_PUBKEY}")"
+PAYMENT_AMOUNT_B_STR="$(zat_to_junocash_amount "${AMOUNT_B_ZAT}")"
+echo "solver_b_pubkey=${SOLVER_B_PUBKEY}" >&2
+echo "solver_b_ua=${SOLVER_B_UA}" >&2
+echo "quote_amount_b_zat=${AMOUNT_B_ZAT} (${PAYMENT_AMOUNT_B_STR})" >&2
+
+if [[ "${SOLVER_B_UA}" != "${SOLVER_A_UA}" ]]; then
+  echo "funding solver B from user (so it can pay on JunoCash)..." >&2
+  fund_zat="$((AMOUNT_B_ZAT + 20000000))"
+  fund_str="$(zat_to_junocash_amount "${fund_zat}")"
+  recipients_fund="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_B_UA}" "${fund_str}")"
+  opid_fund="$(jcli z_sendmany "${USER_UA}" "${recipients_fund}" "${JUNOCASH_SEND_MINCONF}" | parse_junocash_opid)"
+  txid_fund="$(wait_for_op_txid "${opid_fund}" 1800)"
+  echo "txid_fund_b=${txid_fund}" >&2
+  echo "mining block to include funding tx (B)..." >&2
+  if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+    jcli generate 1 >/dev/null
+  else
+    scripts/junocash/testnet/mine.sh 1 >/dev/null
+  fi
+fi
+
+echo "sending JunoCash payment solver->user (amount=${PAYMENT_AMOUNT_B_STR})..." >&2
+recipients_b="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${USER_UA}" "${PAYMENT_AMOUNT_B_STR}")"
+opid_b="$(jcli z_sendmany "${SOLVER_B_UA}" "${recipients_b}" "${JUNOCASH_SEND_MINCONF}" | parse_junocash_opid)"
 
 echo "waiting for sendmany operation (B)..." >&2
 txid_b="$(wait_for_op_txid "${opid_b}" 1800)"
@@ -783,6 +979,10 @@ INPUTS_B="$("${GO_INTENTS}" receipt-inputs --witness-hex "${WITNESS_B}" --json=f
 AMOUNT_B="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^amount=([0-9]+)$/\1/p' | head -n 1)"
 RECEIVER_TAG_B="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^receiver_tag=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
 ORCHARD_ROOT_B="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^orchard_root=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
+if [[ -n "${AMOUNT_B_ZAT:-}" && "${AMOUNT_B}" != "${AMOUNT_B_ZAT}" ]]; then
+  echo "quote/witness amount mismatch (B): quote=${AMOUNT_B_ZAT} witness=${AMOUNT_B}" >&2
+  exit 1
+fi
 echo "orchard_root_b=${ORCHARD_ROOT_B}" >&2
 echo "receiver_tag_b=${RECEIVER_TAG_B}" >&2
 echo "junocash_amount_b_zat=${AMOUNT_B}" >&2
@@ -841,8 +1041,8 @@ echo "filling intents on Solana..." >&2
   --mint "${MINT}" \
   --receiver-tag "${RECEIVER_TAG_A}" \
   --junocash-amount "${AMOUNT_A}" \
-  --solver-keypair "${SOLVER_KEYPAIR}" \
-  --solver-source-token-account "${SOLVER_TA}" \
+  --solver-keypair "${SOLVER_A_KEYPAIR}" \
+  --solver-source-token-account "${SOLVER_A_TA}" \
   --priority-level "${PRIORITY_LEVEL}" >/dev/null
 
 "${GO_INTENTS}" iep-fill \
@@ -852,8 +1052,8 @@ echo "filling intents on Solana..." >&2
   --mint "${MINT}" \
   --receiver-tag "${RECEIVER_TAG_B}" \
   --junocash-amount "${AMOUNT_B}" \
-  --solver-keypair "${SOLVER_KEYPAIR}" \
-  --solver-destination-token-account "${SOLVER_TA}" \
+  --solver-keypair "${SOLVER_B_KEYPAIR}" \
+  --solver-destination-token-account "${SOLVER_B_TA}" \
   --priority-level "${PRIORITY_LEVEL}" >/dev/null
 
 echo "proving Groth16 bundles (CUDA)..." >&2
@@ -890,7 +1090,7 @@ echo "settling on Solana..." >&2
   --deployment-file "${DEPLOYMENT_FILE}" \
   --intent "${INTENT_B}" \
   --mint "${MINT}" \
-  --recipient-token-account "${SOLVER_TA}" \
+  --recipient-token-account "${SOLVER_B_TA}" \
   --fee-token-account "${FEE_TA}" \
   --bundle-hex "${BUNDLE_B}" \
   --payer-keypair "${SOLVER_KEYPAIR}" \
