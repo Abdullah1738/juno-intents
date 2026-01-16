@@ -599,6 +599,7 @@ echo "=== Direction A (JunoCash -> Solana) ===" >&2
 create_intent_a_raw=""
 if ! create_intent_a_raw="$("${GO_INTENTS}" iep-create-intent \
   --deployment "${DEPLOYMENT_NAME}" \
+  --deployment-file "${DEPLOYMENT_FILE}" \
   --mint "${MINT}" \
   --solana-recipient "${CREATOR_PUBKEY}" \
   --net-amount "${NET_AMOUNT_A}" \
@@ -618,7 +619,7 @@ if [[ -z "${INTENT_A}" ]]; then
 fi
 echo "intent_a=${INTENT_A}" >&2
 
-FILL_ID_A="$("${GO_INTENTS}" iep-pdas --deployment "${DEPLOYMENT_NAME}" --intent "${INTENT_A}" --print fill-id-hex)"
+FILL_ID_A="$("${GO_INTENTS}" iep-pdas --deployment "${DEPLOYMENT_NAME}" --deployment-file "${DEPLOYMENT_FILE}" --intent "${INTENT_A}" --print fill-id-hex)"
 echo "fill_id_a=${FILL_ID_A}" >&2
 
 echo "sending JunoCash payment user->solver (amount=${JUNOCASH_SEND_AMOUNT_A})..." >&2
@@ -697,6 +698,7 @@ echo "=== Direction B (Solana -> JunoCash) ===" >&2
 create_intent_b_raw=""
 if ! create_intent_b_raw="$("${GO_INTENTS}" iep-create-intent \
   --deployment "${DEPLOYMENT_NAME}" \
+  --deployment-file "${DEPLOYMENT_FILE}" \
   --mint "${MINT}" \
   --solana-recipient "${CREATOR_PUBKEY}" \
   --net-amount "${NET_AMOUNT_B}" \
@@ -717,7 +719,7 @@ if [[ -z "${INTENT_B}" ]]; then
 fi
 echo "intent_b=${INTENT_B}" >&2
 
-FILL_ID_B="$("${GO_INTENTS}" iep-pdas --deployment "${DEPLOYMENT_NAME}" --intent "${INTENT_B}" --print fill-id-hex)"
+FILL_ID_B="$("${GO_INTENTS}" iep-pdas --deployment "${DEPLOYMENT_NAME}" --deployment-file "${DEPLOYMENT_FILE}" --intent "${INTENT_B}" --print fill-id-hex)"
 echo "fill_id_b=${FILL_ID_B}" >&2
 
 echo "sending JunoCash payment solver->user (amount=${JUNOCASH_SEND_AMOUNT_B})..." >&2
@@ -834,6 +836,7 @@ fi
 echo "filling intents on Solana..." >&2
 "${GO_INTENTS}" iep-fill \
   --deployment "${DEPLOYMENT_NAME}" \
+  --deployment-file "${DEPLOYMENT_FILE}" \
   --intent "${INTENT_A}" \
   --mint "${MINT}" \
   --receiver-tag "${RECEIVER_TAG_A}" \
@@ -844,6 +847,7 @@ echo "filling intents on Solana..." >&2
 
 "${GO_INTENTS}" iep-fill \
   --deployment "${DEPLOYMENT_NAME}" \
+  --deployment-file "${DEPLOYMENT_FILE}" \
   --intent "${INTENT_B}" \
   --mint "${MINT}" \
   --receiver-tag "${RECEIVER_TAG_B}" \
@@ -872,6 +876,7 @@ fi
 echo "settling on Solana..." >&2
 "${GO_INTENTS}" iep-settle \
   --deployment "${DEPLOYMENT_NAME}" \
+  --deployment-file "${DEPLOYMENT_FILE}" \
   --intent "${INTENT_A}" \
   --mint "${MINT}" \
   --recipient-token-account "${CREATOR_TA}" \
@@ -882,6 +887,7 @@ echo "settling on Solana..." >&2
 
 "${GO_INTENTS}" iep-settle \
   --deployment "${DEPLOYMENT_NAME}" \
+  --deployment-file "${DEPLOYMENT_FILE}" \
   --intent "${INTENT_B}" \
   --mint "${MINT}" \
   --recipient-token-account "${SOLVER_TA}" \
