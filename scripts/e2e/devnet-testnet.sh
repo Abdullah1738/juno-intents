@@ -170,6 +170,17 @@ PY
   return 1
 }
 
+solana_balance_lamports() {
+  local pubkey="$1"
+  local raw
+  raw="$(solana -u "${SOLANA_RPC_URL}" balance "${pubkey}" --lamports 2>/dev/null || true)"
+  python3 -c 'import re,sys
+raw=sys.stdin.read()
+m=re.search(r"(\\d+)", raw)
+print(m.group(1) if m else "0")
+' <<<"${raw}"
+}
+
 parse_spl_address() {
   python3 -c 'import json,re,sys
 raw=sys.stdin.read().strip()
@@ -384,9 +395,9 @@ echo "solver2_pubkey=${SOLVER2_PUBKEY}" >&2
 echo "creator_pubkey=${CREATOR_PUBKEY}" >&2
 echo "solana_cli=$(solana --version)" >&2
 echo "spl_token_cli=$(spl-token --version)" >&2
-solver_balance_lamports="$(solana -u "${SOLANA_RPC_URL}" balance "${SOLVER_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
+solver_balance_lamports="$(solana_balance_lamports "${SOLVER_PUBKEY}")"
 echo "solver_balance_lamports=${solver_balance_lamports:-unknown}" >&2
-creator_balance_lamports="$(solana -u "${SOLANA_RPC_URL}" balance "${CREATOR_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
+creator_balance_lamports="$(solana_balance_lamports "${CREATOR_PUBKEY}")"
 echo "creator_balance_lamports=${creator_balance_lamports:-unknown}" >&2
 
 OP1_KEYPAIR="${SOLVER_KEYPAIR}"
@@ -407,12 +418,9 @@ fi
 min_solver_lamports="${JUNO_E2E_MIN_SOLVER_LAMPORTS:-1500000000}"
 min_solver2_lamports="${JUNO_E2E_MIN_SOLVER2_LAMPORTS:-500000000}"
 min_creator_lamports="${JUNO_E2E_MIN_CREATOR_LAMPORTS:-500000000}"
-solver_balance_now="$(solana -u "${SOLANA_RPC_URL}" balance "${SOLVER_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
-solver2_balance_now="$(solana -u "${SOLANA_RPC_URL}" balance "${SOLVER2_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
-creator_balance_now="$(solana -u "${SOLANA_RPC_URL}" balance "${CREATOR_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
-if [[ ! "${solver_balance_now}" =~ ^[0-9]+$ ]]; then solver_balance_now="0"; fi
-if [[ ! "${solver2_balance_now}" =~ ^[0-9]+$ ]]; then solver2_balance_now="0"; fi
-if [[ ! "${creator_balance_now}" =~ ^[0-9]+$ ]]; then creator_balance_now="0"; fi
+solver_balance_now="$(solana_balance_lamports "${SOLVER_PUBKEY}")"
+solver2_balance_now="$(solana_balance_lamports "${SOLVER2_PUBKEY}")"
+creator_balance_now="$(solana_balance_lamports "${CREATOR_PUBKEY}")"
 if [[ "${solver_balance_now}" =~ ^[0-9]+$ && "${solver_balance_now}" -lt "${min_solver_lamports}" ]]; then
   echo "solver balance low (${solver_balance_now} lamports); airdropping 2 SOL..." >&2
   airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
@@ -424,7 +432,11 @@ if [[ "${solver2_balance_now}" -lt "${min_solver2_lamports}" ]]; then
       printf '%s\n' "${tx_out}" >&2
       exit 1
     }
-    sig="$(printf '%s\n' "${tx_out}" | python3 -c 'import re,sys; raw=sys.stdin.read(); m=re.search(r\"[1-9A-HJ-NP-Za-km-z]{80,100}\", raw); print(m.group(0) if m else \"\")')"
+    sig="$(printf '%s\n' "${tx_out}" | python3 -c 'import re,sys
+raw=sys.stdin.read()
+m=re.search(r"[1-9A-HJ-NP-Za-km-z]{80,100}", raw)
+print(m.group(0) if m else "")
+')"
     if [[ -n "${sig}" ]]; then
       confirm_sig "${sig}" 60
     fi
