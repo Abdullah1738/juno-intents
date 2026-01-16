@@ -966,6 +966,33 @@ if [[ "${SOLVER_B_UA}" != "${SOLVER_A_UA}" ]]; then
   else
     scripts/junocash/testnet/mine.sh 1 >/dev/null
   fi
+
+  echo "waiting for solver B orchard note to become spendable..." >&2
+  FUND_ACTION_B=""
+  for _ in $(seq 1 120); do
+    FUND_ACTION_B="$(jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys
+txid=sys.argv[1].strip().lower()
+acct=int(sys.argv[2])
+notes=json.load(sys.stdin)
+for n in notes:
+  if str(n.get("pool",""))!="orchard":
+    continue
+  if str(n.get("txid","")).strip().lower()!=txid:
+    continue
+  if n.get("account")!=acct:
+    continue
+  if not n.get("spendable"):
+    continue
+  print(n.get("outindex"))
+  sys.exit(0)
+sys.exit(1)
+' "${txid_fund}" "${SOLVER_B_ACCOUNT}")" && break || true
+    sleep 1
+  done
+  if [[ -z "${FUND_ACTION_B}" ]]; then
+    echo "solver B funding note did not become spendable" >&2
+    exit 1
+  fi
 fi
 
 echo "sending JunoCash payment solver->user (amount=${PAYMENT_AMOUNT_B_STR})..." >&2
