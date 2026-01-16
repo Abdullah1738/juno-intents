@@ -205,28 +205,15 @@ func (c *Client) AccountDataBase64(ctx context.Context, pubkey string) ([]byte, 
 }
 
 func (c *Client) AddressLookupTableAddresses(ctx context.Context, table solana.Pubkey) ([]solana.Pubkey, error) {
-	var resp struct {
-		Value *struct {
-			State struct {
-				Addresses []string `json:"addresses"`
-			} `json:"state"`
-		} `json:"value"`
-	}
-	if err := c.rpcCall(ctx, "getAddressLookupTable", []any{table.Base58(), map[string]any{"commitment": "finalized"}}, &resp); err != nil {
+	raw, err := c.AccountDataBase64(ctx, table.Base58())
+	if err != nil {
 		return nil, err
 	}
-	if resp.Value == nil {
-		return nil, errors.New("lookup table not found")
+	addrs, err := solana.ParseAddressLookupTableAddresses(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse address lookup table: %w", err)
 	}
-	out := make([]solana.Pubkey, 0, len(resp.Value.State.Addresses))
-	for _, s := range resp.Value.State.Addresses {
-		pk, err := solana.ParsePubkey(s)
-		if err != nil {
-			return nil, fmt.Errorf("invalid lookup table address %q: %w", s, err)
-		}
-		out = append(out, pk)
-	}
-	return out, nil
+	return addrs, nil
 }
 
 func (c *Client) Slot(ctx context.Context) (uint64, error) {
