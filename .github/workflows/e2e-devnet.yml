@@ -186,7 +186,6 @@ jobs:
           echo "HELIUS_API_KEY=${key}" >> "$GITHUB_ENV"
           echo "HELIUS_CLUSTER=devnet" >> "$GITHUB_ENV"
           echo "HELIUS_RPC_URL=${devnet_url}" >> "$GITHUB_ENV"
-          echo "SOLANA_RPC_URL=${devnet_url}" >> "$GITHUB_ENV"
 
       - name: Run devnet e2e (both directions)
         env:
