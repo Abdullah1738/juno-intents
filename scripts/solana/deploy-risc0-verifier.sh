@@ -311,11 +311,30 @@ solana -u "${RPC_URL}" program set-upgrade-authority "${G16_PROGRAM_ID}" \
   --keypair "${PAYER_KEYPAIR}"
 
 echo "initializing router PDA + registering verifier selector ${SELECTOR}..." >&2
-(cd "${ROOT}" && SOLANA_RPC_URL="${RPC_URL}" go run ./cmd/juno-intents init-risc0-verifier \
-  --verifier-router-program-id "${VR_PROGRAM_ID}" \
-  --verifier-program-id "${G16_PROGRAM_ID}" \
-  --selector "${SELECTOR}" \
-  --payer-keypair "${PAYER_KEYPAIR}") >/dev/null
+router_initialized="false"
+if solana -u "${RPC_URL}" account "${ROUTER_PDA}" --output json --keypair "${PAYER_KEYPAIR}" >/dev/null 2>&1 && \
+   solana -u "${RPC_URL}" account "${ENTRY_PDA}" --output json --keypair "${PAYER_KEYPAIR}" >/dev/null 2>&1; then
+  router_initialized="true"
+fi
+
+if [[ "${router_initialized}" == "true" ]]; then
+  echo "router already initialized; skipping init" >&2
+else
+  for attempt in $(seq 1 10); do
+    if (cd "${ROOT}" && SOLANA_RPC_URL="${RPC_URL}" go run ./cmd/juno-intents init-risc0-verifier \
+      --verifier-router-program-id "${VR_PROGRAM_ID}" \
+      --verifier-program-id "${G16_PROGRAM_ID}" \
+      --selector "${SELECTOR}" \
+      --payer-keypair "${PAYER_KEYPAIR}") >/dev/null; then
+      break
+    fi
+    if [[ "${attempt}" -eq 10 ]]; then
+      echo "init-risc0-verifier failed after ${attempt} attempts" >&2
+      exit 1
+    fi
+    sleep 5
+  done
+fi
 
 echo "refunding remaining balance to ${REFUND_PUBKEY} (best-effort)..." >&2
 solana -u "${RPC_URL}" transfer "${REFUND_PUBKEY}" ALL --allow-unfunded-recipient --keypair "${PAYER_KEYPAIR}" >/dev/null 2>&1 || true
