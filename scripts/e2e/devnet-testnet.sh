@@ -87,7 +87,7 @@ need_cmd go
 need_cmd curl
 
 redact_url() {
-  printf '%s' "$1" | sed -E 's/(api-key=)[^&]+/\\1***/g'
+  printf '%s' "$1" | sed -E 's/(api-key=)[^&]+/\1***/g'
 }
 
 if [[ -n "${SOLVER_KEYPAIR_OVERRIDE}" && ! -f "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
@@ -205,7 +205,7 @@ SOLANA_RPC_URL="${SOLANA_RPC_URL:-${DEPLOY_RPC_URL}}"
 
 if [[ -n "${HELIUS_RPC_URL:-}" ]]; then
   if curl -fsS -X POST -H 'Content-Type: application/json' \
-    --data '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"getMinimumBalanceForRentExemption","params":[0]}' \
     "${HELIUS_RPC_URL}" >/dev/null 2>&1; then
     SOLANA_RPC_URL="${HELIUS_RPC_URL}"
   fi
