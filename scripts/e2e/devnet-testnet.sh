@@ -779,10 +779,29 @@ rfq_a="$("${GO_SOLVERNET}" rfq \
   --intent-expiry-slot "${EXPIRY_SLOT}" \
   --announcement-url "${SOLVERNET1_ANN_URL}" \
   --announcement-url "${SOLVERNET2_ANN_URL}" \
-  2>/dev/null)"
+  2>"${WORKDIR}/rfq_a.stderr")" || {
+  echo "solvernet rfq (A) failed" >&2
+  printf '%s\n' "--- rfq_a.stderr ---" >&2
+  cat "${WORKDIR}/rfq_a.stderr" >&2 || true
+  printf '%s\n' "--- solvernet1.log ---" >&2
+  tail -n 200 "${WORKDIR}/solvernet1.log" >&2 || true
+  printf '%s\n' "--- solvernet2.log ---" >&2
+  tail -n 200 "${WORKDIR}/solvernet2.log" >&2 || true
+  exit 1
+}
+if [[ -z "${rfq_a}" ]]; then
+  echo "solvernet rfq (A) returned empty output" >&2
+  cat "${WORKDIR}/rfq_a.stderr" >&2 || true
+  exit 1
+fi
 printf '%s\n' "${rfq_a}" >"${WORKDIR}/rfq_a.json"
-read -r SOLVER_A_PUBKEY AMOUNT_A_ZAT <<<"$(rfq_best <<<"${rfq_a}")"
-read -r SOLVER_A_KEYPAIR SOLVER_A_TA SOLVER_A_ACCOUNT SOLVER_A_UA <<<"$(select_solver_by_pubkey "${SOLVER_A_PUBKEY}")"
+best_a="$(rfq_best <<<"${rfq_a}")" || {
+  echo "solvernet rfq (A) returned no usable quotes" >&2
+  exit 1
+}
+read -r SOLVER_A_PUBKEY AMOUNT_A_ZAT <<<"${best_a}"
+solver_a_info="$(select_solver_by_pubkey "${SOLVER_A_PUBKEY}")" || exit 1
+read -r SOLVER_A_KEYPAIR SOLVER_A_TA SOLVER_A_ACCOUNT SOLVER_A_UA <<<"${solver_a_info}"
 PAYMENT_AMOUNT_A_STR="$(zat_to_junocash_amount "${AMOUNT_A_ZAT}")"
 echo "solver_a_pubkey=${SOLVER_A_PUBKEY}" >&2
 echo "solver_a_ua=${SOLVER_A_UA}" >&2
@@ -902,10 +921,29 @@ rfq_b="$("${GO_SOLVERNET}" rfq \
   --intent-expiry-slot "${EXPIRY_SLOT}" \
   --announcement-url "${SOLVERNET1_ANN_URL}" \
   --announcement-url "${SOLVERNET2_ANN_URL}" \
-  2>/dev/null)"
+  2>"${WORKDIR}/rfq_b.stderr")" || {
+  echo "solvernet rfq (B) failed" >&2
+  printf '%s\n' "--- rfq_b.stderr ---" >&2
+  cat "${WORKDIR}/rfq_b.stderr" >&2 || true
+  printf '%s\n' "--- solvernet1.log ---" >&2
+  tail -n 200 "${WORKDIR}/solvernet1.log" >&2 || true
+  printf '%s\n' "--- solvernet2.log ---" >&2
+  tail -n 200 "${WORKDIR}/solvernet2.log" >&2 || true
+  exit 1
+}
+if [[ -z "${rfq_b}" ]]; then
+  echo "solvernet rfq (B) returned empty output" >&2
+  cat "${WORKDIR}/rfq_b.stderr" >&2 || true
+  exit 1
+fi
 printf '%s\n' "${rfq_b}" >"${WORKDIR}/rfq_b.json"
-read -r SOLVER_B_PUBKEY AMOUNT_B_ZAT <<<"$(rfq_best <<<"${rfq_b}")"
-read -r SOLVER_B_KEYPAIR SOLVER_B_TA SOLVER_B_ACCOUNT SOLVER_B_UA <<<"$(select_solver_by_pubkey "${SOLVER_B_PUBKEY}")"
+best_b="$(rfq_best <<<"${rfq_b}")" || {
+  echo "solvernet rfq (B) returned no usable quotes" >&2
+  exit 1
+}
+read -r SOLVER_B_PUBKEY AMOUNT_B_ZAT <<<"${best_b}"
+solver_b_info="$(select_solver_by_pubkey "${SOLVER_B_PUBKEY}")" || exit 1
+read -r SOLVER_B_KEYPAIR SOLVER_B_TA SOLVER_B_ACCOUNT SOLVER_B_UA <<<"${solver_b_info}"
 PAYMENT_AMOUNT_B_STR="$(zat_to_junocash_amount "${AMOUNT_B_ZAT}")"
 echo "solver_b_pubkey=${SOLVER_B_PUBKEY}" >&2
 echo "solver_b_ua=${SOLVER_B_UA}" >&2
