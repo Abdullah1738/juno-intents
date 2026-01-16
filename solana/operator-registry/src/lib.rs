@@ -178,22 +178,19 @@ fn process_initialize(
     allowed_measurements: Vec<[u8; 32]>,
 ) -> ProgramResult {
     // Accounts:
-    // 0. admin (signer, writable payer)
+    // 0. payer (signer, writable)
     // 1. config (PDA, writable)
     // 2. system_program
     let mut iter = accounts.iter();
-    let admin_ai = next_account_info(&mut iter)?;
+    let payer_ai = next_account_info(&mut iter)?;
     let config_ai = next_account_info(&mut iter)?;
     let system_program = next_account_info(&mut iter)?;
 
     if *system_program.key != solana_program::system_program::ID {
         return Err(OrpError::InvalidSystemProgram.into());
     }
-    if !admin_ai.is_signer {
+    if !payer_ai.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
-    }
-    if *admin_ai.key != admin {
-        return Err(OrpError::Unauthorized.into());
     }
 
     if allowed_measurements.len() > MAX_MEASUREMENTS {
@@ -230,13 +227,13 @@ fn process_initialize(
     let lamports = rent.minimum_balance(CONFIG_LEN_V1);
     invoke_signed(
         &system_instruction::create_account(
-            admin_ai.key,
+            payer_ai.key,
             config_ai.key,
             lamports,
             CONFIG_LEN_V1 as u64,
             program_id,
         ),
-        &[admin_ai.clone(), config_ai.clone(), system_program.clone()],
+        &[payer_ai.clone(), config_ai.clone(), system_program.clone()],
         &[&[CONFIG_SEED, deployment_id.as_ref(), &[bump]]],
     )?;
 

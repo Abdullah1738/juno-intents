@@ -27,6 +27,7 @@ type Deployment struct {
 	JunocashGenesisHash string `json:"junocash_genesis_hash,omitempty"` // hex32 (no 0x prefix required)
 
 	CheckpointRegistryProgramID string `json:"checkpoint_registry_program_id"`
+	OperatorRegistryProgramID   string `json:"operator_registry_program_id,omitempty"`
 	IntentEscrowProgramID       string `json:"intent_escrow_program_id,omitempty"`
 	ReceiptVerifierProgramID    string `json:"receipt_verifier_program_id,omitempty"`
 

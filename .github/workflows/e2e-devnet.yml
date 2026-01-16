@@ -7,6 +7,14 @@ on:
         description: "Base deployment name from deployments.json (workflow creates a fresh deployment_id + config PDAs per run)"
         required: true
         type: string
+      crp_mode:
+        description: "CRP config mode: v1 (no ORP) or v2 (requires ORP operator records)"
+        required: false
+        default: "v1"
+        type: choice
+        options:
+          - v1
+          - v2
       net_amount_a:
         description: "Direction A net amount (SPL tokens, u64)"
         required: false
@@ -47,6 +55,7 @@ env:
   SOLANA_CLI_VERSION: 3.1.6
   HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
   HELIUS_CLUSTER: devnet
+  JUNO_E2E_CRP_MODE: ${{ github.event.inputs.crp_mode }}
   JUNO_E2E_NET_AMOUNT_A: ${{ github.event.inputs.net_amount_a }}
   JUNO_E2E_NET_AMOUNT_B: ${{ github.event.inputs.net_amount_b }}
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_A: ${{ github.event.inputs.junocash_amount_a }}
@@ -222,6 +231,7 @@ jobs:
           emit("FEE_BPS", entry.get("fee_bps"))
           emit("FEE_COLLECTOR", entry.get("fee_collector"))
           emit("CRP_PROGRAM_ID", entry.get("checkpoint_registry_program_id"))
+          emit("ORP_PROGRAM_ID", entry.get("operator_registry_program_id"))
           emit("IEP_PROGRAM_ID", entry.get("intent_escrow_program_id"))
           emit("RV_PROGRAM_ID", entry.get("receipt_verifier_program_id"))
           emit("VERIFIER_ROUTER_PROGRAM_ID", entry.get("verifier_router_program_id"))
@@ -257,6 +267,16 @@ jobs:
           rpc="${RPC_URL}"
           echo "solana_rpc_url=${rpc}" >&2
 
+          crp_mode="${JUNO_E2E_CRP_MODE:-v1}"
+          if [[ "${crp_mode}" != "v1" && "${crp_mode}" != "v2" ]]; then
+            echo "invalid JUNO_E2E_CRP_MODE: ${crp_mode} (want v1 or v2)" >&2
+            exit 1
+          fi
+          if [[ "${crp_mode}" == "v2" && -z "${ORP_PROGRAM_ID:-}" ]]; then
+            echo "crp_mode=v2 but base deployment is missing operator_registry_program_id" >&2
+            exit 1
+          fi
+
           crp_log=""
           if ! crp_log="$(SOLANA_RPC_URL="${rpc}" go run ./cmd/juno-intents init-crp \
             --crp-program-id "${CRP_PROGRAM_ID}" \
@@ -265,6 +285,7 @@ jobs:
             --threshold 2 \
             --conflict-threshold 2 \
             --finalization-delay-slots 0 \
+            $(if [[ "${crp_mode}" == "v2" ]]; then printf '%s' "--operator-registry-program ${ORP_PROGRAM_ID}"; fi) \
             --operator "${op1_pub}" \
             --operator "${op2_pub}" \
             --payer-keypair /tmp/juno-secrets/solver.json 2>&1)"; then
@@ -316,6 +337,7 @@ jobs:
             "junocash_genesis_hash": "${JUNOCASH_GENESIS_HASH}",
             "admin": "${ADMIN}",
             "checkpoint_registry_program_id": "${CRP_PROGRAM_ID}",
+            "operator_registry_program_id": "${ORP_PROGRAM_ID:-}",
             "intent_escrow_program_id": "${IEP_PROGRAM_ID}",
             "receipt_verifier_program_id": "${RV_PROGRAM_ID}",
             "crp_config": "${crp_config}",
@@ -332,6 +354,8 @@ jobs:
             "crp_operators": ["${op1_pub}","${op2_pub}"],
             "upgrade_mode": "final",
           }
+          if not entry.get("operator_registry_program_id"):
+            entry.pop("operator_registry_program_id", None)
           alt = "${ADDRESS_LOOKUP_TABLE:-}"
           if alt:
             entry["address_lookup_table"] = alt

@@ -186,6 +186,7 @@ mkdir -p "${WORKDIR}"
 PAYER_KEYPAIR="${WORKDIR}/payer.json"
 CRP_KEYPAIR="${WORKDIR}/crp-program.json"
 IEP_KEYPAIR="${WORKDIR}/iep-program.json"
+ORP_KEYPAIR="${WORKDIR}/operator-registry-program.json"
 RV_KEYPAIR="${WORKDIR}/receipt-verifier-program.json"
 DEPLOYMENT_ID_FILE="${WORKDIR}/deployment_id.hex"
 
@@ -216,11 +217,15 @@ fi
 if [[ ! -f "${IEP_KEYPAIR}" ]]; then
   solana-keygen new --no-bip39-passphrase --silent --force -o "${IEP_KEYPAIR}"
 fi
+if [[ ! -f "${ORP_KEYPAIR}" ]]; then
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${ORP_KEYPAIR}"
+fi
 if [[ ! -f "${RV_KEYPAIR}" ]]; then
   solana-keygen new --no-bip39-passphrase --silent --force -o "${RV_KEYPAIR}"
 fi
 CRP_PROGRAM_ID="$(solana-keygen pubkey "${CRP_KEYPAIR}")"
 IEP_PROGRAM_ID="$(solana-keygen pubkey "${IEP_KEYPAIR}")"
+ORP_PROGRAM_ID="$(solana-keygen pubkey "${ORP_KEYPAIR}")"
 RV_PROGRAM_ID="$(solana-keygen pubkey "${RV_KEYPAIR}")"
 
 if [[ -z "${DEPLOYMENT_ID_HEX}" && -f "${DEPLOYMENT_ID_FILE}" ]]; then
@@ -261,6 +266,7 @@ fi
 echo "deployment_id: ${DEPLOYMENT_ID_HEX}" >&2
 echo "crp_program_id: ${CRP_PROGRAM_ID}" >&2
 echo "iep_program_id: ${IEP_PROGRAM_ID}" >&2
+echo "operator_registry_program_id: ${ORP_PROGRAM_ID}" >&2
 echo "receipt_verifier_program_id: ${RV_PROGRAM_ID}" >&2
 
 if [[ "${SKIP_BUILD}" != "true" ]]; then
@@ -271,15 +277,17 @@ if [[ "${SKIP_BUILD}" != "true" ]]; then
   # building the whole workspace in one invocation can accidentally strip the checkpoint-registry
   # program entrypoint, producing an invalid `.so` for deploy.
   (cd "${ROOT}" && cargo build-sbf --manifest-path solana/checkpoint-registry/Cargo.toml)
+  (cd "${ROOT}" && cargo build-sbf --manifest-path solana/operator-registry/Cargo.toml)
   (cd "${ROOT}" && cargo build-sbf --manifest-path solana/receipt-verifier/Cargo.toml)
   (cd "${ROOT}" && cargo build-sbf --manifest-path solana/intent-escrow/Cargo.toml)
 fi
 
 CRP_SO="${ROOT}/solana/target/deploy/juno_intents_checkpoint_registry.so"
 IEP_SO="${ROOT}/solana/target/deploy/juno_intents_intent_escrow.so"
+ORP_SO="${ROOT}/solana/target/deploy/juno_intents_operator_registry.so"
 RV_SO="${ROOT}/solana/target/deploy/juno_intents_receipt_verifier.so"
 
-for f in "${CRP_SO}" "${IEP_SO}" "${RV_SO}"; do
+for f in "${CRP_SO}" "${IEP_SO}" "${ORP_SO}" "${RV_SO}"; do
   if [[ ! -f "${f}" ]]; then
     echo "missing program artifact: ${f}" >&2
     exit 1
@@ -289,6 +297,7 @@ done
 echo "estimating required SOL..." >&2
 crp_bytes="$(wc -c <"${CRP_SO}" | tr -d ' ')"
 iep_bytes="$(wc -c <"${IEP_SO}" | tr -d ' ')"
+orp_bytes="$(wc -c <"${ORP_SO}" | tr -d ' ')"
 rv_bytes="$(wc -c <"${RV_SO}" | tr -d ' ')"
 
 estimate_rent_exempt() {
@@ -301,23 +310,25 @@ estimate_rent_exempt() {
 
 rent_crp="$(estimate_rent_exempt "$((crp_bytes + 2048))")"
 rent_iep="$(estimate_rent_exempt "$((iep_bytes + 2048))")"
+rent_orp="$(estimate_rent_exempt "$((orp_bytes + 2048))")"
 rent_rv="$(estimate_rent_exempt "$((rv_bytes + 2048))")"
 
 need_lamports="0"
-if [[ -n "${rent_crp}" && -n "${rent_iep}" && -n "${rent_rv}" ]]; then
+if [[ -n "${rent_crp}" && -n "${rent_iep}" && -n "${rent_orp}" && -n "${rent_rv}" ]]; then
   # Estimate peak required balance:
-  #   - sum(rent): permanent programdata rent for all 3 programs
+  #   - sum(rent): permanent programdata rent for all 4 programs
   #   - max(rent): temporary upgradeable buffer rent for the largest program during deploy
   #   - +0.5 SOL: fee + slop buffer
-  sum_rent="$((rent_crp + rent_iep + rent_rv))"
+  sum_rent="$((rent_crp + rent_iep + rent_orp + rent_rv))"
   max_rent="${rent_crp}"
   if [[ "${rent_iep}" -gt "${max_rent}" ]]; then max_rent="${rent_iep}"; fi
+  if [[ "${rent_orp}" -gt "${max_rent}" ]]; then max_rent="${rent_orp}"; fi
   if [[ "${rent_rv}" -gt "${max_rent}" ]]; then max_rent="${rent_rv}"; fi
   need_lamports="$(( sum_rent + max_rent + 500000000 ))"
 else
   # Fallback if 'solana rent' output parsing fails.
-  need_lamports="$(( 5 * 1000000000 ))"
-  echo "warning: could not parse solana rent output; using conservative default: 5 SOL" >&2
+  need_lamports="$(( 6 * 1000000000 ))"
+  echo "warning: could not parse solana rent output; using conservative default: 6 SOL" >&2
 fi
 
 need_sol="$(python3 -c 'import sys; need=int(sys.argv[1]); print(f"{need/1e9:.4f}")' "${need_lamports}")"
@@ -378,6 +389,12 @@ solana -u "${RPC_URL}" program deploy "${IEP_SO}" \
   --program-id "${IEP_KEYPAIR}" \
   --upgrade-authority "${PAYER_KEYPAIR}"
 
+echo "deploying operator-registry..." >&2
+solana -u "${RPC_URL}" program deploy "${ORP_SO}" \
+  --keypair "${PAYER_KEYPAIR}" \
+  --program-id "${ORP_KEYPAIR}" \
+  --upgrade-authority "${PAYER_KEYPAIR}"
+
 echo "deploying receipt-verifier..." >&2
 solana -u "${RPC_URL}" program deploy "${RV_SO}" \
   --keypair "${PAYER_KEYPAIR}" \
@@ -387,6 +404,7 @@ solana -u "${RPC_URL}" program deploy "${RV_SO}" \
 echo "finalizing program upgrade authorities (immutable)..." >&2
 solana -u "${RPC_URL}" program set-upgrade-authority "${CRP_PROGRAM_ID}" --final --keypair "${PAYER_KEYPAIR}"
 solana -u "${RPC_URL}" program set-upgrade-authority "${IEP_PROGRAM_ID}" --final --keypair "${PAYER_KEYPAIR}"
+solana -u "${RPC_URL}" program set-upgrade-authority "${ORP_PROGRAM_ID}" --final --keypair "${PAYER_KEYPAIR}"
 solana -u "${RPC_URL}" program set-upgrade-authority "${RV_PROGRAM_ID}" --final --keypair "${PAYER_KEYPAIR}"
 
 echo "initializing CRP config..." >&2
@@ -397,6 +415,7 @@ INIT_CRP_ARGS=(
   --threshold "${CRP_THRESHOLD}"
   --conflict-threshold "${CRP_CONFLICT_THRESHOLD}"
   --finalization-delay-slots "${CRP_FINALIZATION_DELAY_SLOTS}"
+  --operator-registry-program "${ORP_PROGRAM_ID}"
   --payer-keypair "${PAYER_KEYPAIR}"
 )
 for op in "${CRP_OPERATORS[@]}"; do
@@ -436,6 +455,7 @@ export DEPLOY_RECORD_DEPLOYMENT_ID="${DEPLOYMENT_ID_HEX}"
 export DEPLOY_RECORD_ADMIN="${ADMIN_PUBKEY}"
 export DEPLOY_RECORD_CRP_PROGRAM_ID="${CRP_PROGRAM_ID}"
 export DEPLOY_RECORD_IEP_PROGRAM_ID="${IEP_PROGRAM_ID}"
+export DEPLOY_RECORD_ORP_PROGRAM_ID="${ORP_PROGRAM_ID}"
 export DEPLOY_RECORD_RV_PROGRAM_ID="${RV_PROGRAM_ID}"
 export DEPLOY_RECORD_CRP_CONFIG="${CRP_CONFIG_PDA}"
 export DEPLOY_RECORD_IEP_CONFIG="${IEP_CONFIG_PDA}"
@@ -476,6 +496,7 @@ entry = {
     "admin": os.environ["DEPLOY_RECORD_ADMIN"],
     "checkpoint_registry_program_id": os.environ["DEPLOY_RECORD_CRP_PROGRAM_ID"],
     "intent_escrow_program_id": os.environ["DEPLOY_RECORD_IEP_PROGRAM_ID"],
+    "operator_registry_program_id": os.environ["DEPLOY_RECORD_ORP_PROGRAM_ID"],
     "receipt_verifier_program_id": os.environ["DEPLOY_RECORD_RV_PROGRAM_ID"],
     "crp_config": os.environ["DEPLOY_RECORD_CRP_CONFIG"],
     "iep_config": os.environ["DEPLOY_RECORD_IEP_CONFIG"],
