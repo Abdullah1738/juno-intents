@@ -84,6 +84,11 @@ need_cmd solana-keygen
 need_cmd spl-token
 need_cmd cargo
 need_cmd go
+need_cmd curl
+
+redact_url() {
+  printf '%s' "$1" | sed -E 's/(api-key=)[^&]+/\\1***/g'
+}
 
 if [[ -n "${SOLVER_KEYPAIR_OVERRIDE}" && ! -f "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
   echo "solver keypair not found: ${SOLVER_KEYPAIR_OVERRIDE}" >&2
@@ -197,6 +202,15 @@ if [[ "${DEPLOY_CLUSTER}" != "devnet" ]]; then
 fi
 
 SOLANA_RPC_URL="${SOLANA_RPC_URL:-${DEPLOY_RPC_URL}}"
+
+if [[ -n "${HELIUS_RPC_URL:-}" ]]; then
+  if curl -fsS -X POST -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' \
+    "${HELIUS_RPC_URL}" >/dev/null 2>&1; then
+    SOLANA_RPC_URL="${HELIUS_RPC_URL}"
+  fi
+fi
+
 export SOLANA_RPC_URL
 
 ts="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -210,7 +224,7 @@ trap cleanup EXIT
 
 echo "workdir: ${WORKDIR}" >&2
 echo "deployment: ${DEPLOYMENT_NAME}" >&2
-echo "solana_rpc_url: ${SOLANA_RPC_URL}" >&2
+echo "solana_rpc_url: $(redact_url "${SOLANA_RPC_URL}")" >&2
 
 echo "building Go CLIs..." >&2
 GO_INTENTS="${WORKDIR}/juno-intents"
