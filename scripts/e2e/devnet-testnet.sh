@@ -177,7 +177,7 @@ solana_balance_lamports() {
   python3 -c 'import re,sys
 raw=sys.stdin.read()
 m=re.search(r"(\\d+)", raw)
-print(m.group(1) if m else "0")
+print(m.group(1) if m else "")
 ' <<<"${raw}"
 }
 
@@ -425,6 +425,7 @@ if [[ "${solver_balance_now}" =~ ^[0-9]+$ && "${solver_balance_now}" -lt "${min_
   echo "solver balance low (${solver_balance_now} lamports); airdropping 2 SOL..." >&2
   airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
 fi
+if [[ ! "${solver2_balance_now}" =~ ^[0-9]+$ ]]; then solver2_balance_now="0"; fi
 if [[ "${solver2_balance_now}" -lt "${min_solver2_lamports}" ]]; then
   if [[ -z "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then
     echo "solver2 balance low (${solver2_balance_now} lamports); funding from solver..." >&2
