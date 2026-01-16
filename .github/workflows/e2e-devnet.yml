@@ -87,7 +87,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends docker.io protobuf-compiler
+          sudo apt-get install -y --no-install-recommends protobuf-compiler
+          if ! command -v docker >/dev/null; then
+            sudo apt-get install -y --no-install-recommends docker.io
+          fi
           sudo systemctl start docker || sudo service docker start || true
           docker ps >/dev/null
 
