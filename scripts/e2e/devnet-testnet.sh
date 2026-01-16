@@ -830,8 +830,21 @@ echo "filling intents on Solana..." >&2
   --priority-level "${PRIORITY_LEVEL}" >/dev/null
 
 echo "proving Groth16 bundles (CUDA)..." >&2
-BUNDLE_A="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --bin prove_bundle_v1 -- --witness-hex "${WITNESS_A}")"
-BUNDLE_B="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --bin prove_bundle_v1 -- --witness-hex "${WITNESS_B}")"
+RAW_BUNDLE_A="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --bin prove_bundle_v1 -- --witness-hex "${WITNESS_A}")"
+BUNDLE_A="$(printf '%s\n' "${RAW_BUNDLE_A}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
+if [[ -z "${BUNDLE_A}" ]]; then
+  echo "failed to extract bundle hex (A)" >&2
+  printf '%s\n' "${RAW_BUNDLE_A}" | head -n 50 >&2 || true
+  exit 1
+fi
+
+RAW_BUNDLE_B="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --bin prove_bundle_v1 -- --witness-hex "${WITNESS_B}")"
+BUNDLE_B="$(printf '%s\n' "${RAW_BUNDLE_B}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
+if [[ -z "${BUNDLE_B}" ]]; then
+  echo "failed to extract bundle hex (B)" >&2
+  printf '%s\n' "${RAW_BUNDLE_B}" | head -n 50 >&2 || true
+  exit 1
+fi
 
 echo "settling on Solana..." >&2
 "${GO_INTENTS}" iep-settle \
