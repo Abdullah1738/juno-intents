@@ -408,9 +408,6 @@ fi
 if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
   airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
 fi
-if [[ -z "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then
-  airdrop "${SOLVER2_PUBKEY}" 2 "${SOLVER2_KEYPAIR}"
-fi
 if [[ -z "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
   airdrop "${CREATOR_PUBKEY}" 2 "${CREATOR_KEYPAIR}"
 fi
@@ -426,8 +423,20 @@ if [[ "${solver_balance_now}" =~ ^[0-9]+$ && "${solver_balance_now}" -lt "${min_
   airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"
 fi
 if [[ "${solver2_balance_now}" =~ ^[0-9]+$ && "${solver2_balance_now}" -lt "${min_solver2_lamports}" ]]; then
-  echo "solver2 balance low (${solver2_balance_now} lamports); airdropping 2 SOL..." >&2
-  airdrop "${SOLVER2_PUBKEY}" 2 "${SOLVER2_KEYPAIR}"
+  if [[ -z "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then
+    echo "solver2 balance low (${solver2_balance_now} lamports); funding from solver..." >&2
+    tx_out="$(solana -u "${SOLANA_RPC_URL}" transfer --allow-unfunded-recipient "${SOLVER2_PUBKEY}" 0.5 --keypair "${SOLVER_KEYPAIR}" 2>&1)" || {
+      printf '%s\n' "${tx_out}" >&2
+      exit 1
+    }
+    sig="$(printf '%s\n' "${tx_out}" | python3 -c 'import re,sys; raw=sys.stdin.read(); m=re.search(r\"[1-9A-HJ-NP-Za-km-z]{80,100}\", raw); print(m.group(0) if m else \"\")')"
+    if [[ -n "${sig}" ]]; then
+      confirm_sig "${sig}" 60
+    fi
+  else
+    echo "solver2 balance low (${solver2_balance_now} lamports); provide JUNO_E2E_SOLVER2_KEYPAIR with funds" >&2
+    exit 1
+  fi
 fi
 if [[ "${creator_balance_now}" =~ ^[0-9]+$ && "${creator_balance_now}" -lt "${min_creator_lamports}" ]]; then
   echo "creator balance low (${creator_balance_now} lamports); airdropping 2 SOL..." >&2
