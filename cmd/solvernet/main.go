@@ -103,12 +103,12 @@ func cmdServe(argv []string) error {
 	fs.SetOutput(io.Discard)
 
 	var (
-		listenAddr         string
-		deploymentHex      string
-		quoteURL           string
-		keypairPath        string
-		priceZatPerUnit    uint64
-		spreadBps          uint
+		listenAddr      string
+		deploymentHex   string
+		quoteURL        string
+		keypairPath     string
+		priceZatPerUnit uint64
+		spreadBps       uint
 
 		fillAccountKeysCSV   string
 		settleAccountKeysCSV string
@@ -214,8 +214,8 @@ func cmdRFQ(argv []string) error {
 	fs.SetOutput(io.Discard)
 
 	var (
-		deploymentHex     string
-		direction         string
+		deploymentHex    string
+		direction        string
 		mint             string
 		netAmount        string
 		solanaRecipient  string
@@ -277,9 +277,9 @@ func cmdRFQ(argv []string) error {
 	}
 
 	type gotQuote struct {
-		Solver string
-		Q      protocol.QuoteResponse
-		Hint   *solvernet.FeeHint
+		QuoteURL string                            `json:"quote_url"`
+		Signed   solvernet.SignedQuoteResponseJSON `json:"signed"`
+		Q        protocol.QuoteResponse            `json:"-"`
 	}
 
 	var quotes []gotQuote
@@ -312,7 +312,7 @@ func cmdRFQ(argv []string) error {
 			fmt.Fprintf(os.Stderr, "skip %s: solver pubkey mismatch\n", ann.QuoteURL)
 			continue
 		}
-		quotes = append(quotes, gotQuote{Solver: ann.QuoteURL, Q: q, Hint: signed.FeeHint})
+		quotes = append(quotes, gotQuote{QuoteURL: ann.QuoteURL, Signed: signed, Q: q})
 	}
 
 	sort.Slice(quotes, func(i, j int) bool {
