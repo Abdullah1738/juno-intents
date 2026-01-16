@@ -47,7 +47,6 @@ env:
   SOLANA_CLI_VERSION: 3.1.6
   HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
   HELIUS_CLUSTER: devnet
-  SOLANA_RPC_URL: https://devnet.helius-rpc.com/?api-key=${{ secrets.HELIUS_API_KEY }}
   JUNO_E2E_NET_AMOUNT_A: ${{ github.event.inputs.net_amount_a }}
   JUNO_E2E_NET_AMOUNT_B: ${{ github.event.inputs.net_amount_b }}
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_A: ${{ github.event.inputs.junocash_amount_a }}
@@ -161,6 +160,33 @@ jobs:
           echo "JUNO_E2E_CRP_OPERATOR2_KEYPAIR=/tmp/juno-secrets/crp-operator-2.json" >> "$GITHUB_ENV"
           echo "JUNO_E2E_SOLVER_KEYPAIR=/tmp/juno-secrets/solver.json" >> "$GITHUB_ENV"
           echo "JUNO_E2E_CREATOR_KEYPAIR=/tmp/juno-secrets/creator.json" >> "$GITHUB_ENV"
+
+      - name: Normalize Helius env (RPC + priority fees)
+        run: |
+          set -euo pipefail
+          raw_key="${HELIUS_API_KEY:-}"
+          raw_url="${{ secrets.HELIUS_RPC_URL }}"
+          key=""
+          if [[ -n "${raw_key}" && "${raw_key}" != http* ]]; then
+            key="${raw_key}"
+          fi
+          if [[ -z "${key}" ]]; then
+            if [[ -n "${raw_key}" && "${raw_key}" == http* ]]; then
+              raw_url="${raw_key}"
+            fi
+            if [[ -n "${raw_url}" ]]; then
+              key="$(python3 - "${raw_url}" <<'PY'\nimport sys\nfrom urllib.parse import urlparse, parse_qs\nu=urlparse(sys.argv[1])\nq=parse_qs(u.query)\nprint((q.get('api-key') or [''])[0])\nPY\n)"
+            fi
+          fi
+          if [[ -z "${key}" ]]; then
+            echo "HELIUS_API_KEY missing; priority fee hints disabled" >&2
+            exit 0
+          fi
+          devnet_url="https://devnet.helius-rpc.com/?api-key=${key}"
+          echo "HELIUS_API_KEY=${key}" >> "$GITHUB_ENV"
+          echo "HELIUS_CLUSTER=devnet" >> "$GITHUB_ENV"
+          echo "HELIUS_RPC_URL=${devnet_url}" >> "$GITHUB_ENV"
+          echo "SOLANA_RPC_URL=${devnet_url}" >> "$GITHUB_ENV"
 
       - name: Run devnet e2e (both directions)
         env:

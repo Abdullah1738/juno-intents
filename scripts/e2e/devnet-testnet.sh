@@ -234,7 +234,8 @@ echo "solver_pubkey=${SOLVER_PUBKEY}" >&2
 echo "creator_pubkey=${CREATOR_PUBKEY}" >&2
 echo "solana_cli=$(solana --version)" >&2
 echo "spl_token_cli=$(spl-token --version)" >&2
-echo "solver_balance_lamports=$(solana -u "${SOLANA_RPC_URL}" balance "${SOLVER_PUBKEY}" --lamports | tr -d '\r\n')" >&2
+solver_balance_lamports="$(solana -u "${SOLANA_RPC_URL}" balance "${SOLVER_PUBKEY}" --lamports 2>/dev/null | tr -d '\r\n' || true)"
+echo "solver_balance_lamports=${solver_balance_lamports:-unknown}" >&2
 
 OP1_KEYPAIR="${SOLVER_KEYPAIR}"
 OP2_KEYPAIR="${CREATOR_KEYPAIR}"
