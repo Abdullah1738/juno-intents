@@ -1,0 +1,14 @@
+[package]
+name = "juno-attestation-guest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "attestation_verify"
+path = "src/main.rs"
+
+[dependencies]
+risc0-zkvm = { version = "3.0.4", default-features = false, features = ["std"] }
+juno-attestation-logic = { path = "../../logic" }
+

@@ -33,7 +33,11 @@ const ATTESTATION_SEAL_LEN_V1: usize = 260;
 
 // Current expected MethodID bytes for the RISC Zero operator attestation verifier guest program.
 // This MUST be updated whenever the zkVM method is changed and re-embedded.
-const EXPECTED_IMAGE_ID: [u8; 32] = [0u8; 32];
+const EXPECTED_IMAGE_ID: [u8; 32] = [
+    0x4d, 0x7f, 0x9b, 0xd7, 0xf3, 0x0b, 0x86, 0x07, 0xf4, 0x0a, 0xbf, 0xa2, 0x40, 0x37,
+    0x77, 0x43, 0x7c, 0x19, 0x5a, 0x43, 0xce, 0x64, 0x1c, 0x3f, 0x9c, 0x39, 0x7b, 0xf1,
+    0x54, 0xd6, 0x88, 0x64,
+];
 
 // Anchor discriminator for verifier_router::verify instruction:
 // sha256("global:verify")[0..8]
@@ -740,4 +744,3 @@ mod tests {
         assert!(!rec.enabled);
     }
 }
-

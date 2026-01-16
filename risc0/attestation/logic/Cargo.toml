@@ -1,0 +1,20 @@
+[package]
+name = "juno-attestation-logic"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+coset = { version = "0.3.8", default-features = false, features = ["std"] }
+hex = "0.4.3"
+p384 = { version = "0.13.1", default-features = false, features = ["ecdsa", "sha384"] }
+serde = { version = "1.0.218", features = ["derive"] }
+serde_bytes = "0.11.15"
+serde_cbor = "0.11.2"
+sha2 = "0.10.8"
+spki = { version = "0.7.3", default-features = false, features = ["alloc"] }
+thiserror = "2.0.11"
+x509-parser = { version = "0.18.0", default-features = false }
+
+[dev-dependencies]
+hex-literal = "0.4.1"

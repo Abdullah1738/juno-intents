@@ -1,0 +1,22 @@
+[package]
+name = "juno-attestation-host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+default = []
+cuda = ["risc0-zkvm/cuda"]
+
+[dependencies]
+anyhow = "1.0.86"
+clap = { version = "4.5.32", features = ["derive"] }
+hex = "0.4.3"
+juno-attestation-logic = { path = "../logic" }
+juno-attestation-methods = { path = "../methods" }
+risc0-zkvm = { version = "3.0.4", default-features = false, features = ["prove"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+
