@@ -1851,9 +1851,19 @@ func cmdRun(argv []string) error {
 
 		cancel()
 
-		if once {
+		if shouldExitOnce(once, submitOnly, len(pending)) {
 			return nil
 		}
 		time.Sleep(pollInterval)
 	}
+}
+
+func shouldExitOnce(once, submitOnly bool, pending int) bool {
+	if !once {
+		return false
+	}
+	if submitOnly {
+		return true
+	}
+	return pending == 0
 }
