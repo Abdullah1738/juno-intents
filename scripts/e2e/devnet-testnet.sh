@@ -254,6 +254,7 @@ for it in (d.get("deployments") or []):
     print("fee_bps="+str(it.get("fee_bps","")).strip())
     print("fee_collector="+str(it.get("fee_collector","")).strip())
     print("junocash_chain="+str(it.get("junocash_chain","")).strip())
+    print("junocash_genesis_hash="+str(it.get("junocash_genesis_hash","")).strip())
     sys.exit(0)
 raise SystemExit("deployment not found")
 PY
@@ -265,8 +266,9 @@ DEPLOYMENT_ID_HEX="$(printf '%s\n' "${DEPLOY_INFO}" | sed -nE 's/^deployment_id=
 FEE_BPS="$(printf '%s\n' "${DEPLOY_INFO}" | sed -nE 's/^fee_bps=(.+)$/\1/p' | head -n 1)"
 FEE_COLLECTOR_PUBKEY="$(printf '%s\n' "${DEPLOY_INFO}" | sed -nE 's/^fee_collector=(.+)$/\1/p' | head -n 1)"
 JUNOCASH_CHAIN_EXPECTED="$(printf '%s\n' "${DEPLOY_INFO}" | sed -nE 's/^junocash_chain=(.+)$/\1/p' | head -n 1)"
+JUNOCASH_GENESIS_EXPECTED="$(printf '%s\n' "${DEPLOY_INFO}" | sed -nE 's/^junocash_genesis_hash=(.+)$/\1/p' | head -n 1)"
 
-if [[ -z "${DEPLOY_RPC_URL}" || -z "${DEPLOYMENT_ID_HEX}" || -z "${FEE_BPS}" || -z "${FEE_COLLECTOR_PUBKEY}" || -z "${JUNOCASH_CHAIN_EXPECTED}" ]]; then
+if [[ -z "${DEPLOY_RPC_URL}" || -z "${DEPLOYMENT_ID_HEX}" || -z "${FEE_BPS}" || -z "${FEE_COLLECTOR_PUBKEY}" || -z "${JUNOCASH_CHAIN_EXPECTED}" || -z "${JUNOCASH_GENESIS_EXPECTED}" ]]; then
   echo "failed to parse deployment fields" >&2
   printf '%s\n' "${DEPLOY_INFO}" >&2
   exit 1
@@ -452,6 +454,57 @@ echo "starting JunoCash ${JUNOCASH_CHAIN} docker harness..." >&2
 
 jcli() { "${JUNOCASH_CLI}" "$@"; }
 
+wait_for_op_txid() {
+  local opid="$1"
+  local wait_secs="${2:-1800}"
+
+  for _ in $(seq 1 "${wait_secs}"); do
+    res="$(jcli z_getoperationresult "[\"${opid}\"]" 2>/dev/null || true)"
+    compact="$(printf '%s' "${res}" | tr -d ' \n\r\t')"
+    if [[ "${compact}" == "[]" ]]; then
+      sleep 1
+      continue
+    fi
+
+    parsed=""
+    if parsed="$(printf '%s' "${res}" | python3 - <<'PY'
+import json,sys
+items=json.load(sys.stdin)
+it=items[0] if items else {}
+status=it.get("status")
+if status=="success":
+  txid=(it.get("result") or {}).get("txid") or ""
+  print(txid)
+  sys.exit(0 if txid else 3)
+err=it.get("error")
+msg=err.get("message") if isinstance(err, dict) else err
+print(f"status={status} message={msg}")
+sys.exit(2)
+PY
+)"; then
+      printf '%s\n' "${parsed}"
+      return 0
+    fi
+    ec=$?
+    if [[ "${ec}" == "2" ]]; then
+      echo "operation failed: ${parsed} (opid=${opid})" >&2
+      printf '%s\n' "${res}" >&2
+      return 1
+    fi
+    if [[ "${ec}" == "3" ]]; then
+      echo "operation completed without txid (opid=${opid})" >&2
+      printf '%s\n' "${res}" >&2
+      return 1
+    fi
+    echo "unexpected z_getoperationresult parser exit code: ${ec} (opid=${opid})" >&2
+    printf '%s\n' "${res}" >&2
+    return 1
+  done
+
+  echo "operation did not complete (opid=${opid})" >&2
+  return 1
+}
+
 echo "mining initial blocks for coinbase maturity..." >&2
 if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
   jcli generate 110 >/dev/null
@@ -473,22 +526,8 @@ echo "shielding coinbase to user orchard UA..." >&2
 opid="$(jcli z_shieldcoinbase "*" "${USER_UA}" null 1 | parse_junocash_opid)"
 
 echo "waiting for shield operation..." >&2
-txid_shield=""
-for _ in $(seq 1 1800); do
-  res="$(jcli z_getoperationresult "[\"${opid}\"]" 2>/dev/null || true)"
-  compact="$(printf '%s' "${res}" | tr -d ' \n\r\t')"
-  if [[ "${compact}" == "[]" ]]; then
-    sleep 1
-    continue
-  fi
-  txid_shield="$(printf '%s' "${res}" | python3 -c 'import json,sys; it=json.load(sys.stdin)[0]; print(it.get("result",{}).get("txid",""))')"
-  break
-done
-if [[ -z "${txid_shield}" ]]; then
-  echo "shielding operation did not complete" >&2
-  jcli z_getoperationstatus "[\"${opid}\"]" >&2 || true
-  exit 1
-fi
+txid_shield="$(wait_for_op_txid "${opid}" 1800)"
+echo "txid_shield=${txid_shield}" >&2
 
 echo "mining block to include shield tx..." >&2
 if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
@@ -555,21 +594,7 @@ recipients_a="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; 
 opid_a="$(jcli z_sendmany "${USER_UA}" "${recipients_a}" | parse_junocash_opid)"
 
 echo "waiting for sendmany operation (A)..." >&2
-txid_a=""
-for _ in $(seq 1 1800); do
-  res="$(jcli z_getoperationresult "[\"${opid_a}\"]" 2>/dev/null || true)"
-  compact="$(printf '%s' "${res}" | tr -d ' \n\r\t')"
-  if [[ "${compact}" == "[]" ]]; then
-    sleep 1
-    continue
-  fi
-  txid_a="$(printf '%s' "${res}" | python3 -c 'import json,sys; it=json.load(sys.stdin)[0]; print(it.get("result",{}).get("txid",""))')"
-  break
-done
-if [[ -z "${txid_a}" ]]; then
-  echo "sendmany op did not complete (A)" >&2
-  exit 1
-fi
+txid_a="$(wait_for_op_txid "${opid_a}" 1800)"
 echo "txid_a=${txid_a}" >&2
 
 height_a_before="$(jcli getblockcount)"
@@ -666,21 +691,7 @@ recipients_b="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; 
 opid_b="$(jcli z_sendmany "${SOLVER_UA}" "${recipients_b}" | parse_junocash_opid)"
 
 echo "waiting for sendmany operation (B)..." >&2
-txid_b=""
-for _ in $(seq 1 1800); do
-  res="$(jcli z_getoperationresult "[\"${opid_b}\"]" 2>/dev/null || true)"
-  compact="$(printf '%s' "${res}" | tr -d ' \n\r\t')"
-  if [[ "${compact}" == "[]" ]]; then
-    sleep 1
-    continue
-  fi
-  txid_b="$(printf '%s' "${res}" | python3 -c 'import json,sys; it=json.load(sys.stdin)[0]; print(it.get("result",{}).get("txid",""))')"
-  break
-done
-if [[ -z "${txid_b}" ]]; then
-  echo "sendmany op did not complete (B)" >&2
-  exit 1
-fi
+txid_b="$(wait_for_op_txid "${opid_b}" 1800)"
 echo "txid_b=${txid_b}" >&2
 
 height_b_before="$(jcli getblockcount)"
@@ -752,8 +763,20 @@ fi
 echo "finalizing CRP checkpoints (run-mode, chain verified)..." >&2
 genesis="$(jcli getblockhash 0 | tr -d '\" \r\n')"
 chain="$(jcli getblockchaininfo | python3 -c 'import json,sys; print(json.load(sys.stdin).get("chain",""))')"
-echo "junocash_chain=${chain}" >&2
-echo "junocash_genesis=${genesis}" >&2
+chain_norm="$(printf '%s' "${chain}" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\r\n' | sed -E 's/^main$/mainnet/; s/^test$/testnet/')"
+genesis_norm="$(printf '%s' "${genesis}" | tr '[:upper:]' '[:lower:]' | tr -d '\" \t\r\n' | sed -E 's/^0x//')"
+expected_chain_norm="$(printf '%s' "${JUNOCASH_CHAIN}" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\r\n')"
+expected_genesis_norm="$(printf '%s' "${JUNOCASH_GENESIS_EXPECTED}" | tr '[:upper:]' '[:lower:]' | tr -d '\" \t\r\n' | sed -E 's/^0x//')"
+echo "junocash_chain=${chain_norm}" >&2
+echo "junocash_genesis=${genesis_norm}" >&2
+if [[ "${chain_norm}" != "${expected_chain_norm}" ]]; then
+  echo "junocash chain mismatch: got ${chain_norm} want ${expected_chain_norm}" >&2
+  exit 1
+fi
+if [[ "${genesis_norm}" != "${expected_genesis_norm}" ]]; then
+  echo "junocash genesis mismatch: got ${genesis_norm} want ${expected_genesis_norm}" >&2
+  exit 1
+fi
 
 start_height="${PAYMENT_HEIGHT_A}"
 if [[ "${PAYMENT_HEIGHT_B}" -lt "${start_height}" ]]; then
@@ -765,7 +788,7 @@ fi
   --deployment-file "${DEPLOYMENT_FILE}" \
   --junocash-cli "${JUNOCASH_CLI}" \
   --junocash-chain "${JUNOCASH_CHAIN}" \
-  --junocash-genesis-hash "${genesis}" \
+  --junocash-genesis-hash "${JUNOCASH_GENESIS_EXPECTED}" \
   --start-height "${start_height}" \
   --lag 1 \
   --poll-interval 1s \

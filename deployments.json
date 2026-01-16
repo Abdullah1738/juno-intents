@@ -46,6 +46,7 @@
       "iep_config": "8GvVpewbfKnsJBxiXjj1xgQpoBNLzeyKbTrvmVnPEkYj",
       "intent_escrow_program_id": "GacDZLbbtVYfY7XY2jVnbU1ChsergWYsXf5hkwGrijk4",
       "junocash_chain": "testnet",
+      "junocash_genesis_hash": "009a83c6bd95d1f0548fe4c5f6555c785e9c456ca33f58c2d7755c2bdd1e842f",
       "name": "devnet-20260116T020433Z",
       "receipt_verifier_program_id": "ArGrjjtFt7QZGAzth8foyRAarMHtcv7tGMMRnaNgdysh",
       "rpc_url": "https://api.devnet.solana.com",
