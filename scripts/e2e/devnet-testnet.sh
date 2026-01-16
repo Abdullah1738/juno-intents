@@ -135,11 +135,26 @@ def find_base58(x):
         return r
   return None
 
-data=json.load(sys.stdin)
-pk=find_base58(data)
-if not pk:
-  raise SystemExit("no base58 pubkey in JSON output")
-print(pk)
+raw = sys.stdin.read()
+raw = raw.strip()
+if not raw:
+  raise SystemExit("empty spl-token output")
+
+# First try JSON (spl-token --output json/json-compact).
+try:
+  data = json.loads(raw)
+  pk = find_base58(data)
+  if pk:
+    print(pk)
+    raise SystemExit(0)
+except Exception:
+  pass
+
+# Fallback: extract the first base58-looking pubkey from plain text output.
+m = re.search(r"[1-9A-HJ-NP-Za-km-z]{32,44}", raw)
+if not m:
+  raise SystemExit("no base58 pubkey in output")
+print(m.group(0))
 PY
 }
 
