@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 120
     env:
       JUNO_RECEIPT_WITNESS_HEX: ${{ secrets.JUNO_RECEIPT_WITNESS_HEX }}
+      JUNO_ATTESTATION_WITNESS_HEX: ${{ secrets.JUNO_ATTESTATION_WITNESS_HEX }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -97,6 +98,7 @@ jobs:
         with:
           shared-key: rust-${{ env.RUST_TOOLCHAIN }}
           workspaces: |
+            risc0/attestation -> target
             risc0/receipt -> target
             solana -> target
 
@@ -197,6 +199,45 @@ jobs:
             echo "${BUNDLE_HEX}"
             echo "EOF"
           } >> "${GITHUB_ENV}"
+
+      - name: Prove operator attestation bundle from witness (release)
+        timeout-minutes: 60
+        env:
+          RUST_LOG: info
+        run: |
+          set -euo pipefail
+          if [ -z "${JUNO_ATTESTATION_WITNESS_HEX:-}" ]; then
+            echo "JUNO_ATTESTATION_WITNESS_HEX not set; skipping"
+            exit 0
+          fi
+          (while sleep 60; do echo "[keepalive] $(date -u) still proving attestation bundle..."; done) &
+          keepalive_pid=$!
+          trap 'kill ${keepalive_pid} >/dev/null 2>&1 || true' EXIT
+          RAW_OUT="$(time cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove-attestation-bundle-v1)"
+          BUNDLE_HEX="$(printf '%s\n' "${RAW_OUT}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
+          if [ -z "${BUNDLE_HEX}" ]; then
+            echo "failed to extract bundle hex from prove-attestation-bundle-v1 output" >&2
+            echo "first lines:" >&2
+            printf '%s\n' "${RAW_OUT}" | head -n 20 >&2 || true
+            exit 1
+          fi
+          kill "${keepalive_pid}" >/dev/null 2>&1 || true
+          trap - EXIT
+          {
+            echo "JUNO_ATTESTATION_ZKVM_BUNDLE_HEX<<EOF"
+            echo "${BUNDLE_HEX}"
+            echo "EOF"
+          } >> "${GITHUB_ENV}"
+
+      - name: Verify operator attestation bundle on Solana (program-test, ignored)
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          if [ -z "${JUNO_ATTESTATION_ZKVM_BUNDLE_HEX:-}" ]; then
+            echo "JUNO_ATTESTATION_ZKVM_BUNDLE_HEX not set; skipping"
+            exit 0
+          fi
+          cargo test --locked --manifest-path solana/Cargo.toml -p juno-intents-operator-registry --test e2e_risc0_groth16_register -- --ignored --nocapture
 
       - name: Verify Groth16 bundle on Solana (program-test, ignored)
         timeout-minutes: 30
