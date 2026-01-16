@@ -116,6 +116,19 @@ airdrop() {
   return 1
 }
 
+wait_for_account() {
+  local pubkey="$1"
+  local attempts="${2:-60}"
+  for _ in $(seq 1 "${attempts}"); do
+    if solana -u "${SOLANA_RPC_URL}" account "${pubkey}" --output json-compact >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "account not found after waiting: ${pubkey}" >&2
+  return 1
+}
+
 parse_spl_pubkey_json() {
   python3 -c 'import json,re,sys
 def find_base58(x):
@@ -283,6 +296,17 @@ for v in SOLVER_TA CREATOR_TA FEE_TA; do
     exit 1
   fi
 done
+
+echo "mint=${MINT}" >&2
+echo "solver_ta=${SOLVER_TA}" >&2
+echo "creator_ta=${CREATOR_TA}" >&2
+echo "fee_ta=${FEE_TA}" >&2
+
+echo "waiting for accounts to be visible..." >&2
+wait_for_account "${MINT}" 90
+wait_for_account "${SOLVER_TA}" 90
+wait_for_account "${CREATOR_TA}" 90
+wait_for_account "${FEE_TA}" 90
 
 echo "minting tokens..." >&2
 spl-token -u "${SOLANA_RPC_URL}" mint "${MINT}" 1000000 "${SOLVER_TA}" --mint-authority "${SOLVER_KEYPAIR}" --fee-payer "${SOLVER_KEYPAIR}" >/dev/null
