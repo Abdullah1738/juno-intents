@@ -301,8 +301,6 @@ cmds = [
     "if ! command -v curl >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends curl; fi",
     "if ! command -v protoc >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler; fi",
     "if ! command -v docker >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends docker.io; fi",
-    "sudo systemctl start docker || sudo service docker start || true",
-    "docker ps >/dev/null",
     "if ! command -v growpart >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends cloud-guest-utils; fi",
     (
         'root_part="$(findmnt -n -o SOURCE / || true)"; '
@@ -318,6 +316,11 @@ cmds = [
         'fi; '
         'df -h /'
     ),
+    "sudo systemctl stop docker || sudo service docker stop || true",
+    "sudo mkdir -p /opt/docker-data /etc/docker",
+    "printf '%s' '{\"data-root\":\"/opt/docker-data\"}' | sudo tee /etc/docker/daemon.json >/dev/null",
+    "sudo systemctl start docker || sudo service docker start || true",
+    "docker ps >/dev/null",
     f"if ! command -v go >/dev/null || ! go version | grep -q 'go{go_version}'; then curl -sSfL --retry 8 --retry-delay 5 --retry-all-errors https://go.dev/dl/go{go_version}.linux-amd64.tar.gz -o /tmp/go.tgz && sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz; fi",
     'export PATH="/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/solana-release/bin:$PATH"',
     "go version",
