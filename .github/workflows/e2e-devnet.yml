@@ -104,26 +104,6 @@ jobs:
           sudo systemctl start docker || sudo service docker start || true
           docker ps >/dev/null
 
-      - name: Install Nitro Enclaves CLI (v2)
-        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' }}
-        run: |
-          set -euo pipefail
-          if command -v nitro-cli >/dev/null; then
-            nitro-cli --version || true
-            exit 0
-          fi
-          sudo apt-get update
-          if sudo apt-get install -y --no-install-recommends aws-nitro-enclaves-cli; then
-            :
-          elif sudo apt-get install -y --no-install-recommends nitro-enclaves-cli; then
-            :
-          else
-            echo "failed to install Nitro Enclaves CLI via apt" >&2
-            apt-cache search nitro-enclaves || true
-            exit 1
-          fi
-          nitro-cli --version
-
       - name: Install Solana CLI
         run: |
           set -euo pipefail
@@ -268,6 +248,53 @@ jobs:
           emit("ADDRESS_LOOKUP_TABLE", entry.get("address_lookup_table"))
           PY
 
+      - name: Build Nitro Enclaves CLI from source (v2)
+        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' }}
+        run: |
+          set -euo pipefail
+
+          if command -v nitro-cli >/dev/null; then
+            nitro-cli --version || true
+            exit 0
+          fi
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang \
+            gcc \
+            git \
+            libclang-dev \
+            libssl-dev \
+            llvm-dev \
+            make \
+            pkg-config
+
+          # Install Nitro CLI from pinned sources (Ubuntu doesn't ship the official packages).
+          nitro_tag="v1.4.4"
+          src_dir="/tmp/aws-nitro-enclaves-cli"
+          rm -rf "${src_dir}"
+          git clone --depth 1 --branch "${nitro_tag}" https://github.com/aws/aws-nitro-enclaves-cli.git "${src_dir}"
+
+          make -C "${src_dir}" nitro-cli
+          make -C "${src_dir}" vsock-proxy
+          sudo NITRO_CLI_INSTALL_DIR=/opt/nitro-cli make -C "${src_dir}" install
+
+          nitro_bin="$(find /opt/nitro-cli -type f -name nitro-cli -perm -111 | head -n 1 || true)"
+          if [[ -z "${nitro_bin}" ]]; then
+            echo "nitro-cli not found under /opt/nitro-cli after install" >&2
+            find /opt/nitro-cli -maxdepth 4 -type f -name 'nitro-cli*' -print >&2 || true
+            exit 1
+          fi
+          nitro_dir="$(dirname "${nitro_bin}")"
+          echo "${nitro_dir}" >> "$GITHUB_PATH"
+
+          blobs_dir="$(find /opt/nitro-cli -type d -name blobs -path '*nitro_enclaves*' | head -n 1 || true)"
+          if [[ -n "${blobs_dir}" ]]; then
+            echo "NITRO_CLI_BLOBS=${blobs_dir}/" >> "$GITHUB_ENV"
+          fi
+
+          nitro-cli --version
+
       - name: Setup ORP operators via Nitro enclaves (v2)
         if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' }}
         run: |
@@ -296,12 +323,16 @@ jobs:
             exit 1
           fi
 
-          sudo mkdir -p /etc/nitro_enclaves
-          cat <<'EOF' | sudo tee /etc/nitro_enclaves/allocator.yaml >/dev/null
-          memory_mib: 4096
-          cpu_count: 4
-          EOF
-          sudo systemctl restart nitro-enclaves-allocator || sudo service nitro-enclaves-allocator restart || true
+          if ! command -v nitro-cli >/dev/null; then
+            echo "nitro-cli missing (install step failed?)" >&2
+            exit 1
+          fi
+          nitro-cli --version || true
+
+          sudo modprobe nitro_enclaves || true
+          if command -v nitro-cli-config >/dev/null; then
+            sudo nitro-cli-config -i -m 4096 -t 4 || true
+          fi
           sudo systemctl status nitro-enclaves-allocator --no-pager || true
 
           CID1=16
