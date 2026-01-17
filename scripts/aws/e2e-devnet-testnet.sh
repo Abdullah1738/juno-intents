@@ -427,7 +427,7 @@ cmds = [
         "tail -n 80 \"$log\" >&2 || true; "
         "sleep $((attempt*10)); "
         "done; "
-        "export PATH=/opt/nitro-cli/bin:$PATH; "
+        "export PATH=/opt/nitro-cli/usr/bin:$PATH; "
         "export NITRO_CLI_BLOBS=/opt/nitro-cli/usr/share/nitro_enclaves/blobs/; "
         "if ! command -v nitro-cli >/dev/null; then echo 'nitro-cli install failed' >&2; exit 1; fi; "
         "fi; "
