@@ -161,6 +161,39 @@ func cmdInitORP(argv []string) error {
 	return nil
 }
 
+func cmdOrpAttestationInfo(argv []string) error {
+	fs := flag.NewFlagSet("orp-attestation-info", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	var bundleHex string
+	fs.StringVar(&bundleHex, "bundle-hex", "", "Attestation Groth16 bundle hex")
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if bundleHex == "" {
+		return errors.New("--bundle-hex is required")
+	}
+
+	bundleHex = strings.TrimSpace(strings.TrimPrefix(bundleHex, "0x"))
+	bundle, err := hex.DecodeString(bundleHex)
+	if err != nil {
+		return fmt.Errorf("decode --bundle-hex: %w", err)
+	}
+
+	info, err := attestationInfoFromBundleV1(bundle)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("deployment_id=%s\n", hex.EncodeToString(info.DeploymentID[:]))
+	fmt.Printf("junocash_chain_id=%d\n", info.JunocashChainID)
+	fmt.Printf("junocash_genesis_hash=%s\n", hex.EncodeToString(info.JunocashGenesisHash[:]))
+	fmt.Printf("operator_pubkey=%s\n", info.OperatorPubkey.Base58())
+	fmt.Printf("measurement=%s\n", hex.EncodeToString(info.Measurement[:]))
+	fmt.Printf("image_id=%s\n", hex.EncodeToString(info.ImageID[:]))
+	return nil
+}
+
 func cmdOrpRegisterOperator(argv []string) error {
 	fs := flag.NewFlagSet("orp-register-operator", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -286,6 +319,75 @@ func cmdOrpRegisterOperator(argv []string) error {
 	return nil
 }
 
+type attestationBundleInfoV1 struct {
+	ImageID [32]byte
+
+	DeploymentID       [32]byte
+	JunocashChainID    uint8
+	JunocashGenesisHash [32]byte
+	OperatorPubkey     solana.Pubkey
+	Measurement        [32]byte
+}
+
+func attestationInfoFromBundleV1(bundle []byte) (attestationBundleInfoV1, error) {
+	var out attestationBundleInfoV1
+	// Mirror on-chain parse requirements:
+	// version_u16_le || proof_system_u8 || image_id_32 || journal_len_u16_le || journal_bytes || seal_len_u32_le || seal_bytes
+	const (
+		journalLen = 2 + 32 + 1 + 32 + 32 + 32
+		sealLen    = 260
+		minLen     = 2 + 1 + 32 + 2 + journalLen + 4 + sealLen
+	)
+	if len(bundle) < minLen {
+		return out, errors.New("bundle too short")
+	}
+	if binary.LittleEndian.Uint16(bundle[0:2]) != 1 {
+		return out, errors.New("unsupported bundle version")
+	}
+	if bundle[2] != 1 {
+		return out, errors.New("unsupported proof system")
+	}
+	copy(out.ImageID[:], bundle[3:35])
+
+	jl := int(binary.LittleEndian.Uint16(bundle[35:37]))
+	if jl != journalLen {
+		return out, errors.New("unexpected journal len")
+	}
+	journalOff := 37
+	journalEnd := journalOff + jl
+	if len(bundle) < journalEnd+4 {
+		return out, errors.New("bundle too short")
+	}
+	sl := int(binary.LittleEndian.Uint32(bundle[journalEnd : journalEnd+4]))
+	if sl != sealLen {
+		return out, errors.New("unexpected seal len")
+	}
+	if len(bundle) != journalEnd+4+sl {
+		return out, errors.New("unexpected bundle len")
+	}
+	journal := bundle[journalOff:journalEnd]
+
+	if binary.LittleEndian.Uint16(journal[0:2]) != 1 {
+		return out, errors.New("unsupported journal version")
+	}
+	var off int
+	off = 2
+	copy(out.DeploymentID[:], journal[off:off+32])
+	off += 32
+	out.JunocashChainID = journal[off]
+	off += 1
+	copy(out.JunocashGenesisHash[:], journal[off:off+32])
+	off += 32
+	copy(out.OperatorPubkey[:], journal[off:off+32])
+	off += 32
+	copy(out.Measurement[:], journal[off:off+32])
+	off += 32
+	if off != journalLen {
+		return out, errors.New("internal parse error")
+	}
+	return out, nil
+}
+
 func encodeOrpInitialize(
 	deploymentID [32]byte,
 	admin solana.Pubkey,
@@ -385,38 +487,10 @@ func parseOrpConfigV1(b []byte) (orpConfigV1, error) {
 
 func operatorPubkeyFromAttestationBundleV1(bundle []byte) ([32]byte, error) {
 	var out [32]byte
-	// Mirror on-chain parse requirements:
-	// version_u16_le || proof_system_u8 || image_id_32 || journal_len_u16_le || journal_bytes || seal_len_u32_le || seal_bytes
-	const journalLen = 2 + 32 + 1 + 32 + 32 + 32
-	const sealLen = 260
-	const minLen = 2 + 1 + 32 + 2 + journalLen + 4 + sealLen
-	if len(bundle) < minLen {
-		return out, errors.New("bundle too short")
+	info, err := attestationInfoFromBundleV1(bundle)
+	if err != nil {
+		return out, err
 	}
-	if binary.LittleEndian.Uint16(bundle[0:2]) != 1 {
-		return out, errors.New("unsupported bundle version")
-	}
-	jl := int(binary.LittleEndian.Uint16(bundle[35:37]))
-	if jl != journalLen {
-		return out, errors.New("unexpected journal len")
-	}
-	journalOff := 37
-	journalEnd := journalOff + jl
-	if len(bundle) < journalEnd+4 {
-		return out, errors.New("bundle too short")
-	}
-	sl := int(binary.LittleEndian.Uint32(bundle[journalEnd : journalEnd+4]))
-	if sl != sealLen {
-		return out, errors.New("unexpected seal len")
-	}
-	if len(bundle) != journalEnd+4+sl {
-		return out, errors.New("unexpected bundle len")
-	}
-	journal := bundle[journalOff:journalEnd]
-	if binary.LittleEndian.Uint16(journal[0:2]) != 1 {
-		return out, errors.New("unsupported journal version")
-	}
-	const operatorOff = 2 + 32 + 1 + 32
-	copy(out[:], journal[operatorOff:operatorOff+32])
+	copy(out[:], info.OperatorPubkey[:])
 	return out, nil
 }

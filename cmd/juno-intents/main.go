@@ -50,6 +50,8 @@ func run(argv []string) error {
 		return cmdProveCI(argv[1:])
 	case "init-orp":
 		return cmdInitORP(argv[1:])
+	case "orp-attestation-info":
+		return cmdOrpAttestationInfo(argv[1:])
 	case "orp-register-operator":
 		return cmdOrpRegisterOperator(argv[1:])
 	case "init-crp":
@@ -88,6 +90,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  juno-intents set-witness-secret [-- <wallet_witness_v1 args>]")
 	fmt.Fprintln(w, "  juno-intents prove-ci [--witness-source regtest|secret]")
 	fmt.Fprintln(w, "  juno-intents init-orp --orp-program-id <pubkey> --deployment-id <hex32> --admin <pubkey> --junocash-chain-id <u8> --junocash-genesis-hash <hex32> --verifier-router-program <pubkey> --verifier-program-id <pubkey> --allowed-measurement <hex32> [--allowed-measurement <hex32>...] [--payer-keypair <path>] [--dry-run]")
+	fmt.Fprintln(w, "  juno-intents orp-attestation-info --bundle-hex <hex>")
 	fmt.Fprintln(w, "  juno-intents orp-register-operator --orp-program-id <pubkey> --deployment-id <hex32> --bundle-hex <hex> [--payer-keypair <path>] [--dry-run]")
 	fmt.Fprintln(w, "  juno-intents init-crp --crp-program-id <pubkey> --deployment-id <hex32> --admin <pubkey> --threshold <u8> --conflict-threshold <u8> --finalization-delay-slots <u64> [--operator-registry-program <pubkey>] --operator <pubkey> [--operator <pubkey>...] [--payer-keypair <path>] [--dry-run]")
 	fmt.Fprintln(w, "  juno-intents init-iep --iep-program-id <pubkey> --deployment-id <hex32> --fee-bps <u16> --fee-collector <pubkey> --checkpoint-registry-program <pubkey> --receipt-verifier-program <pubkey> --verifier-router-program <pubkey> --verifier-router <pubkey> --verifier-entry <pubkey> --verifier-program <pubkey> [--payer-keypair <path>] [--dry-run]")
@@ -107,6 +110,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  set-witness-secret Generate a v1 receipt witness hex for e2e and write it to the JUNO_RECEIPT_WITNESS_HEX GitHub Actions secret.")
 	fmt.Fprintln(w, "  prove-ci  Triggers a workflow_dispatch GPU prove run and watches it.")
 	fmt.Fprintln(w, "  init-orp  Initializes an ORP config PDA (one-time deploy step).")
+	fmt.Fprintln(w, "  orp-attestation-info Prints parsed fields from an attestation Groth16 bundle.")
 	fmt.Fprintln(w, "  orp-register-operator Registers a Nitro-attested operator key in ORP.")
 	fmt.Fprintln(w, "  init-crp  Initializes a CRP config PDA (one-time deploy step).")
 	fmt.Fprintln(w, "  init-iep  Initializes an IEP config PDA (one-time deploy step).")
