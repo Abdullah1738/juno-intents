@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.."; pwd)"
 
+DOCKERFILE_REL="${JUNO_EIF_DOCKERFILE:-enclave/operator/Dockerfile}"
+DOCKERFILE_PATH="${ROOT}/${DOCKERFILE_REL}"
+
 IMAGE_TAG="${JUNO_EIF_IMAGE_TAG:-juno-intents/nitro-operator-enclave:$(git -C "${ROOT}" rev-parse --short HEAD)}"
 OUT_DIR="${JUNO_EIF_OUT_DIR:-${ROOT}/tmp/enclave}"
 OUT_EIF="${JUNO_EIF_OUT_EIF:-${OUT_DIR}/operator.eif}"
@@ -24,13 +27,18 @@ require_cmd() {
 require_cmd docker
 require_cmd nitro-cli
 
+if [[ ! -f "${DOCKERFILE_PATH}" ]]; then
+  echo "dockerfile not found: ${DOCKERFILE_PATH}" >&2
+  exit 1
+fi
+
 mkdir -p "${OUT_DIR}"
 mkdir -p "${NITRO_CLI_ARTIFACTS}"
 
 echo "building docker image: ${IMAGE_TAG}" >&2
 if [[ "${JUNO_EIF_DETERMINISTIC_CONTEXT:-1}" == "1" ]]; then
   echo "building deterministic docker context..." >&2
-  ROOT_FOR_CTX="${ROOT}" python3 - <<'PY' \
+  ROOT_FOR_CTX="${ROOT}" DOCKERFILE_FOR_CTX="${DOCKERFILE_PATH}" python3 - <<'PY' \
     | docker build --platform linux/amd64 -f Dockerfile -t "${IMAGE_TAG}" -
 import io
 import os
@@ -53,7 +61,7 @@ for b in out.split(b"\0"):
   paths.append(b.decode("utf-8", errors="strict"))
 paths.sort()
 
-dockerfile_path = os.path.join(root, "enclave", "operator", "Dockerfile")
+dockerfile_path = os.environ["DOCKERFILE_FOR_CTX"]
 with open(dockerfile_path, "rb") as f:
   dockerfile = f.read()
 
@@ -106,7 +114,7 @@ with tarfile.open(fileobj=sys.stdout.buffer, mode="w|", format=tarfile.GNU_FORMA
       continue
 PY
 else
-  docker build --platform linux/amd64 -f "${ROOT}/enclave/operator/Dockerfile" -t "${IMAGE_TAG}" "${ROOT}"
+  docker build --platform linux/amd64 -f "${DOCKERFILE_PATH}" -t "${IMAGE_TAG}" "${ROOT}"
 fi
 
 echo "building EIF: ${OUT_EIF}" >&2

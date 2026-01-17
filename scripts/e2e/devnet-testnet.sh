@@ -22,6 +22,10 @@ CREATOR_KEYPAIR_OVERRIDE="${JUNO_E2E_CREATOR_KEYPAIR:-}"
 CRP_OPERATOR1_KEYPAIR="${JUNO_E2E_CRP_OPERATOR1_KEYPAIR:-}"
 CRP_OPERATOR2_KEYPAIR="${JUNO_E2E_CRP_OPERATOR2_KEYPAIR:-}"
 
+CRP_SUBMIT_ENCLAVE_CID1="${JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID1:-}"
+CRP_SUBMIT_ENCLAVE_CID2="${JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID2:-}"
+CRP_SUBMIT_ENCLAVE_PORT="${JUNO_E2E_CRP_SUBMIT_ENCLAVE_PORT:-5000}"
+
 usage() {
   cat <<'USAGE' >&2
 Usage:
@@ -40,6 +44,9 @@ Environment (optional):
   JUNO_E2E_CREATOR_KEYPAIR         (optional: funded Solana CLI JSON keypair path; skips airdrop)
   JUNO_E2E_CRP_OPERATOR1_KEYPAIR   (optional: Solana CLI JSON keypair path for CRP operator #1)
   JUNO_E2E_CRP_OPERATOR2_KEYPAIR   (optional: Solana CLI JSON keypair path for CRP operator #2)
+  JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID1 (optional: if set with CID2, uses Nitro enclaves to sign SubmitObservation)
+  JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID2 (optional: if set with CID1, uses Nitro enclaves to sign SubmitObservation)
+  JUNO_E2E_CRP_SUBMIT_ENCLAVE_PORT (default: 5000)
 
 Notes:
   - Starts a local JunoCash "testnet" Docker network (isolated, mined).
@@ -115,6 +122,20 @@ fi
 if [[ -n "${CRP_OPERATOR2_KEYPAIR}" && ! -f "${CRP_OPERATOR2_KEYPAIR}" ]]; then
   echo "CRP operator #2 keypair not found: ${CRP_OPERATOR2_KEYPAIR}" >&2
   exit 2
+fi
+if [[ -n "${CRP_SUBMIT_ENCLAVE_CID1}" || -n "${CRP_SUBMIT_ENCLAVE_CID2}" ]]; then
+  if [[ -z "${CRP_SUBMIT_ENCLAVE_CID1}" || -z "${CRP_SUBMIT_ENCLAVE_CID2}" ]]; then
+    echo "both JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID1 and JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID2 are required when using enclaves" >&2
+    exit 2
+  fi
+  if [[ ! "${CRP_SUBMIT_ENCLAVE_CID1}" =~ ^[0-9]+$ || ! "${CRP_SUBMIT_ENCLAVE_CID2}" =~ ^[0-9]+$ ]]; then
+    echo "enclave CIDs must be u32 integers" >&2
+    exit 2
+  fi
+  if [[ ! "${CRP_SUBMIT_ENCLAVE_PORT}" =~ ^[0-9]+$ || "${CRP_SUBMIT_ENCLAVE_PORT}" -le 0 || "${CRP_SUBMIT_ENCLAVE_PORT}" -gt 4294967295 ]]; then
+    echo "enclave port must be a u32 integer > 0" >&2
+    exit 2
+  fi
 fi
 
 airdrop() {
@@ -1102,21 +1123,50 @@ if [[ "${PAYMENT_HEIGHT_B}" -lt "${start_height}" ]]; then
   start_height="${PAYMENT_HEIGHT_B}"
 fi
 
-"${GO_CRP}" run \
-  --deployment "${DEPLOYMENT_NAME}" \
-  --deployment-file "${DEPLOYMENT_FILE}" \
-  --junocash-cli "${JUNOCASH_CLI}" \
-  --junocash-chain "${JUNOCASH_CHAIN}" \
-  --junocash-genesis-hash "${JUNOCASH_GENESIS_EXPECTED}" \
-  --start-height "${start_height}" \
-  --lag 1 \
-  --poll-interval 1s \
-  --payer-keypair "${SOLVER_KEYPAIR}" \
-  --submit-operator-keypair "${OP1_KEYPAIR}" \
-  --finalize-operator-keypair "${OP1_KEYPAIR}" \
-  --finalize-operator-keypair "${OP2_KEYPAIR}" \
-  --priority-level "${PRIORITY_LEVEL}" \
-  --once >/dev/null
+if [[ -n "${CRP_SUBMIT_ENCLAVE_CID1}" && -n "${CRP_SUBMIT_ENCLAVE_CID2}" ]]; then
+  echo "CRP submit: signing via Nitro enclaves (CIDs ${CRP_SUBMIT_ENCLAVE_CID1}, ${CRP_SUBMIT_ENCLAVE_CID2})..." >&2
+  for cid in "${CRP_SUBMIT_ENCLAVE_CID1}" "${CRP_SUBMIT_ENCLAVE_CID2}"; do
+    "${GO_CRP}" run \
+      --deployment "${DEPLOYMENT_NAME}" \
+      --deployment-file "${DEPLOYMENT_FILE}" \
+      --junocash-cli "${JUNOCASH_CLI}" \
+      --junocash-chain "${JUNOCASH_CHAIN}" \
+      --junocash-genesis-hash "${JUNOCASH_GENESIS_EXPECTED}" \
+      --start-height "${start_height}" \
+      --lag 1 \
+      --poll-interval 1s \
+      --payer-keypair "${SOLVER_KEYPAIR}" \
+      --submit-operator-enclave-cid "${cid}" \
+      --submit-operator-enclave-port "${CRP_SUBMIT_ENCLAVE_PORT}" \
+      --priority-level "${PRIORITY_LEVEL}" \
+      --once --submit-only >/dev/null
+  done
+  echo "CRP finalize: finalize-pending (extract signatures from chain)..." >&2
+  "${GO_CRP}" finalize-pending \
+    --deployment "${DEPLOYMENT_NAME}" \
+    --deployment-file "${DEPLOYMENT_FILE}" \
+    --payer-keypair "${SOLVER_KEYPAIR}" \
+    --config-scan-limit 200 \
+    --scan-limit 300 \
+    --max-checkpoints 100 \
+    --priority-level "${PRIORITY_LEVEL}" >/dev/null
+else
+  "${GO_CRP}" run \
+    --deployment "${DEPLOYMENT_NAME}" \
+    --deployment-file "${DEPLOYMENT_FILE}" \
+    --junocash-cli "${JUNOCASH_CLI}" \
+    --junocash-chain "${JUNOCASH_CHAIN}" \
+    --junocash-genesis-hash "${JUNOCASH_GENESIS_EXPECTED}" \
+    --start-height "${start_height}" \
+    --lag 1 \
+    --poll-interval 1s \
+    --payer-keypair "${SOLVER_KEYPAIR}" \
+    --submit-operator-keypair "${OP1_KEYPAIR}" \
+    --finalize-operator-keypair "${OP1_KEYPAIR}" \
+    --finalize-operator-keypair "${OP2_KEYPAIR}" \
+    --priority-level "${PRIORITY_LEVEL}" \
+    --once >/dev/null
+fi
 
 echo "filling intents on Solana..." >&2
 "${GO_INTENTS}" iep-fill \
