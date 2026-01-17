@@ -62,7 +62,15 @@ need_cmd cargo
 need_cmd solana
 need_cmd solana-keygen
 need_cmd docker
-need_cmd nitro-cli
+
+NITRO_CLI="nitro-cli"
+if [[ -x "/opt/nitro-cli/usr/bin/nitro-cli" ]]; then
+  NITRO_CLI="/opt/nitro-cli/usr/bin/nitro-cli"
+fi
+if [[ ! -x "${NITRO_CLI}" ]]; then
+  echo "missing required command: nitro-cli" >&2
+  exit 1
+fi
 
 if [[ ! -e /dev/nitro_enclaves ]]; then
   echo "/dev/nitro_enclaves missing; Nitro Enclaves must be enabled on the host" >&2
@@ -155,7 +163,7 @@ WORKDIR="${ROOT}/tmp/e2e/devnet-testnet-tee/${E2E_DEPLOYMENT}"
 mkdir -p "${WORKDIR}"
 
 cleanup() {
-  sudo nitro-cli terminate-enclave --all >/dev/null 2>&1 || true
+  sudo "${NITRO_CLI}" terminate-enclave --all >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -236,8 +244,8 @@ CID2=17
 PORT=5000
 
 echo "starting enclaves..." >&2
-sudo nitro-cli run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 2 --memory 1024 --enclave-cid "${CID1}" >/dev/null
-sudo nitro-cli run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 2 --memory 1024 --enclave-cid "${CID2}" >/dev/null
+sudo "${NITRO_CLI}" run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 2 --memory 1024 --enclave-cid "${CID1}" >/dev/null
+sudo "${NITRO_CLI}" run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 2 --memory 1024 --enclave-cid "${CID2}" >/dev/null
 
 echo "generating attestation witnesses..." >&2
 w1="$(sudo -E "${GO_NITRO}" witness --enclave-cid "${CID1}" --enclave-port "${PORT}" --deployment-id "${DEPLOYMENT_ID}" --junocash-chain-id "${CHAIN_ID}" --junocash-genesis-hash "${JUNOCASH_GENESIS_HASH}")"
