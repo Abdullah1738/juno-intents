@@ -293,7 +293,7 @@ risc0_groth16_version = os.environ["RISC0_GROTH16_VERSION"]
 go_version = os.environ.get("GO_VERSION", "1.22.6")
 
 cmds = [
-    "set -euo pipefail",
+    "set -eu",
     "if ! command -v git >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends git; fi",
     "if ! command -v curl >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends curl; fi",
     "if ! command -v protoc >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler; fi",
@@ -321,7 +321,7 @@ cmds = [
     f"export JUNO_E2E_PRIORITY_LEVEL={priority_level}",
     (
         "if [ \"{mode}\" = \"v2\" ]; then "
-        "set -euo pipefail; "
+        "set -eu; "
         "if [ ! -e /dev/nitro_enclaves ]; then echo \"/dev/nitro_enclaves missing\" >&2; exit 1; fi; "
         "if ! command -v nitro-cli >/dev/null; then "
         "sudo apt-get update; "
