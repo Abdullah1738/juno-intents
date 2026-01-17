@@ -340,7 +340,7 @@ cmds = [
         "sudo apt-get update; "
         "sudo apt-get install -y --no-install-recommends clang gcc git libclang-dev libssl-dev llvm-dev make pkg-config; "
         "attempt=0; "
-        "while [ ${attempt} -lt 3 ]; do "
+        "while [ ${{attempt}} -lt 3 ]; do "
         "attempt=$((attempt+1)); "
         "rm -rf /tmp/aws-nitro-enclaves-cli; "
         "if git clone --depth 1 --branch v1.4.4 https://github.com/aws/aws-nitro-enclaves-cli.git /tmp/aws-nitro-enclaves-cli "
