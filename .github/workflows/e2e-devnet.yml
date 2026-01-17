@@ -222,6 +222,7 @@ jobs:
           credential_source = Ec2InstanceMetadata
           EOF
           export JUNO_E2E_INSTANCE_PROFILE_NAME="runs-on-EC2InstanceProfile-PCdGxlyDmWJ8"
+          export JUNO_E2E_INSTANCE_TYPE="g5.xlarge"
           ./scripts/aws/e2e-devnet-testnet.sh \
             --deployment "${{ github.event.inputs.deployment }}" \
             --ref "${{ github.sha }}" \
