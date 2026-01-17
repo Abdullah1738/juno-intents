@@ -372,14 +372,42 @@ PY
 
 echo "ssm command id: ${COMMAND_ID}" >&2
 echo "waiting for command to finish..." >&2
-awsj ssm wait command-executed --command-id "${COMMAND_ID}" --instance-id "${INSTANCE_ID}" || true
-
-status="$(awsj ssm get-command-invocation \
-  --command-id "${COMMAND_ID}" \
-  --instance-id "${INSTANCE_ID}" \
-  --query 'Status' \
-  --output text)"
-echo "ssm status: ${status}" >&2
+ssm_timeout_seconds="${JUNO_E2E_SSM_TIMEOUT_SECONDS:-10200}" # 170 minutes
+start_ts="$(date +%s)"
+status=""
+last_status=""
+while true; do
+  status="$(awsj ssm get-command-invocation \
+    --command-id "${COMMAND_ID}" \
+    --instance-id "${INSTANCE_ID}" \
+    --query 'Status' \
+    --output text 2>/dev/null || true)"
+  if [[ -z "${status}" || "${status}" == "None" ]]; then
+    sleep 5
+    continue
+  fi
+  if [[ "${status}" != "${last_status}" ]]; then
+    echo "ssm status: ${status}" >&2
+    last_status="${status}"
+  fi
+  case "${status}" in
+    Success|Failed|Cancelled|TimedOut)
+      break
+      ;;
+    Pending|InProgress|Delayed)
+      ;;
+    *)
+      echo "unexpected ssm status: ${status}" >&2
+      ;;
+  esac
+  now_ts="$(date +%s)"
+  if (( now_ts - start_ts > ssm_timeout_seconds )); then
+    echo "ssm command did not finish within ${ssm_timeout_seconds}s (timing out)" >&2
+    status="TimedOut"
+    break
+  fi
+  sleep 15
+done
 
 if [[ "${status}" != "Success" ]]; then
   awsj ssm get-command-invocation \
