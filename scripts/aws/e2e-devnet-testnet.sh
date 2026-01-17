@@ -111,6 +111,7 @@ ROLE_NAME="$(get_cf_output RunsOnInstanceRoleName)"
 
 SUBNET_ID=""
 INSTANCE_PROFILE_ARN=""
+INSTANCE_PROFILE_NAME=""
 
 if [[ -n "${SUBNETS_CSV}" && "${SUBNETS_CSV}" != "None" && -n "${SECURITY_GROUP_ID}" && "${SECURITY_GROUP_ID}" != "None" ]]; then
   IFS=',' read -r SUBNET_ID _rest <<<"${SUBNETS_CSV}"
@@ -148,14 +149,21 @@ if [[ -z "${SUBNET_ID}" || -z "${SECURITY_GROUP_ID}" || -z "${INSTANCE_PROFILE_A
       iam_info="$(imds_get meta-data/iam/info "${token}" || true)"
       INSTANCE_PROFILE_ARN="$(python3 -c 'import json,sys\ntry:\n  d=json.load(sys.stdin)\nexcept Exception:\n  raise SystemExit(0)\nprint((d.get(\"InstanceProfileArn\") or \"\").strip())' <<<"${iam_info}" 2>/dev/null || true)"
     fi
+    if [[ -z "${INSTANCE_PROFILE_ARN}" ]]; then
+      role_name="$(imds_get meta-data/iam/security-credentials/ "${token}" | head -n 1 | tr -d '\r\n ' || true)"
+      if [[ -n "${role_name}" ]]; then
+        INSTANCE_PROFILE_NAME="${role_name}"
+      fi
+    fi
   fi
 fi
 
-if [[ -z "${SUBNET_ID}" || -z "${SECURITY_GROUP_ID}" || -z "${INSTANCE_PROFILE_ARN}" ]]; then
+if [[ -z "${SUBNET_ID}" || -z "${SECURITY_GROUP_ID}" || ( -z "${INSTANCE_PROFILE_ARN}" && -z "${INSTANCE_PROFILE_NAME}" ) ]]; then
   echo "failed to determine subnet/security-group/instance-profile for launch" >&2
   echo "subnet_id=${SUBNET_ID:-}" >&2
   echo "security_group_id=${SECURITY_GROUP_ID:-}" >&2
   echo "instance_profile_arn=${INSTANCE_PROFILE_ARN:-}" >&2
+  echo "instance_profile_name=${INSTANCE_PROFILE_NAME:-}" >&2
   echo "stack_name=${STACK_NAME}" >&2
   exit 1
 fi
@@ -170,12 +178,18 @@ cleanup() {
 trap cleanup EXIT
 
 echo "launching ${INSTANCE_TYPE} in ${REGION} (ami=${AMI_ID})" >&2
+instance_profile_arg=""
+if [[ -n "${INSTANCE_PROFILE_ARN}" ]]; then
+  instance_profile_arg="Arn=${INSTANCE_PROFILE_ARN}"
+else
+  instance_profile_arg="Name=${INSTANCE_PROFILE_NAME}"
+fi
 INSTANCE_ID="$(awsj ec2 run-instances \
   --image-id "${AMI_ID}" \
   --instance-type "${INSTANCE_TYPE}" \
   --subnet-id "${SUBNET_ID}" \
   --security-group-ids "${SECURITY_GROUP_ID}" \
-  --iam-instance-profile "Arn=${INSTANCE_PROFILE_ARN}" \
+  --iam-instance-profile "${instance_profile_arg}" \
   $(if [[ "${CRP_MODE}" == "v2" ]]; then printf '%s' "--enclave-options Enabled=true"; fi) \
   --block-device-mappings '[
     {
