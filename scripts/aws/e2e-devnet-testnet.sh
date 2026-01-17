@@ -80,44 +80,83 @@ awsj() {
   aws --profile "${PROFILE}" --region "${REGION}" "$@"
 }
 
+imds_token() {
+  curl -fsS -m 2 -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true
+}
+
+imds_get() {
+  local path="$1"
+  local token="${2:-}"
+  if [[ -z "${token}" ]]; then
+    token="$(imds_token)"
+  fi
+  if [[ -z "${token}" ]]; then
+    return 1
+  fi
+  curl -fsS -m 2 -H "X-aws-ec2-metadata-token: ${token}" "http://169.254.169.254/latest/${path}" 2>/dev/null
+}
+
 get_cf_output() {
   local key="$1"
   awsj cloudformation describe-stacks \
     --stack-name "${STACK_NAME}" \
     --query "Stacks[0].Outputs[?OutputKey=='${key}'].OutputValue | [0]" \
-    --output text
+    --output text 2>/dev/null || true
 }
 
 SUBNETS_CSV="$(get_cf_output RunsOnPublicSubnetIds)"
 SECURITY_GROUP_ID="$(get_cf_output RunsOnSecurityGroupId)"
 ROLE_NAME="$(get_cf_output RunsOnInstanceRoleName)"
 
-if [[ -z "${SUBNETS_CSV}" || "${SUBNETS_CSV}" == "None" ]]; then
-  echo "failed to read RunsOnPublicSubnetIds from CloudFormation stack: ${STACK_NAME}" >&2
-  exit 1
-fi
-if [[ -z "${SECURITY_GROUP_ID}" || "${SECURITY_GROUP_ID}" == "None" ]]; then
-  echo "failed to read RunsOnSecurityGroupId from CloudFormation stack: ${STACK_NAME}" >&2
-  exit 1
-fi
-if [[ -z "${ROLE_NAME}" || "${ROLE_NAME}" == "None" ]]; then
-  echo "failed to read RunsOnInstanceRoleName from CloudFormation stack: ${STACK_NAME}" >&2
-  exit 1
+SUBNET_ID=""
+INSTANCE_PROFILE_ARN=""
+
+if [[ -n "${SUBNETS_CSV}" && "${SUBNETS_CSV}" != "None" && -n "${SECURITY_GROUP_ID}" && "${SECURITY_GROUP_ID}" != "None" ]]; then
+  IFS=',' read -r SUBNET_ID _rest <<<"${SUBNETS_CSV}"
 fi
 
-IFS=',' read -r SUBNET_ID _rest <<<"${SUBNETS_CSV}"
-if [[ -z "${SUBNET_ID}" ]]; then
-  echo "could not select subnet from RunsOnPublicSubnetIds: ${SUBNETS_CSV}" >&2
-  exit 1
+if [[ -n "${ROLE_NAME}" && "${ROLE_NAME}" != "None" ]]; then
+  INSTANCE_PROFILE_NAME="$(aws iam list-instance-profiles-for-role \
+    --profile "${PROFILE}" \
+    --role-name "${ROLE_NAME}" \
+    --query 'InstanceProfiles[0].InstanceProfileName' \
+    --output text 2>/dev/null || true)"
+  if [[ -n "${INSTANCE_PROFILE_NAME}" && "${INSTANCE_PROFILE_NAME}" != "None" ]]; then
+    INSTANCE_PROFILE_ARN="$(aws iam get-instance-profile \
+      --profile "${PROFILE}" \
+      --instance-profile-name "${INSTANCE_PROFILE_NAME}" \
+      --query 'InstanceProfile.Arn' \
+      --output text 2>/dev/null || true)"
+  fi
 fi
 
-INSTANCE_PROFILE_NAME="$(aws iam list-instance-profiles-for-role \
-  --profile "${PROFILE}" \
-  --role-name "${ROLE_NAME}" \
-  --query 'InstanceProfiles[0].InstanceProfileName' \
-  --output text)"
-if [[ -z "${INSTANCE_PROFILE_NAME}" || "${INSTANCE_PROFILE_NAME}" == "None" ]]; then
-  echo "could not find instance profile for role: ${ROLE_NAME}" >&2
+if [[ -z "${SUBNET_ID}" || -z "${SECURITY_GROUP_ID}" || -z "${INSTANCE_PROFILE_ARN}" ]]; then
+  token="$(imds_token)"
+  if [[ -n "${token}" ]]; then
+    macs="$(imds_get meta-data/network/interfaces/macs/ "${token}" || true)"
+    mac="$(printf '%s\n' "${macs}" | head -n 1 | tr -d '/\r\n ' )"
+    if [[ -n "${mac}" ]]; then
+      if [[ -z "${SUBNET_ID}" ]]; then
+        SUBNET_ID="$(imds_get "meta-data/network/interfaces/macs/${mac}/subnet-id" "${token}" | tr -d '\r\n ' || true)"
+      fi
+      if [[ -z "${SECURITY_GROUP_ID}" ]]; then
+        SECURITY_GROUP_ID="$(imds_get "meta-data/network/interfaces/macs/${mac}/security-group-ids" "${token}" | head -n 1 | tr -d '\r\n ' || true)"
+      fi
+    fi
+    if [[ -z "${INSTANCE_PROFILE_ARN}" ]]; then
+      iam_info="$(imds_get meta-data/iam/info "${token}" || true)"
+      INSTANCE_PROFILE_ARN="$(python3 -c 'import json,sys\ntry:\n  d=json.load(sys.stdin)\nexcept Exception:\n  raise SystemExit(0)\nprint((d.get(\"InstanceProfileArn\") or \"\").strip())' <<<"${iam_info}" 2>/dev/null || true)"
+    fi
+  fi
+fi
+
+if [[ -z "${SUBNET_ID}" || -z "${SECURITY_GROUP_ID}" || -z "${INSTANCE_PROFILE_ARN}" ]]; then
+  echo "failed to determine subnet/security-group/instance-profile for launch" >&2
+  echo "subnet_id=${SUBNET_ID:-}" >&2
+  echo "security_group_id=${SECURITY_GROUP_ID:-}" >&2
+  echo "instance_profile_arn=${INSTANCE_PROFILE_ARN:-}" >&2
+  echo "stack_name=${STACK_NAME}" >&2
   exit 1
 fi
 
@@ -136,7 +175,7 @@ INSTANCE_ID="$(awsj ec2 run-instances \
   --instance-type "${INSTANCE_TYPE}" \
   --subnet-id "${SUBNET_ID}" \
   --security-group-ids "${SECURITY_GROUP_ID}" \
-  --iam-instance-profile "Name=${INSTANCE_PROFILE_NAME}" \
+  --iam-instance-profile "Arn=${INSTANCE_PROFILE_ARN}" \
   $(if [[ "${CRP_MODE}" == "v2" ]]; then printf '%s' "--enclave-options Enabled=true"; fi) \
   --block-device-mappings '[
     {
