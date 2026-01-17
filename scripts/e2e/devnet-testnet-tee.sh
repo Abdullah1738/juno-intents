@@ -210,10 +210,18 @@ transfer_sol "${SOLVER_KEYPAIR}" "${CREATOR_PUBKEY}" 1 || {
 }
 
 echo "building EIF (e2e)..." >&2
-JUNO_EIF_DOCKERFILE=enclave/operator/Dockerfile.e2e \
+eif_out="${WORKDIR}/build-eif.stdout.log"
+eif_err="${WORKDIR}/build-eif.stderr.log"
+if ! JUNO_EIF_DOCKERFILE=enclave/operator/Dockerfile.e2e \
   JUNO_EIF_OUT_DIR="${WORKDIR}/eif" \
   JUNO_EIF_OUT_EIF="${WORKDIR}/eif/operator.eif" \
-  "${ROOT}/scripts/enclave/build-eif.sh" >/dev/null
+  "${ROOT}/scripts/enclave/build-eif.sh" >"${eif_out}" 2>"${eif_err}"; then
+  echo "EIF build failed (tailing logs)..." >&2
+  tail -n 200 "${eif_out}" >&2 || true
+  tail -n 200 "${eif_err}" >&2 || true
+  exit 1
+fi
+grep -E '^pcr0=[0-9a-fA-F]{96}$' "${eif_err}" >&2 || true
 
 CID1=16
 CID2=17
