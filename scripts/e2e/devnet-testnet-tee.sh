@@ -177,22 +177,35 @@ airdrop() {
   local pubkey="$1"
   local sol="$2"
   local kp="$3"
-  for _ in $(seq 1 10); do
+  for i in $(seq 1 30); do
     if solana -u "${RPC_URL}" airdrop "${sol}" "${pubkey}" --keypair "${kp}" >/dev/null 2>&1; then
       return 0
     fi
-    sleep 2
+    sleep "${i}"
   done
   return 1
 }
 
-echo "airdropping SOL..." >&2
-airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}" || {
+transfer_sol() {
+  local from_kp="$1"
+  local to_pubkey="$2"
+  local sol="$3"
+  for i in $(seq 1 20); do
+    if solana -u "${RPC_URL}" transfer --allow-unfunded-recipient -k "${from_kp}" "${to_pubkey}" "${sol}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "${i}"
+  done
+  return 1
+}
+
+echo "funding SOL..." >&2
+airdrop "${SOLVER_PUBKEY}" 3 "${SOLVER_KEYPAIR}" || {
   echo "solver airdrop failed: ${SOLVER_PUBKEY}" >&2
   exit 1
 }
-airdrop "${CREATOR_PUBKEY}" 2 "${CREATOR_KEYPAIR}" || {
-  echo "creator airdrop failed: ${CREATOR_PUBKEY}" >&2
+transfer_sol "${SOLVER_KEYPAIR}" "${CREATOR_PUBKEY}" 1 || {
+  echo "creator funding transfer failed: ${CREATOR_PUBKEY}" >&2
   exit 1
 }
 
