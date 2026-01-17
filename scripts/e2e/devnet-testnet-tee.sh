@@ -209,6 +209,13 @@ transfer_sol "${SOLVER_KEYPAIR}" "${CREATOR_PUBKEY}" 1 || {
   exit 1
 }
 
+echo "preparing nitro log dir..." >&2
+sudo mkdir -p /var/log/nitro_enclaves
+sudo touch /var/log/nitro_enclaves/nitro_enclaves.log
+sudo chown root:root /var/log/nitro_enclaves /var/log/nitro_enclaves/nitro_enclaves.log || true
+sudo chmod 755 /var/log/nitro_enclaves || true
+sudo chmod 644 /var/log/nitro_enclaves/nitro_enclaves.log || true
+
 echo "building EIF (e2e)..." >&2
 eif_out="${WORKDIR}/build-eif.stdout.log"
 eif_err="${WORKDIR}/build-eif.stderr.log"
