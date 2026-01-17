@@ -66,10 +66,8 @@ need_cmd docker
 NITRO_CLI="nitro-cli"
 if [[ -x "/opt/nitro-cli/usr/bin/nitro-cli" ]]; then
   NITRO_CLI="/opt/nitro-cli/usr/bin/nitro-cli"
-fi
-if [[ ! -x "${NITRO_CLI}" ]]; then
-  echo "missing required command: nitro-cli" >&2
-  exit 1
+else
+  need_cmd nitro-cli
 fi
 
 if [[ ! -e /dev/nitro_enclaves ]]; then

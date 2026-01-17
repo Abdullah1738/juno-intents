@@ -425,7 +425,7 @@ cmds = [
         "if git clone --depth 1 --branch v1.4.4 https://github.com/aws/aws-nitro-enclaves-cli.git /tmp/aws-nitro-enclaves-cli >>\"$log\" 2>&1 "
         "&& make -C /tmp/aws-nitro-enclaves-cli nitro-cli >>\"$log\" 2>&1 "
         "&& make -C /tmp/aws-nitro-enclaves-cli vsock-proxy >>\"$log\" 2>&1 "
-        "&& sudo NITRO_CLI_INSTALL_DIR=/ make -C /tmp/aws-nitro-enclaves-cli install >>\"$log\" 2>&1; "
+        "&& sudo env NITRO_CLI_INSTALL_DIR=/ make -C /tmp/aws-nitro-enclaves-cli install >>\"$log\" 2>&1; "
         "then break; fi; "
         "echo 'nitro-cli build/install failed (tailing log)' >&2; "
         "tail -n 80 \"$log\" >&2 || true; "
