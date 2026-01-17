@@ -286,14 +286,16 @@ jobs:
             exit 1
           fi
           nitro_dir="$(dirname "${nitro_bin}")"
+          export PATH="${nitro_dir}:${PATH}"
           echo "${nitro_dir}" >> "$GITHUB_PATH"
 
           blobs_dir="$(find /opt/nitro-cli -type d -name blobs -path '*nitro_enclaves*' | head -n 1 || true)"
           if [[ -n "${blobs_dir}" ]]; then
+            export NITRO_CLI_BLOBS="${blobs_dir}/"
             echo "NITRO_CLI_BLOBS=${blobs_dir}/" >> "$GITHUB_ENV"
           fi
 
-          nitro-cli --version
+          "${nitro_bin}" --version
 
       - name: Setup ORP operators via Nitro enclaves (v2)
         if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' }}
@@ -330,8 +332,12 @@ jobs:
           nitro-cli --version || true
 
           sudo modprobe nitro_enclaves || true
-          if command -v nitro-cli-config >/dev/null; then
-            sudo nitro-cli-config -i -m 4096 -t 4 || true
+          nitro_cfg="$(command -v nitro-cli-config || true)"
+          if [[ -z "${nitro_cfg}" && -x /opt/nitro-cli/etc/profile.d/nitro-cli-config ]]; then
+            nitro_cfg="/opt/nitro-cli/etc/profile.d/nitro-cli-config"
+          fi
+          if [[ -n "${nitro_cfg}" ]]; then
+            sudo "${nitro_cfg}" -i -m 4096 -t 4 || true
           fi
           sudo systemctl status nitro-enclaves-allocator --no-pager || true
 
