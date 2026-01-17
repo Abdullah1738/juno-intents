@@ -167,6 +167,11 @@ if [[ -z "${SUBNET_ID}" || -z "${SECURITY_GROUP_ID}" || -z "${INSTANCE_PROFILE_A
       role_name="$(imds_get meta-data/iam/security-credentials/ "${token}" | head -n 1 | tr -d '\r\n ' || true)"
       if [[ -n "${role_name}" ]]; then
         INSTANCE_PROFILE_NAME="${role_name}"
+        if [[ "${INSTANCE_PROFILE_NAME}" == *"InstanceRole"* ]]; then
+          INSTANCE_PROFILE_NAME="${INSTANCE_PROFILE_NAME/InstanceRole/InstanceProfile}"
+        elif [[ "${INSTANCE_PROFILE_NAME}" == *"Role"* ]]; then
+          INSTANCE_PROFILE_NAME="${INSTANCE_PROFILE_NAME/Role/Profile}"
+        fi
       fi
     fi
   fi
