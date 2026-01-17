@@ -353,7 +353,7 @@ cmds = [
         "&& sudo NITRO_CLI_INSTALL_DIR=/opt/nitro-cli make -C /tmp/aws-nitro-enclaves-cli install >>\"$log\" 2>&1; "
         "then break; fi; "
         "echo 'nitro-cli build/install failed (tailing log)' >&2; "
-        "tail -n 200 \"$log\" >&2 || true; "
+        "tail -n 80 \"$log\" >&2 || true; "
         "sleep $((attempt*10)); "
         "done; "
         "export PATH=/opt/nitro-cli/bin:$PATH; "
