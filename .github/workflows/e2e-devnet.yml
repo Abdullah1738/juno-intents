@@ -73,6 +73,7 @@ jobs:
           submodules: recursive
 
       - name: Setup Go
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -80,20 +81,24 @@ jobs:
           cache-dependency-path: go.mod
 
       - name: RunsOn cache
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         uses: runs-on/action@v2
         with:
           sccache: s3
 
       - name: Install sccache
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: GPU prerequisites
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         run: |
           set -euo pipefail
           nvidia-smi
           nvcc --version
 
       - name: Install system deps
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -105,6 +110,7 @@ jobs:
           docker ps >/dev/null
 
       - name: Install Solana CLI
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         run: |
           set -euo pipefail
           SOLANA_DIR="$HOME/.local/share/solana/solana-release"
@@ -122,11 +128,13 @@ jobs:
           spl-token --version
 
       - name: Setup Rust
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache Cargo
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: rust-${{ env.RUST_TOOLCHAIN }}
@@ -136,12 +144,14 @@ jobs:
             solana -> target
 
       - name: Cache RISC0 toolchain
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         uses: actions/cache@v4
         with:
           path: ~/.risc0
           key: ${{ runner.os }}-risc0-rzup-rust-${{ env.RISC0_RUST_TOOLCHAIN }}
 
       - name: Install rzup
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         run: |
           set -euo pipefail
           if command -v rzup >/dev/null && rzup --version | grep -q "${{ env.RZUP_VERSION }}"; then
@@ -151,12 +161,14 @@ jobs:
           cargo install rzup --version ${{ env.RZUP_VERSION }} --locked --force
 
       - name: Install RISC0 toolchain + Groth16 component
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         run: |
           set -euo pipefail
           rzup install rust ${{ env.RISC0_RUST_TOOLCHAIN }}
           rzup install risc0-groth16 0.1.0
 
       - name: Write CRP operator keypairs
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/juno-secrets
@@ -172,6 +184,7 @@ jobs:
           echo "JUNO_E2E_CREATOR_KEYPAIR=/tmp/juno-secrets/creator.json" >> "$GITHUB_ENV"
 
       - name: Normalize Helius env (RPC + priority fees)
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         run: |
           set -euo pipefail
           raw_key="${HELIUS_API_KEY:-}"
@@ -197,7 +210,25 @@ jobs:
           echo "HELIUS_CLUSTER=devnet" >> "$GITHUB_ENV"
           echo "HELIUS_RPC_URL=${devnet_url}" >> "$GITHUB_ENV"
 
+      - name: Run e2e on AWS enclave-enabled instance (v2)
+        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' }}
+        run: |
+          set -euo pipefail
+          aws --version
+          mkdir -p "$HOME/.aws"
+          cat > "$HOME/.aws/config" <<'EOF'
+          [profile juno]
+          region = us-east-1
+          credential_source = Ec2InstanceMetadata
+          EOF
+          ./scripts/aws/e2e-devnet-testnet.sh \
+            --deployment "${{ github.event.inputs.deployment }}" \
+            --ref "${{ github.sha }}" \
+            --crp-mode v2 \
+            --priority-level "${{ github.event.inputs.priority_level }}"
+
       - name: Load base deployment + generate deployment_id
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         run: |
           set -euo pipefail
 
@@ -249,7 +280,7 @@ jobs:
           PY
 
       - name: Build Nitro Enclaves CLI from source (v2)
-        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' }}
+        if: ${{ false }}
         run: |
           set -euo pipefail
 
@@ -298,7 +329,7 @@ jobs:
           "${nitro_bin}" --version
 
       - name: Setup ORP operators via Nitro enclaves (v2)
-        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' }}
+        if: ${{ false }}
         run: |
           set -euo pipefail
 
@@ -448,6 +479,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Prepare ephemeral deployment (init CRP + IEP)
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         run: |
           set -euo pipefail
 
@@ -591,6 +623,7 @@ jobs:
           echo "JUNO_E2E_DEPLOYMENT_FILE=${tmp_deployments}" >> "$GITHUB_ENV"
 
       - name: Run devnet e2e (both directions)
+        if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         env:
           RUST_LOG: info
         run: |
@@ -600,7 +633,7 @@ jobs:
             --deployment-file "${JUNO_E2E_DEPLOYMENT_FILE}"
 
       - name: Cleanup Nitro enclaves (v2)
-        if: ${{ always() && env.JUNO_E2E_CRP_MODE == 'v2' }}
+        if: ${{ false }}
         run: |
           set -euo pipefail
           sudo nitro-cli describe-enclaves || true
