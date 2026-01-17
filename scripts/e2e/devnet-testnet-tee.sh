@@ -244,9 +244,35 @@ CID1=16
 CID2=17
 PORT=5000
 
+dump_nitro_logs() {
+  echo "nitro debug (best effort)..." >&2
+  if command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl status nitro-enclaves-allocator.service --no-pager >&2 || true
+    sudo journalctl -u nitro-enclaves-allocator.service -n 200 --no-pager >&2 || true
+  fi
+  sudo ls -la /var/log/nitro_enclaves >&2 || true
+  sudo ls -1t /var/log/nitro_enclaves/err*.log 2>/dev/null | head -n 3 | while read -r f; do
+    echo "---- ${f} (tail) ----" >&2
+    sudo tail -n 200 "${f}" >&2 || true
+  done
+  echo "allocator.yaml:" >&2
+  sudo cat /etc/nitro_enclaves/allocator.yaml >&2 || true
+  if [[ -f /sys/module/nitro_enclaves/parameters/ne_cpus ]]; then
+    echo "ne_cpus=$(cat /sys/module/nitro_enclaves/parameters/ne_cpus)" >&2 || true
+  fi
+  grep -E '^(HugePages_Total|HugePages_Free|Hugepagesize):' /proc/meminfo >&2 || true
+  sudo dmesg | tail -n 120 >&2 || true
+}
+
 echo "starting enclaves..." >&2
-sudo "${NITRO_CLI}" run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 1 --memory 1024 --enclave-cid "${CID1}" >/dev/null
-sudo "${NITRO_CLI}" run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 1 --memory 1024 --enclave-cid "${CID2}" >/dev/null
+if ! sudo "${NITRO_CLI}" run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 1 --memory 1024 --enclave-cid "${CID1}" >/dev/null; then
+  dump_nitro_logs
+  exit 1
+fi
+if ! sudo "${NITRO_CLI}" run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 1 --memory 1024 --enclave-cid "${CID2}" >/dev/null; then
+  dump_nitro_logs
+  exit 1
+fi
 
 echo "generating attestation witnesses..." >&2
 w1="$(sudo -E "${GO_NITRO}" witness --enclave-cid "${CID1}" --enclave-port "${PORT}" --deployment-id "${DEPLOYMENT_ID}" --junocash-chain-id "${CHAIN_ID}" --junocash-genesis-hash "${JUNOCASH_GENESIS_HASH}")"
