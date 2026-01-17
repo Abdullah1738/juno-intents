@@ -223,6 +223,9 @@ sudo touch /var/log/nitro_enclaves/nitro_enclaves.log
 sudo chown root:root /var/log/nitro_enclaves /var/log/nitro_enclaves/nitro_enclaves.log || true
 sudo chmod 755 /var/log/nitro_enclaves || true
 sudo chmod 644 /var/log/nitro_enclaves/nitro_enclaves.log || true
+sudo mkdir -p /run/nitro_enclaves
+sudo chown root:root /run/nitro_enclaves || true
+sudo chmod 775 /run/nitro_enclaves || true
 
 echo "building EIF (e2e)..." >&2
 eif_out="${WORKDIR}/build-eif.stdout.log"
