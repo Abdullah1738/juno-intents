@@ -14,6 +14,7 @@ RUST_TOOLCHAIN="${JUNO_RUST_TOOLCHAIN:-1.91.1}"
 RISC0_RUST_TOOLCHAIN="${JUNO_RISC0_RUST_TOOLCHAIN:-1.91.1}"
 RZUP_VERSION="${JUNO_RZUP_VERSION:-0.5.1}"
 RISC0_GROTH16_VERSION="${JUNO_RISC0_GROTH16_VERSION:-0.1.0}"
+SOLANA_CLI_VERSION="${JUNO_SOLANA_CLI_VERSION:-${SOLANA_CLI_VERSION:-3.1.6}}"
 GO_VERSION="${JUNO_GO_VERSION:-1.22.6}"
 
 REF=""
@@ -272,7 +273,7 @@ if [[ "${ping}" != "Online" ]]; then
 fi
 
 echo "running e2e via SSM..." >&2
-export REGION INSTANCE_ID RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION GO_VERSION GIT_SHA DEPLOYMENT_NAME CRP_MODE PRIORITY_LEVEL
+export REGION INSTANCE_ID RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION SOLANA_CLI_VERSION GO_VERSION GIT_SHA DEPLOYMENT_NAME CRP_MODE PRIORITY_LEVEL
 COMMAND_ID="$(
   python3 - <<'PY'
 import json
@@ -290,6 +291,7 @@ rust_toolchain = os.environ["RUST_TOOLCHAIN"]
 risc0_rust_toolchain = os.environ["RISC0_RUST_TOOLCHAIN"]
 rzup_version = os.environ["RZUP_VERSION"]
 risc0_groth16_version = os.environ["RISC0_GROTH16_VERSION"]
+solana_cli_version = os.environ.get("SOLANA_CLI_VERSION", "3.1.6").strip()
 go_version = os.environ.get("GO_VERSION", "1.22.6")
 
 cmds = [
@@ -301,19 +303,30 @@ cmds = [
     "if ! command -v docker >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends docker.io; fi",
     "sudo systemctl start docker || sudo service docker start || true",
     "docker ps >/dev/null",
-    f"if ! command -v go >/dev/null || ! go version | grep -q 'go{go_version}'; then curl -sSfL https://go.dev/dl/go{go_version}.linux-amd64.tar.gz -o /tmp/go.tgz && sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz; fi",
-    'export PATH="/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH"',
+    f"if ! command -v go >/dev/null || ! go version | grep -q 'go{go_version}'; then curl -sSfL --retry 8 --retry-delay 5 --retry-all-errors https://go.dev/dl/go{go_version}.linux-amd64.tar.gz -o /tmp/go.tgz && sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz; fi",
+    'export PATH="/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/solana-release/bin:$PATH"',
     "go version",
-    "if ! command -v cargo >/dev/null; then curl -sSf https://sh.rustup.rs | sh -s -- -y; fi",
-    'export PATH="$HOME/.cargo/bin:/usr/local/go/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH"',
+    "if ! command -v cargo >/dev/null; then curl -sSfL --retry 8 --retry-delay 5 --retry-all-errors https://sh.rustup.rs | sh -s -- -y; fi",
+    'export PATH="$HOME/.cargo/bin:/usr/local/go/bin:$HOME/.local/share/solana/solana-release/bin:$PATH"',
     f"rustup toolchain install {rust_toolchain} || true",
     f"rustup default {rust_toolchain} || true",
     f"rustup toolchain install {risc0_rust_toolchain} || true",
     f"if ! command -v rzup >/dev/null || ! rzup --version | grep -q '{rzup_version}'; then cargo install rzup --version {rzup_version} --locked --force; fi",
     f"rzup install rust {risc0_rust_toolchain}",
     f"rzup install risc0-groth16 {risc0_groth16_version}",
-    "if ! command -v solana >/dev/null; then sh -c \"$(curl -sSfL https://release.solana.com/stable/install)\"; fi",
-    'export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"',
+    "if ! command -v bzip2 >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends bzip2; fi",
+    (
+        'SOLANA_DIR="$HOME/.local/share/solana/solana-release"; '
+        'if [ ! -x "${SOLANA_DIR}/bin/solana" ]; then '
+        'rm -rf "${SOLANA_DIR}"; '
+        'mkdir -p "$HOME/.local/share/solana"; '
+        'curl -sSfL --retry 8 --retry-delay 5 --retry-all-errors '
+        f'"https://github.com/anza-xyz/agave/releases/download/v{solana_cli_version}/solana-release-x86_64-unknown-linux-gnu.tar.bz2" '
+        '-o /tmp/solana-release.tar.bz2; '
+        'tar -xjf /tmp/solana-release.tar.bz2 -C "$HOME/.local/share/solana"; '
+        'fi'
+    ),
+    'export PATH="$HOME/.local/share/solana/solana-release/bin:$PATH"',
     "solana --version",
     "spl-token --version",
     "rm -rf juno-intents && git clone https://github.com/Abdullah1738/juno-intents.git",
