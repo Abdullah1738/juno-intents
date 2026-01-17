@@ -336,7 +336,6 @@ cmds = [
     (
         "if [ \"{mode}\" = \"v2\" ]; then "
         "set -e; "
-        "if [ ! -e /dev/nitro_enclaves ]; then echo \"/dev/nitro_enclaves missing\" >&2; exit 1; fi; "
         "if ! command -v nitro-cli >/dev/null; then "
         "sudo apt-get update; "
         "sudo apt-get install -y --no-install-recommends clang gcc git libclang-dev libssl-dev llvm-dev make pkg-config; "
@@ -349,6 +348,8 @@ cmds = [
         "export NITRO_CLI_BLOBS=/opt/nitro-cli/usr/share/nitro_enclaves/blobs/; "
         "fi; "
         "sudo /opt/nitro-cli/etc/profile.d/nitro-cli-config -i -m 4096 -t 4 || true; "
+        "sudo modprobe nitro_enclaves || true; "
+        "if [ ! -e /dev/nitro_enclaves ]; then echo \"/dev/nitro_enclaves missing\" >&2; exit 1; fi; "
         "./scripts/e2e/devnet-testnet-tee.sh --base-deployment {deployment}; "
         "else "
         "./scripts/e2e/devnet-testnet.sh --deployment {deployment}; "
