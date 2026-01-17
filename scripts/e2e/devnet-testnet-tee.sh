@@ -265,11 +265,11 @@ dump_nitro_logs() {
 }
 
 echo "starting enclaves..." >&2
-if ! sudo "${NITRO_CLI}" run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 1 --memory 1024 --enclave-cid "${CID1}" >/dev/null; then
+if ! sudo "${NITRO_CLI}" run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 2 --memory 1024 --enclave-cid "${CID1}" >/dev/null; then
   dump_nitro_logs
   exit 1
 fi
-if ! sudo "${NITRO_CLI}" run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 1 --memory 1024 --enclave-cid "${CID2}" >/dev/null; then
+if ! sudo "${NITRO_CLI}" run-enclave --eif-path "${WORKDIR}/eif/operator.eif" --cpu-count 2 --memory 1024 --enclave-cid "${CID2}" >/dev/null; then
   dump_nitro_logs
   exit 1
 fi

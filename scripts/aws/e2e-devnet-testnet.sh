@@ -439,7 +439,7 @@ cmds = [
         "sudo modprobe nitro_enclaves || true; "
         "if [ -f /etc/nitro_enclaves/allocator.yaml ]; then "
         "sudo sed -i -E 's/^memory_mib:.*$/memory_mib: 4096/' /etc/nitro_enclaves/allocator.yaml || true; "
-        "sudo sed -i -E 's/^cpu_count:.*$/cpu_count: 2/' /etc/nitro_enclaves/allocator.yaml || true; "
+        "sudo sed -i -E 's/^cpu_count:.*$/cpu_count: 4/' /etc/nitro_enclaves/allocator.yaml || true; "
         "fi; "
         "sudo systemctl daemon-reload >/dev/null 2>&1 || true; "
         "sudo systemctl enable nitro-enclaves-allocator.service >/dev/null 2>&1 || true; "
