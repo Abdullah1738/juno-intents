@@ -150,6 +150,20 @@ if [[ -z "${SUBNET_ID}" || -z "${SECURITY_GROUP_ID}" || -z "${INSTANCE_PROFILE_A
       INSTANCE_PROFILE_ARN="$(python3 -c 'import json,sys\ntry:\n  d=json.load(sys.stdin)\nexcept Exception:\n  raise SystemExit(0)\nprint((d.get(\"InstanceProfileArn\") or \"\").strip())' <<<"${iam_info}" 2>/dev/null || true)"
     fi
     if [[ -z "${INSTANCE_PROFILE_ARN}" ]]; then
+      # Some hardened runner images block /latest/meta-data/iam/info but still allow
+      # instance credentials; fall back to EC2 DescribeInstances for self.
+      self_id="$(imds_get meta-data/instance-id "${token}" | tr -d '\r\n ' || true)"
+      if [[ -n "${self_id}" ]]; then
+        INSTANCE_PROFILE_ARN="$(awsj ec2 describe-instances \
+          --instance-ids "${self_id}" \
+          --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' \
+          --output text 2>/dev/null | tr -d '\r\n ' || true)"
+        if [[ "${INSTANCE_PROFILE_ARN}" == "None" ]]; then
+          INSTANCE_PROFILE_ARN=""
+        fi
+      fi
+    fi
+    if [[ -z "${INSTANCE_PROFILE_ARN}" ]]; then
       role_name="$(imds_get meta-data/iam/security-credentials/ "${token}" | head -n 1 | tr -d '\r\n ' || true)"
       if [[ -n "${role_name}" ]]; then
         INSTANCE_PROFILE_NAME="${role_name}"
