@@ -104,6 +104,26 @@ jobs:
           sudo systemctl start docker || sudo service docker start || true
           docker ps >/dev/null
 
+      - name: Install Nitro Enclaves CLI (v2)
+        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' }}
+        run: |
+          set -euo pipefail
+          if command -v nitro-cli >/dev/null; then
+            nitro-cli --version || true
+            exit 0
+          fi
+          sudo apt-get update
+          if sudo apt-get install -y --no-install-recommends aws-nitro-enclaves-cli; then
+            :
+          elif sudo apt-get install -y --no-install-recommends nitro-enclaves-cli; then
+            :
+          else
+            echo "failed to install Nitro Enclaves CLI via apt" >&2
+            apt-cache search nitro-enclaves || true
+            exit 1
+          fi
+          nitro-cli --version
+
       - name: Install Solana CLI
         run: |
           set -euo pipefail
@@ -131,6 +151,7 @@ jobs:
         with:
           shared-key: rust-${{ env.RUST_TOOLCHAIN }}
           workspaces: |
+            risc0/attestation -> target
             risc0/receipt -> target
             solana -> target
 
@@ -196,7 +217,7 @@ jobs:
           echo "HELIUS_CLUSTER=devnet" >> "$GITHUB_ENV"
           echo "HELIUS_RPC_URL=${devnet_url}" >> "$GITHUB_ENV"
 
-      - name: Prepare ephemeral deployment (init CRP + IEP)
+      - name: Load base deployment + generate deployment_id
         run: |
           set -euo pipefail
 
@@ -208,9 +229,13 @@ jobs:
           echo "e2e_deployment=${e2e_deployment}" >&2
           echo "deployment_id=${deployment_id}" >&2
 
-          while IFS='=' read -r k v; do
-            export "${k}=${v}"
-          done < <(python3 - "${base_deployment}" <<'PY'
+          {
+            echo "JUNO_E2E_BASE_DEPLOYMENT=${base_deployment}"
+            echo "JUNO_E2E_DEPLOYMENT_NAME=${e2e_deployment}"
+            echo "JUNO_E2E_DEPLOYMENT_ID=${deployment_id}"
+          } >> "$GITHUB_ENV"
+
+          python3 - "${base_deployment}" <<'PY' >> "$GITHUB_ENV"
           import json,sys
           name=sys.argv[1]
           with open("deployments.json","r",encoding="utf-8") as f:
@@ -242,7 +267,152 @@ jobs:
           emit("JUNOCASH_GENESIS_HASH", entry.get("junocash_genesis_hash"))
           emit("ADDRESS_LOOKUP_TABLE", entry.get("address_lookup_table"))
           PY
-          )
+
+      - name: Setup ORP operators via Nitro enclaves (v2)
+        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${RPC_URL:-}" || -z "${ORP_PROGRAM_ID:-}" ]]; then
+            echo "missing RPC_URL or ORP_PROGRAM_ID from base deployment" >&2
+            exit 1
+          fi
+          if [[ -z "${VERIFIER_ROUTER_PROGRAM_ID:-}" || -z "${VERIFIER_PROGRAM_ID:-}" ]]; then
+            echo "missing verifier router fields from base deployment" >&2
+            exit 1
+          fi
+          if [[ -z "${JUNO_E2E_DEPLOYMENT_ID:-}" ]]; then
+            echo "missing JUNO_E2E_DEPLOYMENT_ID" >&2
+            exit 1
+          fi
+          if [[ -z "${JUNOCASH_CHAIN:-}" || -z "${JUNOCASH_GENESIS_HASH:-}" ]]; then
+            echo "missing JunoCash chain fields from base deployment" >&2
+            exit 1
+          fi
+
+          if [[ ! -e /dev/nitro_enclaves ]]; then
+            echo "/dev/nitro_enclaves missing; runner not configured with Nitro Enclaves enabled" >&2
+            ls -la /dev/nitro_enclaves || true
+            exit 1
+          fi
+
+          sudo mkdir -p /etc/nitro_enclaves
+          cat <<'EOF' | sudo tee /etc/nitro_enclaves/allocator.yaml >/dev/null
+          memory_mib: 4096
+          cpu_count: 4
+          EOF
+          sudo systemctl restart nitro-enclaves-allocator || sudo service nitro-enclaves-allocator restart || true
+          sudo systemctl status nitro-enclaves-allocator --no-pager || true
+
+          CID1=16
+          CID2=17
+          PORT=5000
+
+          go build -o /tmp/nitro-operator ./cmd/nitro-operator
+          go build -o /tmp/juno-intents ./cmd/juno-intents
+
+          echo "building EIF..." >&2
+          JUNO_EIF_DOCKERFILE=enclave/operator/Dockerfile.e2e \
+            JUNO_EIF_OUT_DIR=/tmp/juno-eif \
+            JUNO_EIF_OUT_EIF=/tmp/juno-eif/operator.eif \
+            ./scripts/enclave/build-eif.sh
+
+          echo "running enclaves..." >&2
+          e1_json="$(sudo nitro-cli run-enclave --eif-path /tmp/juno-eif/operator.eif --cpu-count 2 --memory 1024 --enclave-cid "${CID1}")"
+          e2_json="$(sudo nitro-cli run-enclave --eif-path /tmp/juno-eif/operator.eif --cpu-count 2 --memory 1024 --enclave-cid "${CID2}")"
+
+          e1_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["EnclaveID"])' "${e1_json}")"
+          e2_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["EnclaveID"])' "${e2_json}")"
+          echo "enclave1_id=${e1_id}" >&2
+          echo "enclave2_id=${e2_id}" >&2
+
+          {
+            echo "JUNO_E2E_NITRO_ENCLAVE_ID1=${e1_id}"
+            echo "JUNO_E2E_NITRO_ENCLAVE_ID2=${e2_id}"
+            echo "JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID1=${CID1}"
+            echo "JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID2=${CID2}"
+            echo "JUNO_E2E_CRP_SUBMIT_ENCLAVE_PORT=${PORT}"
+          } >> "$GITHUB_ENV"
+
+          echo "querying enclave pubkeys..." >&2
+          op1_info="$(sudo -E /tmp/nitro-operator pubkey --enclave-cid "${CID1}" --enclave-port "${PORT}")"
+          op2_info="$(sudo -E /tmp/nitro-operator pubkey --enclave-cid "${CID2}" --enclave-port "${PORT}")"
+          echo "${op1_info}" >&2
+          echo "${op2_info}" >&2
+
+          case "$(printf '%s' "${JUNOCASH_CHAIN}" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\r\n')" in
+            mainnet) CHAIN_ID=1 ;;
+            testnet) CHAIN_ID=2 ;;
+            regtest) CHAIN_ID=3 ;;
+            *) echo "unsupported JUNOCASH_CHAIN: ${JUNOCASH_CHAIN}" >&2; exit 1 ;;
+          esac
+
+          echo "building attestation witnesses..." >&2
+          w1="$(sudo -E /tmp/nitro-operator witness --enclave-cid "${CID1}" --enclave-port "${PORT}" --deployment-id "${JUNO_E2E_DEPLOYMENT_ID}" --junocash-chain-id "${CHAIN_ID}" --junocash-genesis-hash "${JUNOCASH_GENESIS_HASH}")"
+          w2="$(sudo -E /tmp/nitro-operator witness --enclave-cid "${CID2}" --enclave-port "${PORT}" --deployment-id "${JUNO_E2E_DEPLOYMENT_ID}" --junocash-chain-id "${CHAIN_ID}" --junocash-genesis-hash "${JUNOCASH_GENESIS_HASH}")"
+
+          echo "proving attestation bundles (CUDA)..." >&2
+          b1="$(cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove_attestation_bundle_v1 -- --witness-hex "${w1}")"
+          b2="$(cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove_attestation_bundle_v1 -- --witness-hex "${w2}")"
+
+          b1_hex="$(printf '%s\n' "${b1}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1)"
+          b2_hex="$(printf '%s\n' "${b2}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1)"
+          if [[ -z "${b1_hex}" || -z "${b2_hex}" ]]; then
+            echo "failed to extract attestation bundle hex output" >&2
+            exit 1
+          fi
+
+          info1="$(/tmp/juno-intents orp-attestation-info --bundle-hex "${b1_hex}")"
+          info2="$(/tmp/juno-intents orp-attestation-info --bundle-hex "${b2_hex}")"
+          echo "${info1}" >&2
+          echo "${info2}" >&2
+
+          op1="$(printf '%s\n' "${info1}" | sed -nE 's/^operator_pubkey=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' | head -n 1)"
+          op2="$(printf '%s\n' "${info2}" | sed -nE 's/^operator_pubkey=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' | head -n 1)"
+          meas1="$(printf '%s\n' "${info1}" | sed -nE 's/^measurement=([0-9a-fA-F]{64})$/\\1/p' | head -n 1)"
+          meas2="$(printf '%s\n' "${info2}" | sed -nE 's/^measurement=([0-9a-fA-F]{64})$/\\1/p' | head -n 1)"
+          if [[ -z "${op1}" || -z "${op2}" || -z "${meas1}" || -z "${meas2}" ]]; then
+            echo "failed to parse attestation bundle info" >&2
+            exit 1
+          fi
+          if [[ "${meas1}" != "${meas2}" ]]; then
+            echo "enclave measurements mismatch (expected same EIF): ${meas1} != ${meas2}" >&2
+            exit 1
+          fi
+
+          solver_pub="$(solana-keygen pubkey /tmp/juno-secrets/solver.json)"
+          echo "initializing ORP config (admin=${solver_pub})..." >&2
+          SOLANA_RPC_URL="${RPC_URL}" /tmp/juno-intents init-orp \
+            --orp-program-id "${ORP_PROGRAM_ID}" \
+            --deployment-id "${JUNO_E2E_DEPLOYMENT_ID}" \
+            --admin "${solver_pub}" \
+            --junocash-chain-id "${CHAIN_ID}" \
+            --junocash-genesis-hash "${JUNOCASH_GENESIS_HASH}" \
+            --verifier-router-program "${VERIFIER_ROUTER_PROGRAM_ID}" \
+            --verifier-program-id "${VERIFIER_PROGRAM_ID}" \
+            --allowed-measurement "${meas1}" \
+            --payer-keypair /tmp/juno-secrets/solver.json >/dev/null
+
+          echo "registering ORP operators..." >&2
+          SOLANA_RPC_URL="${RPC_URL}" /tmp/juno-intents orp-register-operator \
+            --orp-program-id "${ORP_PROGRAM_ID}" \
+            --deployment-id "${JUNO_E2E_DEPLOYMENT_ID}" \
+            --bundle-hex "${b1_hex}" \
+            --payer-keypair /tmp/juno-secrets/solver.json >/dev/null
+          SOLANA_RPC_URL="${RPC_URL}" /tmp/juno-intents orp-register-operator \
+            --orp-program-id "${ORP_PROGRAM_ID}" \
+            --deployment-id "${JUNO_E2E_DEPLOYMENT_ID}" \
+            --bundle-hex "${b2_hex}" \
+            --payer-keypair /tmp/juno-secrets/solver.json >/dev/null
+
+          {
+            echo "JUNO_E2E_CRP_OPERATOR1_PUBKEY=${op1}"
+            echo "JUNO_E2E_CRP_OPERATOR2_PUBKEY=${op2}"
+          } >> "$GITHUB_ENV"
+
+      - name: Prepare ephemeral deployment (init CRP + IEP)
+        run: |
+          set -euo pipefail
 
           if [[ -z "${RPC_URL:-}" || -z "${ADMIN:-}" || -z "${FEE_BPS:-}" || -z "${FEE_COLLECTOR:-}" ]]; then
             echo "base deployment missing required fields (rpc_url/admin/fee_bps/fee_collector)" >&2
@@ -261,8 +431,12 @@ jobs:
             exit 1
           fi
 
-          op1_pub="$(solana-keygen pubkey /tmp/juno-secrets/crp-operator-1.json)"
-          op2_pub="$(solana-keygen pubkey /tmp/juno-secrets/crp-operator-2.json)"
+          deployment_id="${JUNO_E2E_DEPLOYMENT_ID}"
+          e2e_deployment="${JUNO_E2E_DEPLOYMENT_NAME}"
+          if [[ -z "${deployment_id:-}" || -z "${e2e_deployment:-}" ]]; then
+            echo "missing deployment_id/name env" >&2
+            exit 1
+          fi
 
           rpc="${RPC_URL}"
           echo "solana_rpc_url=${rpc}" >&2
@@ -275,6 +449,17 @@ jobs:
           if [[ "${crp_mode}" == "v2" && -z "${ORP_PROGRAM_ID:-}" ]]; then
             echo "crp_mode=v2 but base deployment is missing operator_registry_program_id" >&2
             exit 1
+          fi
+
+          op1_pub="$(solana-keygen pubkey /tmp/juno-secrets/crp-operator-1.json)"
+          op2_pub="$(solana-keygen pubkey /tmp/juno-secrets/crp-operator-2.json)"
+          if [[ "${crp_mode}" == "v2" ]]; then
+            if [[ -z "${JUNO_E2E_CRP_OPERATOR1_PUBKEY:-}" || -z "${JUNO_E2E_CRP_OPERATOR2_PUBKEY:-}" ]]; then
+              echo "crp_mode=v2 but operator pubkeys not set (expected JUNO_E2E_CRP_OPERATOR{1,2}_PUBKEY)" >&2
+              exit 1
+            fi
+            op1_pub="${JUNO_E2E_CRP_OPERATOR1_PUBKEY}"
+            op2_pub="${JUNO_E2E_CRP_OPERATOR2_PUBKEY}"
           fi
 
           crp_log=""
@@ -376,3 +561,16 @@ jobs:
           ./scripts/e2e/devnet-testnet.sh \
             --deployment "${JUNO_E2E_DEPLOYMENT_NAME}" \
             --deployment-file "${JUNO_E2E_DEPLOYMENT_FILE}"
+
+      - name: Cleanup Nitro enclaves (v2)
+        if: ${{ always() && env.JUNO_E2E_CRP_MODE == 'v2' }}
+        run: |
+          set -euo pipefail
+          sudo nitro-cli describe-enclaves || true
+          if [[ -n "${JUNO_E2E_NITRO_ENCLAVE_ID1:-}" ]]; then
+            sudo nitro-cli terminate-enclave --enclave-id "${JUNO_E2E_NITRO_ENCLAVE_ID1}" || true
+          fi
+          if [[ -n "${JUNO_E2E_NITRO_ENCLAVE_ID2:-}" ]]; then
+            sudo nitro-cli terminate-enclave --enclave-id "${JUNO_E2E_NITRO_ENCLAVE_ID2}" || true
+          fi
+          sudo nitro-cli terminate-enclave --all || true
