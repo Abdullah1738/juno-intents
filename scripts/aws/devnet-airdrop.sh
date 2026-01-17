@@ -184,32 +184,33 @@ import sys
 
 region = os.environ["REGION"]
 instance_id = os.environ["INSTANCE_ID"]
+timeout_seconds = os.environ.get("SSM_TIMEOUT_SECONDS", "").strip()
 commands_json = sys.argv[1]
 cmds = json.loads(commands_json)
 
 payload = json.dumps({"commands": cmds})
-out = subprocess.check_output(
-    [
-        "aws",
-        "--profile",
-        "juno",
-        "--region",
-        region,
-        "ssm",
-        "send-command",
-        "--instance-ids",
-        instance_id,
-        "--document-name",
-        "AWS-RunShellScript",
-        "--parameters",
-        payload,
-        "--query",
-        "Command.CommandId",
-        "--output",
-        "text",
-    ],
-    text=True,
-)
+args = [
+    "aws",
+    "--profile",
+    "juno",
+    "--region",
+    region,
+    "ssm",
+    "send-command",
+    "--instance-ids",
+    instance_id,
+    "--document-name",
+    "AWS-RunShellScript",
+    "--parameters",
+    payload,
+    "--query",
+    "Command.CommandId",
+    "--output",
+    "text",
+]
+if timeout_seconds:
+    args += ["--timeout-seconds", timeout_seconds]
+out = subprocess.check_output(args, text=True)
 print(out.strip())
 PY
 }
