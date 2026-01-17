@@ -173,7 +173,7 @@ if [[ "${ping}" != "Online" ]]; then
   exit 1
 fi
 
-export REGION INSTANCE_ID PUBKEY RPC_URL TARGET_LAMPORTS CHUNK_LAMPORTS
+export REGION INSTANCE_ID PUBKEY RPC_URL TARGET_LAMPORTS CHUNK_LAMPORTS SSM_TIMEOUT_SECONDS
 
 send_ssm() {
   python3 - "$@" <<'PY'
