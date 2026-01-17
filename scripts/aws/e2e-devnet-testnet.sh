@@ -303,6 +303,21 @@ cmds = [
     "if ! command -v docker >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends docker.io; fi",
     "sudo systemctl start docker || sudo service docker start || true",
     "docker ps >/dev/null",
+    "if ! command -v growpart >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends cloud-guest-utils; fi",
+    (
+        'root_part="$(findmnt -n -o SOURCE / || true)"; '
+        'fstype="$(findmnt -n -o FSTYPE / || true)"; '
+        'if [ -n "$root_part" ] && command -v lsblk >/dev/null && command -v growpart >/dev/null; then '
+        'disk="/dev/$(lsblk -no PKNAME "$root_part" 2>/dev/null | head -n 1)"; '
+        'partnum="$(lsblk -no PARTNUM "$root_part" 2>/dev/null | head -n 1)"; '
+        'if [ -n "$disk" ] && [ -n "$partnum" ]; then sudo growpart "$disk" "$partnum" || true; fi; '
+        'case "$fstype" in '
+        'ext4) sudo resize2fs "$root_part" || true ;; '
+        'xfs) sudo xfs_growfs / || true ;; '
+        'esac; '
+        'fi; '
+        'df -h /'
+    ),
     f"if ! command -v go >/dev/null || ! go version | grep -q 'go{go_version}'; then curl -sSfL --retry 8 --retry-delay 5 --retry-all-errors https://go.dev/dl/go{go_version}.linux-amd64.tar.gz -o /tmp/go.tgz && sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz; fi",
     'export PATH="/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/solana-release/bin:$PATH"',
     "go version",
