@@ -242,6 +242,10 @@ INSTANCE_ID="$(awsj ec2 run-instances \
     {
       "DeviceName": "/dev/sda1",
       "Ebs": { "VolumeSize": 200, "VolumeType": "gp3", "DeleteOnTermination": true }
+    },
+    {
+      "DeviceName": "/dev/sdb",
+      "Ebs": { "VolumeSize": 300, "VolumeType": "gp3", "DeleteOnTermination": true }
     }
   ]' \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=juno-intents-e2e-devnet-testnet},{Key=juno-intents,Value=e2e-devnet-testnet}]' \
@@ -319,6 +323,29 @@ cmds = [
     ),
     "sudo systemctl stop docker docker.socket || sudo service docker stop || true",
     "sudo mkdir -p /opt/docker-data /etc/docker /var/lib",
+    (
+        'root_part="$(findmnt -n -o SOURCE / || true)"; '
+        'root_disk=""; '
+        'if [ -n "$root_part" ] && command -v lsblk >/dev/null; then '
+        'root_disk="/dev/$(lsblk -no PKNAME "$root_part" 2>/dev/null | head -n 1)"; '
+        'fi; '
+        'docker_disk=""; '
+        'if command -v lsblk >/dev/null; then '
+        'for name in $(lsblk -d -n -o NAME,MODEL | awk \'$2=="Amazon" && $3=="Elastic" && $4=="Block" && $5=="Store" {print $1}\'); do '
+        'dev="/dev/$name"; '
+        'if [ -n "$root_disk" ] && [ "$dev" = "$root_disk" ]; then continue; fi; '
+        'cnt="$(lsblk -n -o NAME "$dev" 2>/dev/null | wc -l | tr -d " ")"; '
+        'if [ "$cnt" = "1" ]; then docker_disk="$dev"; break; fi; '
+        'done; '
+        'fi; '
+        'if [ -n "$docker_disk" ]; then '
+        'echo "formatting docker volume: $docker_disk" >&2; '
+        'sudo mkfs.ext4 -F "$docker_disk"; '
+        'sudo mount "$docker_disk" /opt/docker-data; '
+        'fi; '
+        'df -h /opt/docker-data || true; '
+        'lsblk -d -o NAME,SIZE,MODEL | head -n 20'
+    ),
     (
         "sudo python3 - <<'PY'\n"
         "import json\n"
