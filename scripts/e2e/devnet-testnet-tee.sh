@@ -217,8 +217,9 @@ if ! JUNO_EIF_DOCKERFILE=enclave/operator/Dockerfile.e2e \
   JUNO_EIF_OUT_EIF="${WORKDIR}/eif/operator.eif" \
   "${ROOT}/scripts/enclave/build-eif.sh" >"${eif_out}" 2>"${eif_err}"; then
   echo "EIF build failed (tailing logs)..." >&2
-  tail -n 200 "${eif_out}" >&2 || true
-  tail -n 200 "${eif_err}" >&2 || true
+  tail -n 80 "${eif_out}" >&2 || true
+  tail -n 80 "${eif_err}" >&2 || true
+  grep -En '(^ERROR|error|failed)' "${eif_err}" | tail -n 80 >&2 || true
   exit 1
 fi
 grep -E '^pcr0=[0-9a-fA-F]{96}$' "${eif_err}" >&2 || true

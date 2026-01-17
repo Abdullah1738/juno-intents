@@ -39,7 +39,7 @@ echo "building docker image: ${IMAGE_TAG}" >&2
 if [[ "${JUNO_EIF_DETERMINISTIC_CONTEXT:-1}" == "1" ]]; then
   echo "building deterministic docker context..." >&2
   ROOT_FOR_CTX="${ROOT}" DOCKERFILE_FOR_CTX="${DOCKERFILE_PATH}" python3 - <<'PY' \
-    | docker build --platform linux/amd64 -f Dockerfile -t "${IMAGE_TAG}" -
+    | docker build -q --platform linux/amd64 -f Dockerfile -t "${IMAGE_TAG}" -
 import io
 import os
 import stat
@@ -114,7 +114,7 @@ with tarfile.open(fileobj=sys.stdout.buffer, mode="w|", format=tarfile.GNU_FORMA
       continue
 PY
 else
-  docker build --platform linux/amd64 -f "${DOCKERFILE_PATH}" -t "${IMAGE_TAG}" "${ROOT}"
+  docker build -q --platform linux/amd64 -f "${DOCKERFILE_PATH}" -t "${IMAGE_TAG}" "${ROOT}"
 fi
 
 echo "building EIF: ${OUT_EIF}" >&2
