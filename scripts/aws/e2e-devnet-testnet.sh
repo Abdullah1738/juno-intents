@@ -18,11 +18,13 @@ GO_VERSION="${JUNO_GO_VERSION:-1.22.6}"
 
 REF=""
 DEPLOYMENT_NAME=""
+CRP_MODE="${JUNO_E2E_CRP_MODE:-v1}"
+PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
 usage() {
   cat <<'USAGE' >&2
 Usage:
-  scripts/aws/e2e-devnet-testnet.sh --deployment <name> [--ref <git-ref>]
+  scripts/aws/e2e-devnet-testnet.sh --deployment <name> [--ref <git-ref>] [--crp-mode v1|v2] [--priority-level <level>]
 
 Environment:
   JUNO_AWS_REGION            (default: us-east-1)
@@ -47,6 +49,10 @@ while [[ $# -gt 0 ]]; do
       DEPLOYMENT_NAME="${2:-}"; shift 2 ;;
     --ref)
       REF="${2:-}"; shift 2 ;;
+    --crp-mode)
+      CRP_MODE="${2:-}"; shift 2 ;;
+    --priority-level)
+      PRIORITY_LEVEL="${2:-}"; shift 2 ;;
     *)
       echo "unexpected argument: $1" >&2
       usage
@@ -64,6 +70,11 @@ if [[ -z "${REF}" ]]; then
   REF="$(git -C "${ROOT}" rev-parse HEAD)"
 fi
 GIT_SHA="$(git -C "${ROOT}" rev-parse "${REF}^{commit}")"
+
+if [[ "${CRP_MODE}" != "v1" && "${CRP_MODE}" != "v2" ]]; then
+  echo "--crp-mode must be v1 or v2 (got: ${CRP_MODE})" >&2
+  exit 2
+fi
 
 awsj() {
   aws --profile "${PROFILE}" --region "${REGION}" "$@"
@@ -126,6 +137,7 @@ INSTANCE_ID="$(awsj ec2 run-instances \
   --subnet-id "${SUBNET_ID}" \
   --security-group-ids "${SECURITY_GROUP_ID}" \
   --iam-instance-profile "Name=${INSTANCE_PROFILE_NAME}" \
+  $(if [[ "${CRP_MODE}" == "v2" ]]; then printf '%s' "--enclave-options Enabled=true"; fi) \
   --block-device-mappings '[
     {
       "DeviceName": "/dev/sda1",
@@ -161,7 +173,7 @@ if [[ "${ping}" != "Online" ]]; then
 fi
 
 echo "running e2e via SSM..." >&2
-export REGION INSTANCE_ID RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION GO_VERSION GIT_SHA DEPLOYMENT_NAME
+export REGION INSTANCE_ID RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION GO_VERSION GIT_SHA DEPLOYMENT_NAME CRP_MODE PRIORITY_LEVEL
 COMMAND_ID="$(
   python3 - <<'PY'
 import json
@@ -172,6 +184,8 @@ region = os.environ["REGION"]
 instance_id = os.environ["INSTANCE_ID"]
 deployment = os.environ["DEPLOYMENT_NAME"]
 git_sha = os.environ["GIT_SHA"]
+crp_mode = os.environ.get("CRP_MODE", "v1").strip()
+priority_level = os.environ.get("PRIORITY_LEVEL", "Medium").strip()
 
 rust_toolchain = os.environ["RUST_TOOLCHAIN"]
 risc0_rust_toolchain = os.environ["RISC0_RUST_TOOLCHAIN"]
@@ -205,7 +219,28 @@ cmds = [
     "rm -rf juno-intents && git clone https://github.com/Abdullah1738/juno-intents.git",
     "cd juno-intents",
     f"git checkout {git_sha}",
-    f"./scripts/e2e/devnet-testnet.sh --deployment {deployment}",
+    f"export JUNO_E2E_PRIORITY_LEVEL={priority_level}",
+    (
+        "if [ \"{mode}\" = \"v2\" ]; then "
+        "set -euo pipefail; "
+        "if [ ! -e /dev/nitro_enclaves ]; then echo \"/dev/nitro_enclaves missing\" >&2; exit 1; fi; "
+        "if ! command -v nitro-cli >/dev/null; then "
+        "sudo apt-get update; "
+        "sudo apt-get install -y --no-install-recommends clang gcc git libclang-dev libssl-dev llvm-dev make pkg-config; "
+        "rm -rf /tmp/aws-nitro-enclaves-cli; "
+        "git clone --depth 1 --branch v1.4.4 https://github.com/aws/aws-nitro-enclaves-cli.git /tmp/aws-nitro-enclaves-cli; "
+        "make -C /tmp/aws-nitro-enclaves-cli nitro-cli; "
+        "make -C /tmp/aws-nitro-enclaves-cli vsock-proxy; "
+        "sudo NITRO_CLI_INSTALL_DIR=/opt/nitro-cli make -C /tmp/aws-nitro-enclaves-cli install; "
+        "export PATH=/opt/nitro-cli/bin:$PATH; "
+        "export NITRO_CLI_BLOBS=/opt/nitro-cli/usr/share/nitro_enclaves/blobs/; "
+        "fi; "
+        "sudo /opt/nitro-cli/etc/profile.d/nitro-cli-config -i -m 4096 -t 4 || true; "
+        "./scripts/e2e/devnet-testnet-tee.sh --base-deployment {deployment}; "
+        "else "
+        "./scripts/e2e/devnet-testnet.sh --deployment {deployment}; "
+        "fi"
+    ).format(mode=crp_mode, deployment=deployment),
 ]
 
 payload = json.dumps({"commands": cmds})
@@ -262,4 +297,3 @@ awsj ssm get-command-invocation \
   --output json >&2
 
 echo "done" >&2
-
