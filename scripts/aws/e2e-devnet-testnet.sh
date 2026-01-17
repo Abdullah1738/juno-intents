@@ -21,6 +21,11 @@ DEPLOYMENT_NAME=""
 CRP_MODE="${JUNO_E2E_CRP_MODE:-v1}"
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
+SUBNET_ID="${JUNO_E2E_SUBNET_ID:-}"
+SECURITY_GROUP_ID="${JUNO_E2E_SECURITY_GROUP_ID:-}"
+INSTANCE_PROFILE_ARN="${JUNO_E2E_INSTANCE_PROFILE_ARN:-}"
+INSTANCE_PROFILE_NAME="${JUNO_E2E_INSTANCE_PROFILE_NAME:-}"
+
 usage() {
   cat <<'USAGE' >&2
 Usage:
@@ -31,6 +36,10 @@ Environment:
   JUNO_RUNS_ON_STACK_NAME    (default: runs-on)
   JUNO_E2E_AMI_ID            (default: runs-on GPU AMI)
   JUNO_E2E_INSTANCE_TYPE     (default: g5.4xlarge)
+  JUNO_E2E_SUBNET_ID         (optional: override subnet discovery)
+  JUNO_E2E_SECURITY_GROUP_ID (optional: override security group discovery)
+  JUNO_E2E_INSTANCE_PROFILE_NAME (optional: override instance profile)
+  JUNO_E2E_INSTANCE_PROFILE_ARN  (optional: override instance profile)
 
 Notes:
   - Uses AWS SSM on a short-lived GPU instance (uses --profile juno).
@@ -106,18 +115,18 @@ get_cf_output() {
 }
 
 SUBNETS_CSV="$(get_cf_output RunsOnPublicSubnetIds)"
-SECURITY_GROUP_ID="$(get_cf_output RunsOnSecurityGroupId)"
+if [[ -z "${SECURITY_GROUP_ID}" ]]; then
+  SECURITY_GROUP_ID="$(get_cf_output RunsOnSecurityGroupId)"
+fi
 ROLE_NAME="$(get_cf_output RunsOnInstanceRoleName)"
 
-SUBNET_ID=""
-INSTANCE_PROFILE_ARN=""
-INSTANCE_PROFILE_NAME=""
-
 if [[ -n "${SUBNETS_CSV}" && "${SUBNETS_CSV}" != "None" && -n "${SECURITY_GROUP_ID}" && "${SECURITY_GROUP_ID}" != "None" ]]; then
-  IFS=',' read -r SUBNET_ID _rest <<<"${SUBNETS_CSV}"
+  if [[ -z "${SUBNET_ID}" ]]; then
+    IFS=',' read -r SUBNET_ID _rest <<<"${SUBNETS_CSV}"
+  fi
 fi
 
-if [[ -n "${ROLE_NAME}" && "${ROLE_NAME}" != "None" ]]; then
+if [[ -z "${INSTANCE_PROFILE_ARN}" && -z "${INSTANCE_PROFILE_NAME}" && -n "${ROLE_NAME}" && "${ROLE_NAME}" != "None" ]]; then
   INSTANCE_PROFILE_NAME="$(aws iam list-instance-profiles-for-role \
     --profile "${PROFILE}" \
     --role-name "${ROLE_NAME}" \
@@ -132,7 +141,12 @@ if [[ -n "${ROLE_NAME}" && "${ROLE_NAME}" != "None" ]]; then
   fi
 fi
 
-if [[ -z "${SUBNET_ID}" || -z "${SECURITY_GROUP_ID}" || -z "${INSTANCE_PROFILE_ARN}" ]]; then
+need_profile="false"
+if [[ -z "${INSTANCE_PROFILE_ARN}" && -z "${INSTANCE_PROFILE_NAME}" ]]; then
+  need_profile="true"
+fi
+
+if [[ -z "${SUBNET_ID}" || -z "${SECURITY_GROUP_ID}" || "${need_profile}" == "true" ]]; then
   token="$(imds_token)"
   if [[ -n "${token}" ]]; then
     macs="$(imds_get meta-data/network/interfaces/macs/ "${token}" || true)"
@@ -145,11 +159,11 @@ if [[ -z "${SUBNET_ID}" || -z "${SECURITY_GROUP_ID}" || -z "${INSTANCE_PROFILE_A
         SECURITY_GROUP_ID="$(imds_get "meta-data/network/interfaces/macs/${mac}/security-group-ids" "${token}" | head -n 1 | tr -d '\r\n ' || true)"
       fi
     fi
-    if [[ -z "${INSTANCE_PROFILE_ARN}" ]]; then
+    if [[ "${need_profile}" == "true" ]]; then
       iam_info="$(imds_get meta-data/iam/info "${token}" || true)"
       INSTANCE_PROFILE_ARN="$(python3 -c 'import json,sys\ntry:\n  d=json.load(sys.stdin)\nexcept Exception:\n  raise SystemExit(0)\nprint((d.get(\"InstanceProfileArn\") or \"\").strip())' <<<"${iam_info}" 2>/dev/null || true)"
     fi
-    if [[ -z "${INSTANCE_PROFILE_ARN}" ]]; then
+    if [[ "${need_profile}" == "true" && -z "${INSTANCE_PROFILE_ARN}" ]]; then
       # Some hardened runner images block /latest/meta-data/iam/info but still allow
       # instance credentials; fall back to EC2 DescribeInstances for self.
       self_id="$(imds_get meta-data/instance-id "${token}" | tr -d '\r\n ' || true)"
@@ -163,14 +177,27 @@ if [[ -z "${SUBNET_ID}" || -z "${SECURITY_GROUP_ID}" || -z "${INSTANCE_PROFILE_A
         fi
       fi
     fi
-    if [[ -z "${INSTANCE_PROFILE_ARN}" ]]; then
+    if [[ "${need_profile}" == "true" && -z "${INSTANCE_PROFILE_ARN}" ]]; then
       role_name="$(imds_get meta-data/iam/security-credentials/ "${token}" | head -n 1 | tr -d '\r\n ' || true)"
       if [[ -n "${role_name}" ]]; then
+        INSTANCE_PROFILE_NAME="$(aws iam list-instance-profiles-for-role \
+          --profile "${PROFILE}" \
+          --role-name "${role_name}" \
+          --query 'InstanceProfiles[0].InstanceProfileName' \
+          --output text 2>/dev/null || true)"
+        if [[ -n "${INSTANCE_PROFILE_NAME}" && "${INSTANCE_PROFILE_NAME}" != "None" ]]; then
+          INSTANCE_PROFILE_ARN="$(aws iam get-instance-profile \
+            --profile "${PROFILE}" \
+            --instance-profile-name "${INSTANCE_PROFILE_NAME}" \
+            --query 'InstanceProfile.Arn' \
+            --output text 2>/dev/null || true)"
+        else
         INSTANCE_PROFILE_NAME="${role_name}"
         if [[ "${INSTANCE_PROFILE_NAME}" == *"InstanceRole"* ]]; then
           INSTANCE_PROFILE_NAME="${INSTANCE_PROFILE_NAME/InstanceRole/InstanceProfile}"
         elif [[ "${INSTANCE_PROFILE_NAME}" == *"Role"* ]]; then
           INSTANCE_PROFILE_NAME="${INSTANCE_PROFILE_NAME/Role/Profile}"
+        fi
         fi
       fi
     fi
