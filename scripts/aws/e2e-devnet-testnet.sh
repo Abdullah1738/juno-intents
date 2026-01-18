@@ -331,6 +331,10 @@ cmds = [
     "if ! command -v python3 >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends python3; fi",
     "if ! command -v git >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends git; fi",
     "if ! command -v curl >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends curl; fi",
+    "rm -rf /root/juno-intents && git clone https://github.com/Abdullah1738/juno-intents.git /root/juno-intents",
+    "cd /root/juno-intents",
+    f"git checkout {git_sha}",
+    "git rev-parse HEAD",
     "if ! command -v protoc >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler; fi",
     "if ! command -v docker >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends docker.io; fi",
     "if ! command -v growpart >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends cloud-guest-utils; fi",
@@ -431,9 +435,6 @@ cmds = [
     'export PATH="$HOME/.local/share/solana/solana-release/bin:$PATH"',
     "solana --version",
     "spl-token --version",
-    "rm -rf /root/juno-intents && git clone https://github.com/Abdullah1738/juno-intents.git /root/juno-intents",
-    "cd /root/juno-intents",
-    f"git checkout {git_sha}",
 ]
 
 if solver_keypair_json:
