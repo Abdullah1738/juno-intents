@@ -41,9 +41,17 @@ on:
         required: false
         default: "Medium"
         type: string
+      run_mode:
+        description: "v2 only: e2e (full) or preflight (smoke)"
+        required: false
+        default: "e2e"
+        type: choice
+        options:
+          - e2e
+          - preflight
 
 concurrency:
-  group: e2e-devnet-${{ github.ref }}
+  group: e2e-devnet-${{ github.ref }}-${{ github.event.inputs.crp_mode }}-${{ github.event.inputs.run_mode }}
   cancel-in-progress: true
 
 permissions:
@@ -65,6 +73,7 @@ env:
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_A: ${{ github.event.inputs.junocash_amount_a }}
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_B: ${{ github.event.inputs.junocash_amount_b }}
   JUNO_E2E_PRIORITY_LEVEL: ${{ github.event.inputs.priority_level }}
+  JUNO_E2E_RUN_MODE: ${{ github.event.inputs.run_mode }}
 
 jobs:
   e2e:
@@ -234,6 +243,7 @@ jobs:
             --deployment "${{ github.event.inputs.deployment }}" \
             --ref "${{ github.sha }}" \
             --crp-mode v2 \
+            --mode "${{ github.event.inputs.run_mode }}" \
             --priority-level "${{ github.event.inputs.priority_level }}"
 
       - name: Upload SSM output (v2)

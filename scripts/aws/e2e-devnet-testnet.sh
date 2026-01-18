@@ -21,6 +21,7 @@ REF=""
 DEPLOYMENT_NAME=""
 CRP_MODE="${JUNO_E2E_CRP_MODE:-v1}"
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
+RUN_MODE="${JUNO_E2E_RUN_MODE:-e2e}"
 
 SUBNET_ID="${JUNO_E2E_SUBNET_ID:-}"
 SECURITY_GROUP_ID="${JUNO_E2E_SECURITY_GROUP_ID:-}"
@@ -30,7 +31,7 @@ INSTANCE_PROFILE_NAME="${JUNO_E2E_INSTANCE_PROFILE_NAME:-}"
 usage() {
   cat <<'USAGE' >&2
 Usage:
-  scripts/aws/e2e-devnet-testnet.sh --deployment <name> [--ref <git-ref>] [--crp-mode v1|v2] [--priority-level <level>]
+  scripts/aws/e2e-devnet-testnet.sh --deployment <name> [--ref <git-ref>] [--crp-mode v1|v2] [--mode e2e|preflight] [--priority-level <level>]
 
 Environment:
   JUNO_AWS_REGION            (default: us-east-1)
@@ -61,6 +62,8 @@ while [[ $# -gt 0 ]]; do
       REF="${2:-}"; shift 2 ;;
     --crp-mode)
       CRP_MODE="${2:-}"; shift 2 ;;
+    --mode)
+      RUN_MODE="${2:-}"; shift 2 ;;
     --priority-level)
       PRIORITY_LEVEL="${2:-}"; shift 2 ;;
     *)
@@ -83,6 +86,14 @@ GIT_SHA="$(git -C "${ROOT}" rev-parse "${REF}^{commit}")"
 
 if [[ "${CRP_MODE}" != "v1" && "${CRP_MODE}" != "v2" ]]; then
   echo "--crp-mode must be v1 or v2 (got: ${CRP_MODE})" >&2
+  exit 2
+fi
+if [[ "${RUN_MODE}" != "e2e" && "${RUN_MODE}" != "preflight" ]]; then
+  echo "--mode must be e2e or preflight (got: ${RUN_MODE})" >&2
+  exit 2
+fi
+if [[ "${CRP_MODE}" != "v2" && "${RUN_MODE}" != "e2e" ]]; then
+  echo "--mode=${RUN_MODE} is only supported with --crp-mode v2" >&2
   exit 2
 fi
 
@@ -293,7 +304,7 @@ if [[ "${ping}" != "Online" ]]; then
 fi
 
 echo "running e2e via SSM..." >&2
-export REGION INSTANCE_ID RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION SOLANA_CLI_VERSION GO_VERSION GIT_SHA DEPLOYMENT_NAME CRP_MODE PRIORITY_LEVEL
+export REGION INSTANCE_ID RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION SOLANA_CLI_VERSION GO_VERSION GIT_SHA DEPLOYMENT_NAME CRP_MODE PRIORITY_LEVEL RUN_MODE
 
 ssm_timeout_seconds="${JUNO_E2E_SSM_TIMEOUT_SECONDS:-10200}" # 170 minutes
 export JUNO_E2E_SSM_TIMEOUT_SECONDS="${ssm_timeout_seconds}"
@@ -311,6 +322,9 @@ deployment = os.environ["DEPLOYMENT_NAME"]
 git_sha = os.environ["GIT_SHA"]
 crp_mode = os.environ.get("CRP_MODE", "v1").strip()
 priority_level = os.environ.get("PRIORITY_LEVEL", "Medium").strip()
+run_mode = os.environ.get("RUN_MODE", "e2e").strip()
+if run_mode not in ("e2e", "preflight"):
+    raise SystemExit(f"RUN_MODE must be e2e or preflight (got: {run_mode})")
 
 rust_toolchain = os.environ["RUST_TOOLCHAIN"]
 risc0_rust_toolchain = os.environ["RISC0_RUST_TOOLCHAIN"]
@@ -412,14 +426,21 @@ cmds = [
     f"if ! command -v go >/dev/null || ! go version | grep -q 'go{go_version}'; then curl -sSfL --retry 8 --retry-delay 5 --retry-all-errors https://go.dev/dl/go{go_version}.linux-amd64.tar.gz -o /tmp/go.tgz && sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz; fi",
     'export PATH="/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/solana-release/bin:$PATH"',
     "go version",
-    "if ! command -v cargo >/dev/null; then curl -sSfL --retry 8 --retry-delay 5 --retry-all-errors https://sh.rustup.rs | sh -s -- -y; fi",
-    'export PATH="$HOME/.cargo/bin:/usr/local/go/bin:$HOME/.local/share/solana/solana-release/bin:$PATH"',
-    f"rustup toolchain install {rust_toolchain} || true",
-    f"rustup default {rust_toolchain} || true",
-    f"rustup toolchain install {risc0_rust_toolchain} || true",
-    f"if ! command -v rzup >/dev/null || ! rzup --version | grep -q '{rzup_version}'; then cargo install rzup --version {rzup_version} --locked --force; fi",
-    f"rzup install rust {risc0_rust_toolchain}",
-    f"rzup install risc0-groth16 {risc0_groth16_version}",
+]
+
+if run_mode == "e2e":
+    cmds += [
+        "if ! command -v cargo >/dev/null; then curl -sSfL --retry 8 --retry-delay 5 --retry-all-errors https://sh.rustup.rs | sh -s -- -y; fi",
+        'export PATH="$HOME/.cargo/bin:/usr/local/go/bin:$HOME/.local/share/solana/solana-release/bin:$PATH"',
+        f"rustup toolchain install {rust_toolchain} || true",
+        f"rustup default {rust_toolchain} || true",
+        f"rustup toolchain install {risc0_rust_toolchain} || true",
+        f"if ! command -v rzup >/dev/null || ! rzup --version | grep -q '{rzup_version}'; then cargo install rzup --version {rzup_version} --locked --force; fi",
+        f"rzup install rust {risc0_rust_toolchain}",
+        f"rzup install risc0-groth16 {risc0_groth16_version}",
+    ]
+
+cmds += [
     "if ! command -v bzip2 >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends bzip2; fi",
     (
         'SOLANA_DIR="$HOME/.local/share/solana/solana-release"; '
@@ -457,11 +478,16 @@ if creator_keypair_json:
         "export JUNO_E2E_CREATOR_KEYPAIR=/root/juno-secrets/creator.json",
     ]
 
+run_script = "./scripts/e2e/devnet-testnet-tee.sh"
+if run_mode == "preflight":
+    run_script = "./scripts/e2e/tee-preflight.sh"
+
 cmds += [
     f"export JUNO_E2E_PRIORITY_LEVEL={priority_level}",
     (
         "if [ \"{mode}\" = \"v2\" ]; then "
         "set -e; "
+        "if [ \"{run_mode}\" = \"e2e\" ]; then "
         "export PATH=/usr/local/cuda/bin:/usr/local/cuda-*/bin:$PATH; "
         "if ! command -v nvcc >/dev/null 2>&1; then "
         "sudo apt-get update; "
@@ -469,6 +495,7 @@ cmds += [
         "export PATH=/usr/local/cuda/bin:/usr/local/cuda-*/bin:$PATH; "
         "fi; "
         "if ! command -v nvcc >/dev/null 2>&1; then echo 'nvcc not found (CUDA toolkit install incomplete)' >&2; exit 1; fi; "
+        "fi; "
         "if ! command -v nitro-cli >/dev/null; then "
         "sudo apt-get update; "
         "sudo apt-get install -y --no-install-recommends clang gcc git libclang-dev libssl-dev llvm-dev make pkg-config; "
@@ -515,14 +542,14 @@ cmds += [
         "if [ ! -e /dev/nitro_enclaves ]; then echo \"/dev/nitro_enclaves missing\" >&2; exit 1; fi; "
         "mkdir -p /var/log/juno-e2e; "
         "rm -f /var/log/juno-e2e/e2e.pid /var/log/juno-e2e/e2e.exit; "
-        "nohup bash -lc 'cd /root/juno-intents && JUNO_E2E_ARTIFACT_DIR=/var/log/juno-e2e ./scripts/e2e/devnet-testnet-tee.sh --base-deployment {deployment}; ec=$?; echo $ec > /var/log/juno-e2e/e2e.exit' "
+        "nohup bash -lc 'cd /root/juno-intents && JUNO_E2E_ARTIFACT_DIR=/var/log/juno-e2e {run_script} --base-deployment {deployment}; ec=$?; echo $ec > /var/log/juno-e2e/e2e.exit' "
         ">/var/log/juno-e2e/e2e.log 2>&1 & "
         "echo $! > /var/log/juno-e2e/e2e.pid; "
         "echo \"e2e_pid=$(cat /var/log/juno-e2e/e2e.pid)\" >&2; "
         "else "
         "./scripts/e2e/devnet-testnet.sh --deployment {deployment}; "
         "fi"
-    ).format(mode=crp_mode, deployment=deployment),
+    ).format(mode=crp_mode, deployment=deployment, run_mode=run_mode, run_script=run_script),
 ]
 
 payload = json.dumps({"commands": cmds})
@@ -733,8 +760,13 @@ ssm_stderr "${COMMAND_ID}" | tail -n 80 >&2 || true
 if [[ "${CRP_MODE}" == "v2" ]]; then
   echo "waiting for background e2e (v2)..." >&2
 
-  remote_timeout_seconds="${JUNO_E2E_REMOTE_TIMEOUT_SECONDS:-14400}" # 4h
-  poll_interval_seconds="${JUNO_E2E_REMOTE_POLL_INTERVAL_SECONDS:-60}"
+  if [[ "${RUN_MODE}" == "preflight" ]]; then
+    remote_timeout_seconds="${JUNO_E2E_REMOTE_TIMEOUT_SECONDS:-3600}" # 1h
+    poll_interval_seconds="${JUNO_E2E_REMOTE_POLL_INTERVAL_SECONDS:-20}"
+  else
+    remote_timeout_seconds="${JUNO_E2E_REMOTE_TIMEOUT_SECONDS:-14400}" # 4h
+    poll_interval_seconds="${JUNO_E2E_REMOTE_POLL_INTERVAL_SECONDS:-60}"
+  fi
 
   e2e_status=""
   e2e_exit_code=""
@@ -878,6 +910,7 @@ PY
   echo "downloading remote artifacts (best effort)..." >&2
   fetch_remote_file "/var/log/juno-e2e/deployment.json" "${ROOT}/tmp/e2e/aws/artifacts/${INSTANCE_ID}/deployment.json" || true
   fetch_remote_file "/var/log/juno-e2e/tee-summary.json" "${ROOT}/tmp/e2e/aws/artifacts/${INSTANCE_ID}/tee-summary.json" || true
+  fetch_remote_file "/var/log/juno-e2e/tee-preflight-summary.json" "${ROOT}/tmp/e2e/aws/artifacts/${INSTANCE_ID}/tee-preflight-summary.json" || true
   fetch_remote_file "/var/log/juno-e2e/crp-monitor-report.json" "${ROOT}/tmp/e2e/aws/artifacts/${INSTANCE_ID}/crp-monitor-report.json" || true
 
   if [[ "${e2e_status}" != "done" || "${e2e_exit_code}" != "0" ]]; then
