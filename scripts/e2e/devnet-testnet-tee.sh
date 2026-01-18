@@ -231,7 +231,13 @@ min_creator_lamports="${JUNO_E2E_MIN_CREATOR_LAMPORTS:-500000000}" # 0.5 SOL
 
 balance_lamports() {
   local pubkey="$1"
-  solana -u "${RPC_URL}" balance "${pubkey}" --lamports 2>/dev/null | tr -d '\r\n ' || true
+  local raw
+  raw="$(solana -u "${RPC_URL}" balance "${pubkey}" --lamports 2>/dev/null || true)"
+  python3 -c 'import re,sys
+raw=sys.stdin.read()
+m=re.search(r"(\\d+)", raw)
+print(m.group(1) if m else "")
+' <<<"${raw}"
 }
 
 if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
