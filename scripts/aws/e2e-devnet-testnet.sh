@@ -327,6 +327,7 @@ creator_keypair_json = os.environ.get("JUNO_E2E_CREATOR_KEYPAIR_JSON", "").strip
 cmds = [
     "set -e",
     "export HOME=/root",
+    "mkdir -p /root",
     "if ! command -v python3 >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends python3; fi",
     "if ! command -v git >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends git; fi",
     "if ! command -v curl >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends curl; fi",
@@ -430,8 +431,8 @@ cmds = [
     'export PATH="$HOME/.local/share/solana/solana-release/bin:$PATH"',
     "solana --version",
     "spl-token --version",
-    "rm -rf juno-intents && git clone https://github.com/Abdullah1738/juno-intents.git",
-    "cd juno-intents",
+    "rm -rf /root/juno-intents && git clone https://github.com/Abdullah1738/juno-intents.git /root/juno-intents",
+    "cd /root/juno-intents",
     f"git checkout {git_sha}",
 ]
 
