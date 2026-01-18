@@ -485,7 +485,13 @@ cmds = [
         "if [ -f /sys/module/nitro_enclaves/parameters/ne_cpus ]; then echo \"ne_cpus=$(cat /sys/module/nitro_enclaves/parameters/ne_cpus)\" >&2; fi; "
         "grep -E '^(HugePages_Total|HugePages_Free|Hugepagesize):' /proc/meminfo >&2 || true; "
         "if [ ! -e /dev/nitro_enclaves ]; then echo \"/dev/nitro_enclaves missing\" >&2; exit 1; fi; "
-        "./scripts/e2e/devnet-testnet-tee.sh --base-deployment {deployment}; "
+        "state=/var/log/juno-e2e; "
+        "mkdir -p \"${state}\"; "
+        "rm -f \"${state}/e2e.pid\" \"${state}/e2e.exit\"; "
+        "nohup bash -lc 'cd /root/juno-intents && ./scripts/e2e/devnet-testnet-tee.sh --base-deployment {deployment}; ec=$?; echo $ec > /var/log/juno-e2e/e2e.exit' "
+        ">\"${state}/e2e.log\" 2>&1 & "
+        "echo $! > \"${state}/e2e.pid\"; "
+        "echo \"e2e_pid=$(cat ${state}/e2e.pid)\" >&2; "
         "else "
         "./scripts/e2e/devnet-testnet.sh --deployment {deployment}; "
         "fi"
@@ -570,11 +576,12 @@ while true; do
 done
 
 download_ssm_output() {
-  if [[ -z "${SSM_OUTPUT_BUCKET:-}" || -z "${SSM_OUTPUT_PREFIX:-}" ]]; then
+  local cmd_id="${1:-${COMMAND_ID}}"
+  if [[ -z "${SSM_OUTPUT_BUCKET:-}" || -z "${SSM_OUTPUT_PREFIX:-}" || -z "${cmd_id}" ]]; then
     return 0
   fi
-  local uri="s3://${SSM_OUTPUT_BUCKET}/${SSM_OUTPUT_PREFIX}/${COMMAND_ID}/${INSTANCE_ID}/"
-  local out_dir="${ROOT}/tmp/e2e/aws/ssm/${INSTANCE_ID}/${COMMAND_ID}"
+  local uri="s3://${SSM_OUTPUT_BUCKET}/${SSM_OUTPUT_PREFIX}/${cmd_id}/${INSTANCE_ID}/"
+  local out_dir="${ROOT}/tmp/e2e/aws/ssm/${INSTANCE_ID}/${cmd_id}"
   mkdir -p "${out_dir}"
   echo "downloading ssm output to ${out_dir}..." >&2
   echo "ssm output uri: ${uri}" >&2
@@ -589,8 +596,100 @@ download_ssm_output() {
   return 1
 }
 
+ssm_send_script() {
+  local timeout_seconds="${1:-600}"
+  local payload
+  payload="$(python3 - <<'PY'
+import json,sys
+cmds=[]
+for ln in sys.stdin.read().splitlines():
+  ln=ln.rstrip("\n")
+  if not ln.strip():
+    continue
+  cmds.append(ln)
+print(json.dumps({"commands": cmds}))
+PY
+)"
+
+  local args=(ssm send-command --timeout-seconds "${timeout_seconds}")
+  if [[ -n "${SSM_OUTPUT_BUCKET:-}" ]]; then
+    args+=(--output-s3-bucket-name "${SSM_OUTPUT_BUCKET}")
+    if [[ -n "${SSM_OUTPUT_PREFIX:-}" ]]; then
+      args+=(--output-s3-key-prefix "${SSM_OUTPUT_PREFIX}")
+    fi
+  fi
+  args+=(
+    --document-name AWS-RunShellScript
+    --targets "Key=InstanceIds,Values=${INSTANCE_ID}"
+    --parameters "${payload}"
+    --query "Command.CommandId"
+    --output text
+  )
+  awsj "${args[@]}"
+}
+
+ssm_wait() {
+  local cmd_id="$1"
+  local timeout_seconds="${2:-600}"
+  local start_ts now_ts status last_status
+  start_ts="$(date +%s)"
+  status=""
+  last_status=""
+  while true; do
+    status="$(awsj ssm get-command-invocation \
+      --command-id "${cmd_id}" \
+      --instance-id "${INSTANCE_ID}" \
+      --query 'Status' \
+      --output text 2>/dev/null || true)"
+    if [[ -z "${status}" || "${status}" == "None" ]]; then
+      sleep 2
+      continue
+    fi
+    if [[ "${status}" != "${last_status}" ]]; then
+      echo "ssm cmd ${cmd_id} status: ${status}" >&2
+      last_status="${status}"
+    fi
+    case "${status}" in
+      Success|Failed|Cancelled|TimedOut)
+        echo "${status}"
+        return 0
+        ;;
+      Pending|InProgress|Delayed)
+        ;;
+      *)
+        echo "unexpected ssm status for ${cmd_id}: ${status}" >&2
+        ;;
+    esac
+    now_ts="$(date +%s)"
+    if (( now_ts - start_ts > timeout_seconds )); then
+      echo "TimedOut"
+      return 0
+    fi
+    sleep 5
+  done
+}
+
+ssm_stdout() {
+  local cmd_id="$1"
+  awsj ssm get-command-invocation \
+    --command-id "${cmd_id}" \
+    --instance-id "${INSTANCE_ID}" \
+    --query 'StandardOutputContent' \
+    --output text 2>/dev/null || true
+}
+
+ssm_stderr() {
+  local cmd_id="$1"
+  awsj ssm get-command-invocation \
+    --command-id "${cmd_id}" \
+    --instance-id "${INSTANCE_ID}" \
+    --query 'StandardErrorContent' \
+    --output text 2>/dev/null || true
+}
+
+download_ssm_output "${COMMAND_ID}" || true
+
 if [[ "${status}" != "Success" ]]; then
-  download_ssm_output || true
   awsj ssm get-command-invocation \
     --command-id "${COMMAND_ID}" \
     --instance-id "${INSTANCE_ID}" \
@@ -599,10 +698,105 @@ if [[ "${status}" != "Success" ]]; then
   exit 1
 fi
 
-awsj ssm get-command-invocation \
-  --command-id "${COMMAND_ID}" \
-  --instance-id "${INSTANCE_ID}" \
-  --query '{Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
-  --output json >&2
+echo "initial ssm stdout (tail):" >&2
+ssm_stdout "${COMMAND_ID}" | tail -n 80 >&2 || true
+echo "initial ssm stderr (tail):" >&2
+ssm_stderr "${COMMAND_ID}" | tail -n 80 >&2 || true
+
+if [[ "${CRP_MODE}" == "v2" ]]; then
+  echo "waiting for background e2e (v2)..." >&2
+
+  remote_timeout_seconds="${JUNO_E2E_REMOTE_TIMEOUT_SECONDS:-14400}" # 4h
+  poll_interval_seconds="${JUNO_E2E_REMOTE_POLL_INTERVAL_SECONDS:-60}"
+
+  e2e_status=""
+  e2e_exit_code=""
+  start_ts="$(date +%s)"
+  while true; do
+    check_id="$(
+      ssm_send_script 600 <<'EOF'
+set -euo pipefail
+d=/var/log/juno-e2e
+if [ -f "$d/e2e.exit" ]; then
+  echo "status=done"
+  echo "exit_code=$(tr -d '\r\n ' < "$d/e2e.exit")"
+  exit 0
+fi
+if [ -f "$d/e2e.pid" ]; then
+  pid="$(tr -d '\r\n ' < "$d/e2e.pid" || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    echo "status=running"
+    echo "pid=${pid}"
+    exit 0
+  fi
+  echo "status=stopped"
+  echo "pid=${pid}"
+  exit 0
+fi
+echo "status=notstarted"
+EOF
+    )"
+    check_status="$(ssm_wait "${check_id}" 300)"
+    download_ssm_output "${check_id}" || true
+
+    if [[ "${check_status}" != "Success" ]]; then
+      echo "SSM e2e status check failed (status=${check_status})" >&2
+      ssm_stdout "${check_id}" >&2 || true
+      ssm_stderr "${check_id}" >&2 || true
+      exit 1
+    fi
+
+    check_out="$(ssm_stdout "${check_id}")"
+    e2e_status="$(printf '%s\n' "${check_out}" | sed -nE 's/^status=(.+)$/\1/p' | tail -n 1)"
+    e2e_exit_code="$(printf '%s\n' "${check_out}" | sed -nE 's/^exit_code=([0-9]+)$/\1/p' | tail -n 1)"
+
+    if [[ "${e2e_status}" == "done" ]]; then
+      break
+    fi
+    if [[ "${e2e_status}" == "stopped" ]]; then
+      echo "e2e process stopped before writing exit code" >&2
+      break
+    fi
+
+    now_ts="$(date +%s)"
+    if (( now_ts - start_ts > remote_timeout_seconds )); then
+      echo "remote e2e timed out after ${remote_timeout_seconds}s" >&2
+      break
+    fi
+    echo "e2e status: ${e2e_status:-unknown} (elapsed=$((now_ts-start_ts))s)" >&2
+    sleep "${poll_interval_seconds}"
+  done
+
+  tail_id="$(
+    ssm_send_script 600 <<'EOF'
+set -euo pipefail
+d=/var/log/juno-e2e
+echo "---- e2e.log (tail) ----"
+tail -n 200 "$d/e2e.log" || true
+if [ -f "$d/e2e.exit" ]; then
+  echo "exit_code=$(tr -d '\r\n ' < "$d/e2e.exit")"
+fi
+EOF
+  )"
+  tail_status="$(ssm_wait "${tail_id}" 300)"
+  download_ssm_output "${tail_id}" || true
+
+  if [[ "${tail_status}" != "Success" ]]; then
+    echo "SSM e2e tail failed (status=${tail_status})" >&2
+    ssm_stdout "${tail_id}" >&2 || true
+    ssm_stderr "${tail_id}" >&2 || true
+  else
+    echo "e2e tail:" >&2
+    ssm_stdout "${tail_id}" >&2 || true
+  fi
+
+  if [[ "${e2e_status}" != "done" || "${e2e_exit_code}" != "0" ]]; then
+    echo "e2e failed (status=${e2e_status:-unknown} exit_code=${e2e_exit_code:-unknown})" >&2
+    exit 1
+  fi
+
+  echo "e2e succeeded" >&2
+  exit 0
+fi
 
 echo "done" >&2
