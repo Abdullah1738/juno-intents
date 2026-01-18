@@ -3,6 +3,7 @@ package shelltest
 import (
 	"bytes"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -53,3 +54,24 @@ func TestAwsE2EDevnetTestnetScriptValidatesMode(t *testing.T) {
 	})
 }
 
+func TestAwsE2EDevnetTestnetScriptFetchRemoteFileParsesB64(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "aws", "e2e-devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	if !bytes.Contains(src, []byte("sed -nE 's/^b64=(.+)$/\\1/p'")) {
+		t.Fatalf("script missing b64 sed backreference extraction")
+	}
+	if bytes.Contains(src, []byte("sed -nE 's/^b64=(.+)$/\\\\1/p'")) {
+		t.Fatalf("script contains incorrect b64 sed extraction (\\\\1)")
+	}
+	if !bytes.Contains(src, []byte("base64.b64decode(b64.encode(\"ascii\"), validate=True)")) {
+		t.Fatalf("script missing strict base64 decode (validate=True)")
+	}
+}

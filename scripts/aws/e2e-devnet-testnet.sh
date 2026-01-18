@@ -888,7 +888,7 @@ EOF
       return 1
     fi
 
-    b64="$(printf '%s\n' "${out}" | sed -nE 's/^b64=(.+)$/\\1/p' | tail -n 1)"
+    b64="$(printf '%s\n' "${out}" | sed -nE 's/^b64=(.+)$/\1/p' | tail -n 1)"
     if [[ -z "${b64}" ]]; then
       echo "missing b64 payload for ${remote_path}" >&2
       printf '%s\n' "${out}" | tail -n 40 >&2 || true
@@ -896,14 +896,18 @@ EOF
     fi
 
     mkdir -p "$(dirname "${local_path}")"
-    python3 - "${local_path}" "${b64}" <<'PY'
+    if ! python3 - "${local_path}" "${b64}" <<'PY'
 import base64,sys
 path=sys.argv[1]
 b64=sys.argv[2].strip()
-data=base64.b64decode(b64.encode("ascii"))
+data=base64.b64decode(b64.encode("ascii"), validate=True)
 with open(path,"wb") as f:
   f.write(data)
 PY
+    then
+      echo "failed to decode base64 payload for ${remote_path}" >&2
+      return 1
+    fi
     echo "downloaded ${remote_path} -> ${local_path}" >&2
     return 0
   }
