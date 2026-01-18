@@ -15,6 +15,8 @@ JUNOCASH_SHIELD_LIMIT="${JUNO_E2E_JUNOCASH_SHIELD_LIMIT:-10}"
 
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
+E2E_ARTIFACT_DIR="${JUNO_E2E_ARTIFACT_DIR:-}"
+
 SOLVER_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER_KEYPAIR:-}"
 SOLVER2_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER2_KEYPAIR:-}"
 CREATOR_KEYPAIR_OVERRIDE="${JUNO_E2E_CREATOR_KEYPAIR:-}"
@@ -384,9 +386,11 @@ echo "junocash_shield_limit=${JUNOCASH_SHIELD_LIMIT}" >&2
 echo "building Go CLIs..." >&2
 GO_INTENTS="${WORKDIR}/juno-intents"
 GO_CRP="${WORKDIR}/crp-operator"
+GO_CRP_MONITOR="${WORKDIR}/crp-monitor"
 GO_SOLVERNET="${WORKDIR}/solvernet"
 (cd "${ROOT}" && go build -o "${GO_INTENTS}" ./cmd/juno-intents)
 (cd "${ROOT}" && go build -o "${GO_CRP}" ./cmd/crp-operator)
+(cd "${ROOT}" && go build -o "${GO_CRP_MONITOR}" ./cmd/crp-monitor)
 (cd "${ROOT}" && go build -o "${GO_SOLVERNET}" ./cmd/solvernet)
 
 echo "selecting Solana keypairs..." >&2
@@ -1271,5 +1275,30 @@ echo "creator_balance=${creator_balance}" >&2
 echo "solver_balance=${solver_balance}" >&2
 echo "solver2_balance=${solver2_balance}" >&2
 echo "fee_balance=${fee_balance}" >&2
+
+echo "producing CRP checkpoint report..." >&2
+CRP_REPORT_PATH="${WORKDIR}/crp-monitor-report.json"
+for i in $(seq 1 3); do
+  if "${GO_CRP_MONITOR}" check \
+    --deployment "${DEPLOYMENT_NAME}" \
+    --deployments "${DEPLOYMENT_FILE}" \
+    --rpc-url "${SOLANA_RPC_URL}" \
+    --junocash-cli "${JUNOCASH_CLI}" \
+    --max-lag 20 >"${CRP_REPORT_PATH}"; then
+    break
+  fi
+  echo "crp-monitor attempt ${i} failed; retrying..." >&2
+  sleep "$((i * 5))"
+done
+if [[ ! -s "${CRP_REPORT_PATH}" ]]; then
+  echo "crp-monitor report missing/empty: ${CRP_REPORT_PATH}" >&2
+  exit 1
+fi
+echo "crp_monitor_report=${CRP_REPORT_PATH}" >&2
+if [[ -n "${E2E_ARTIFACT_DIR}" ]]; then
+  mkdir -p "${E2E_ARTIFACT_DIR}"
+  cp "${CRP_REPORT_PATH}" "${E2E_ARTIFACT_DIR}/crp-monitor-report.json"
+  echo "crp_monitor_report_artifact=${E2E_ARTIFACT_DIR}/crp-monitor-report.json" >&2
+fi
 
 echo "e2e ok" >&2

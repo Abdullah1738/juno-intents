@@ -513,7 +513,7 @@ cmds += [
         "if [ ! -e /dev/nitro_enclaves ]; then echo \"/dev/nitro_enclaves missing\" >&2; exit 1; fi; "
         "mkdir -p /var/log/juno-e2e; "
         "rm -f /var/log/juno-e2e/e2e.pid /var/log/juno-e2e/e2e.exit; "
-        "nohup bash -lc 'cd /root/juno-intents && ./scripts/e2e/devnet-testnet-tee.sh --base-deployment {deployment}; ec=$?; echo $ec > /var/log/juno-e2e/e2e.exit' "
+        "nohup bash -lc 'cd /root/juno-intents && JUNO_E2E_ARTIFACT_DIR=/var/log/juno-e2e ./scripts/e2e/devnet-testnet-tee.sh --base-deployment {deployment}; ec=$?; echo $ec > /var/log/juno-e2e/e2e.exit' "
         ">/var/log/juno-e2e/e2e.log 2>&1 & "
         "echo $! > /var/log/juno-e2e/e2e.pid; "
         "echo \"e2e_pid=$(cat /var/log/juno-e2e/e2e.pid)\" >&2; "
@@ -814,6 +814,69 @@ EOF
     echo "e2e tail:" >&2
     ssm_stdout "${tail_id}" >&2 || true
   fi
+
+  fetch_remote_file() {
+    local remote_path="$1"
+    local local_path="$2"
+
+    local cmd_id status out b64
+    cmd_id="$(
+      ssm_send_script 600 <<EOF
+set -euo pipefail
+p="${remote_path}"
+if [ ! -f "\$p" ]; then
+  echo "missing=1"
+  exit 0
+fi
+python3 - <<'PY'
+import base64,sys
+p="${remote_path}"
+data=open(p,"rb").read()
+print("missing=0")
+print("b64="+base64.b64encode(data).decode("ascii"))
+PY
+EOF
+    )"
+    status="$(ssm_wait "${cmd_id}" 300)"
+    download_ssm_output "${cmd_id}" || true
+
+    if [[ "${status}" != "Success" ]]; then
+      echo "failed to fetch ${remote_path} (ssm status=${status})" >&2
+      ssm_stdout "${cmd_id}" >&2 || true
+      ssm_stderr "${cmd_id}" >&2 || true
+      return 1
+    fi
+
+    out="$(ssm_stdout "${cmd_id}" | tr -d '\r' || true)"
+    if printf '%s\n' "${out}" | grep -q '^missing=1$'; then
+      echo "remote file missing: ${remote_path}" >&2
+      return 1
+    fi
+
+    b64="$(printf '%s\n' "${out}" | sed -nE 's/^b64=(.+)$/\\1/p' | tail -n 1)"
+    if [[ -z "${b64}" ]]; then
+      echo "missing b64 payload for ${remote_path}" >&2
+      printf '%s\n' "${out}" | tail -n 40 >&2 || true
+      return 1
+    fi
+
+    mkdir -p "$(dirname "${local_path}")"
+    python3 - "${local_path}" "${b64}" <<'PY'
+import base64,sys
+path=sys.argv[1]
+b64=sys.argv[2].strip()
+data=base64.b64decode(b64.encode("ascii"))
+with open(path,"wb") as f:
+  f.write(data)
+PY
+    echo "downloaded ${remote_path} -> ${local_path}" >&2
+    return 0
+  }
+
+  echo "downloading remote artifacts (best effort)..." >&2
+  fetch_remote_file "/var/log/juno-e2e/deployment.json" "${ROOT}/tmp/e2e/aws/artifacts/${INSTANCE_ID}/deployment.json" || true
+  fetch_remote_file "/var/log/juno-e2e/tee-summary.json" "${ROOT}/tmp/e2e/aws/artifacts/${INSTANCE_ID}/tee-summary.json" || true
+  fetch_remote_file "/var/log/juno-e2e/crp-monitor-report.json" "${ROOT}/tmp/e2e/aws/artifacts/${INSTANCE_ID}/crp-monitor-report.json" || true
 
   if [[ "${e2e_status}" != "done" || "${e2e_exit_code}" != "0" ]]; then
     echo "e2e failed (status=${e2e_status:-unknown} exit_code=${e2e_exit_code:-unknown})" >&2

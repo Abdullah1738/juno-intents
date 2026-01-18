@@ -7,6 +7,7 @@ DEPLOYMENT_FILE="deployments.json"
 BASE_DEPLOYMENT=""
 
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
+E2E_ARTIFACT_DIR="${JUNO_E2E_ARTIFACT_DIR:-}"
 
 usage() {
   cat <<'USAGE' >&2
@@ -282,6 +283,10 @@ if ! JUNO_EIF_DOCKERFILE=enclave/operator/Dockerfile.e2e \
   exit 1
 fi
 grep -E '^pcr0=[0-9a-fA-F]{96}$' "${eif_err}" >&2 || true
+EIF_PCR0="$(sed -nE 's/^pcr0=([0-9a-fA-F]{96})$/\\1/p' "${eif_err}" | tail -n 1 || true)"
+EIF_SHA256="$(sed -nE 's/^eif_sha256=([0-9a-fA-F]{64})$/\\1/p' "${eif_err}" | tail -n 1 || true)"
+if [[ -n "${EIF_PCR0}" ]]; then echo "eif_pcr0=${EIF_PCR0}" >&2; fi
+if [[ -n "${EIF_SHA256}" ]]; then echo "eif_sha256=${EIF_SHA256}" >&2; fi
 
 CID1=16
 CID2=17
@@ -347,6 +352,8 @@ op1="$(printf '%s\n' "${info1}" | sed -nE 's/^operator_pubkey=([1-9A-HJ-NP-Za-km
 op2="$(printf '%s\n' "${info2}" | sed -nE 's/^operator_pubkey=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' | head -n 1)"
 meas1="$(printf '%s\n' "${info1}" | sed -nE 's/^measurement=([0-9a-fA-F]{64})$/\\1/p' | head -n 1)"
 meas2="$(printf '%s\n' "${info2}" | sed -nE 's/^measurement=([0-9a-fA-F]{64})$/\\1/p' | head -n 1)"
+img1="$(printf '%s\n' "${info1}" | sed -nE 's/^image_id=([0-9a-fA-F]{64})$/\\1/p' | head -n 1)"
+img2="$(printf '%s\n' "${info2}" | sed -nE 's/^image_id=([0-9a-fA-F]{64})$/\\1/p' | head -n 1)"
 if [[ -z "${op1}" || -z "${op2}" || -z "${meas1}" || -z "${meas2}" ]]; then
   echo "failed to parse attestation bundle info" >&2
   exit 1
@@ -355,9 +362,31 @@ if [[ "${meas1}" != "${meas2}" ]]; then
   echo "enclave measurements mismatch: ${meas1} != ${meas2}" >&2
   exit 1
 fi
+if [[ -z "${img1}" || -z "${img2}" ]]; then
+  echo "failed to parse image_id from attestation bundle info" >&2
+  exit 1
+fi
+if [[ "${img1}" != "${img2}" ]]; then
+  echo "attestation image_id mismatch: ${img1} != ${img2}" >&2
+  exit 1
+fi
+
+B1_SHA256="$(python3 - "${b1_hex}" <<'PY'
+import binascii,hashlib,sys
+h=sys.argv[1].strip()
+print(hashlib.sha256(binascii.unhexlify(h)).hexdigest())
+PY
+)"
+B2_SHA256="$(python3 - "${b2_hex}" <<'PY'
+import binascii,hashlib,sys
+h=sys.argv[1].strip()
+print(hashlib.sha256(binascii.unhexlify(h)).hexdigest())
+PY
+)"
 
 echo "initializing ORP + registering operators..." >&2
-SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-orp \
+orp_init_err="${WORKDIR}/init-orp.stderr.log"
+if ! ORP_INIT_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-orp \
   --orp-program-id "${ORP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID}" \
   --admin "${SOLVER_PUBKEY}" \
@@ -366,22 +395,55 @@ SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-orp \
   --verifier-router-program "${VERIFIER_ROUTER_PROGRAM_ID}" \
   --verifier-program-id "${VERIFIER_PROGRAM_ID}" \
   --allowed-measurement "${meas1}" \
-  --payer-keypair "${SOLVER_KEYPAIR}" >/dev/null
+  --payer-keypair "${SOLVER_KEYPAIR}" 2>"${orp_init_err}")"; then
+  echo "init-orp failed (tailing stderr)..." >&2
+  tail -n 200 "${orp_init_err}" >&2 || true
+  exit 1
+fi
+orp_config="$(sed -nE 's/^orp_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' "${orp_init_err}" | tail -n 1)"
+if [[ -z "${orp_config}" ]]; then
+  echo "failed to parse orp_config" >&2
+  tail -n 200 "${orp_init_err}" >&2 || true
+  exit 1
+fi
 
-SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" orp-register-operator \
+op1_reg_err="${WORKDIR}/orp-register-operator-1.stderr.log"
+if ! OP1_REGISTER_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" orp-register-operator \
   --orp-program-id "${ORP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID}" \
   --bundle-hex "${b1_hex}" \
-  --payer-keypair "${SOLVER_KEYPAIR}" >/dev/null
+  --payer-keypair "${SOLVER_KEYPAIR}" 2>"${op1_reg_err}")"; then
+  echo "orp-register-operator (1) failed (tailing stderr)..." >&2
+  tail -n 200 "${op1_reg_err}" >&2 || true
+  exit 1
+fi
+op1_record="$(sed -nE 's/^operator_record=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' "${op1_reg_err}" | tail -n 1)"
+if [[ -z "${op1_record}" ]]; then
+  echo "failed to parse operator_record (1)" >&2
+  tail -n 200 "${op1_reg_err}" >&2 || true
+  exit 1
+fi
 
-SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" orp-register-operator \
+op2_reg_err="${WORKDIR}/orp-register-operator-2.stderr.log"
+if ! OP2_REGISTER_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" orp-register-operator \
   --orp-program-id "${ORP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID}" \
   --bundle-hex "${b2_hex}" \
-  --payer-keypair "${SOLVER_KEYPAIR}" >/dev/null
+  --payer-keypair "${SOLVER_KEYPAIR}" 2>"${op2_reg_err}")"; then
+  echo "orp-register-operator (2) failed (tailing stderr)..." >&2
+  tail -n 200 "${op2_reg_err}" >&2 || true
+  exit 1
+fi
+op2_record="$(sed -nE 's/^operator_record=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' "${op2_reg_err}" | tail -n 1)"
+if [[ -z "${op2_record}" ]]; then
+  echo "failed to parse operator_record (2)" >&2
+  tail -n 200 "${op2_reg_err}" >&2 || true
+  exit 1
+fi
 
 echo "initializing CRP v2 + IEP..." >&2
-crp_log="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-crp \
+crp_err="${WORKDIR}/init-crp.stderr.log"
+if ! CRP_INIT_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-crp \
   --crp-program-id "${CRP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID}" \
   --admin "${ADMIN}" \
@@ -391,18 +453,20 @@ crp_log="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-crp \
   --operator-registry-program "${ORP_PROGRAM_ID}" \
   --operator "${op1}" \
   --operator "${op2}" \
-  --payer-keypair "${SOLVER_KEYPAIR}" 2>&1)" || {
-  printf '%s\n' "${crp_log}" >&2
+  --payer-keypair "${SOLVER_KEYPAIR}" 2>"${crp_err}")"; then
+  echo "init-crp failed (tailing stderr)..." >&2
+  tail -n 200 "${crp_err}" >&2 || true
   exit 1
-}
-crp_config="$(printf '%s\n' "${crp_log}" | sed -nE 's/^crp_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' | tail -n 1)"
+fi
+crp_config="$(sed -nE 's/^crp_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' "${crp_err}" | tail -n 1)"
 if [[ -z "${crp_config}" ]]; then
   echo "failed to parse crp_config" >&2
-  printf '%s\n' "${crp_log}" >&2
+  tail -n 200 "${crp_err}" >&2 || true
   exit 1
 fi
 
-iep_log="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-iep \
+iep_err="${WORKDIR}/init-iep.stderr.log"
+if ! IEP_INIT_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-iep \
   --iep-program-id "${IEP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID}" \
   --fee-bps "${FEE_BPS}" \
@@ -413,14 +477,15 @@ iep_log="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-iep \
   --verifier-router "${VERIFIER_ROUTER}" \
   --verifier-entry "${VERIFIER_ENTRY}" \
   --verifier-program "${VERIFIER_PROGRAM_ID}" \
-  --payer-keypair "${SOLVER_KEYPAIR}" 2>&1)" || {
-  printf '%s\n' "${iep_log}" >&2
+  --payer-keypair "${SOLVER_KEYPAIR}" 2>"${iep_err}")"; then
+  echo "init-iep failed (tailing stderr)..." >&2
+  tail -n 200 "${iep_err}" >&2 || true
   exit 1
-}
-iep_config="$(printf '%s\n' "${iep_log}" | sed -nE 's/^iep_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' | tail -n 1)"
+fi
+iep_config="$(sed -nE 's/^iep_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' "${iep_err}" | tail -n 1)"
 if [[ -z "${iep_config}" ]]; then
   echo "failed to parse iep_config" >&2
-  printf '%s\n' "${iep_log}" >&2
+  tail -n 200 "${iep_err}" >&2 || true
   exit 1
 fi
 
@@ -459,12 +524,104 @@ with open("${TMP_DEPLOYMENTS}", "w", encoding="utf-8") as f:
   f.write("\\n")
 PY
 
+if [[ -n "${E2E_ARTIFACT_DIR}" ]]; then
+  mkdir -p "${E2E_ARTIFACT_DIR}"
+  cp "${TMP_DEPLOYMENTS}" "${E2E_ARTIFACT_DIR}/deployment.json"
+  echo "deployment_artifact=${E2E_ARTIFACT_DIR}/deployment.json" >&2
+fi
+
+write_summary() {
+  local stage="$1"
+  local out="${WORKDIR}/tee-summary.json"
+
+  python3 - <<PY
+import json,time
+summary = {
+  "stage": "${stage}",
+  "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+  "base_deployment": "${BASE_DEPLOYMENT}",
+  "e2e_deployment": "${E2E_DEPLOYMENT}",
+  "deployment_id": "${DEPLOYMENT_ID}",
+  "solana": {
+    "rpc_url": "${RPC_URL}",
+    "admin": "${ADMIN}",
+    "fee_bps": int("${FEE_BPS}"),
+    "fee_collector": "${FEE_COLLECTOR}",
+    "orp_program_id": "${ORP_PROGRAM_ID}",
+    "crp_program_id": "${CRP_PROGRAM_ID}",
+    "iep_program_id": "${IEP_PROGRAM_ID}",
+    "rv_program_id": "${RV_PROGRAM_ID}",
+    "verifier_router_program_id": "${VERIFIER_ROUTER_PROGRAM_ID}",
+    "verifier_router": "${VERIFIER_ROUTER}",
+    "verifier_entry": "${VERIFIER_ENTRY}",
+    "verifier_program_id": "${VERIFIER_PROGRAM_ID}",
+  },
+  "junocash": {
+    "chain": "${JUNOCASH_CHAIN}",
+    "chain_id": int("${CHAIN_ID}"),
+    "genesis_hash": "${JUNOCASH_GENESIS_HASH}",
+  },
+  "tee": {
+    "eif_pcr0": "${EIF_PCR0}",
+    "eif_sha256": "${EIF_SHA256}",
+    "enclave_measurement": "${meas1}",
+    "image_id": "${img1}",
+  },
+  "operators": [
+    {
+      "operator_pubkey": "${op1}",
+      "attestation_bundle_sha256": "${B1_SHA256}",
+      "operator_record": "${op1_record}",
+      "register_tx": "${OP1_REGISTER_SIG}",
+    },
+    {
+      "operator_pubkey": "${op2}",
+      "attestation_bundle_sha256": "${B2_SHA256}",
+      "operator_record": "${op2_record}",
+      "register_tx": "${OP2_REGISTER_SIG}",
+    },
+  ],
+  "init_txs": {
+    "orp_config": "${orp_config}",
+    "orp_init_tx": "${ORP_INIT_SIG}",
+    "crp_config": "${crp_config}",
+    "crp_init_tx": "${CRP_INIT_SIG}",
+    "iep_config": "${iep_config}",
+    "iep_init_tx": "${IEP_INIT_SIG}",
+  },
+  "funded_keypairs": {
+    "solver_pubkey": "${SOLVER_PUBKEY}",
+    "creator_pubkey": "${CREATOR_PUBKEY}",
+  },
+  "artifacts": {
+    "artifact_dir": "${E2E_ARTIFACT_DIR}",
+    "deployment_json": "${E2E_ARTIFACT_DIR}/deployment.json" if "${E2E_ARTIFACT_DIR}" else "",
+    "crp_monitor_report": "${E2E_ARTIFACT_DIR}/crp-monitor-report.json" if "${E2E_ARTIFACT_DIR}" else "",
+  },
+}
+with open("${out}", "w", encoding="utf-8") as f:
+  json.dump(summary, f, indent=2, sort_keys=True)
+  f.write("\\n")
+PY
+
+  echo "tee_summary=${out}" >&2
+  if [[ -n "${E2E_ARTIFACT_DIR}" ]]; then
+    cp "${out}" "${E2E_ARTIFACT_DIR}/tee-summary.json"
+    echo "tee_summary_artifact=${E2E_ARTIFACT_DIR}/tee-summary.json" >&2
+  fi
+}
+
+write_summary "initialized"
+
 export JUNO_E2E_SOLVER_KEYPAIR="${SOLVER_KEYPAIR}"
 export JUNO_E2E_CREATOR_KEYPAIR="${CREATOR_KEYPAIR}"
 export JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID1="${CID1}"
 export JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID2="${CID2}"
 export JUNO_E2E_CRP_SUBMIT_ENCLAVE_PORT="${PORT}"
 export JUNO_E2E_PRIORITY_LEVEL="${PRIORITY_LEVEL}"
+export JUNO_E2E_ARTIFACT_DIR="${E2E_ARTIFACT_DIR}"
 
 echo "running full e2e..." >&2
 "${ROOT}/scripts/e2e/devnet-testnet.sh" --deployment "${E2E_DEPLOYMENT}" --deployment-file "${TMP_DEPLOYMENTS}"
+
+write_summary "e2e_ok"
