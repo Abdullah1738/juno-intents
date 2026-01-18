@@ -740,7 +740,7 @@ if [[ "${CRP_MODE}" == "v2" ]]; then
   while true; do
     check_id="$(
       ssm_send_script 600 <<'EOF'
-set -euo pipefail
+	set -eu
 d=/var/log/juno-e2e
 if [ -f "$d/e2e.exit" ]; then
   echo "status=done"
@@ -794,7 +794,7 @@ EOF
 
   tail_id="$(
     ssm_send_script 600 <<'EOF'
-set -euo pipefail
+	set -eu
 d=/var/log/juno-e2e
 echo "---- e2e.log (tail) ----"
 tail -n 200 "$d/e2e.log" || true
@@ -822,7 +822,7 @@ EOF
     local cmd_id status out b64
     cmd_id="$(
       ssm_send_script 600 <<EOF
-set -euo pipefail
+	set -eu
 p="${remote_path}"
 if [ ! -f "\$p" ]; then
   echo "missing=1"
