@@ -143,18 +143,17 @@ balance_lamports() {
   local pubkey="$1"
   local raw out
   for i in $(seq 1 10); do
-    if raw="$(solana -u "${RPC_URL}" balance "${pubkey}" --lamports 2>&1)"; then
-      out="$(
-        python3 -c 'import re,sys
+    raw="$(solana -u "${RPC_URL}" balance "${pubkey}" --lamports 2>&1 || true)"
+    out="$(
+      python3 -c 'import re,sys
 raw=sys.stdin.read()
-m=re.search(r"(\\d+)", raw)
+m=re.search(r"(\\d+)\\s*lamports\\b", raw)
 print(m.group(1) if m else "")
 ' <<<"${raw}"
-      )"
-      if [[ "${out}" =~ ^[0-9]+$ ]]; then
-        printf '%s\n' "${out}"
-        return 0
-      fi
+    )"
+    if [[ "${out}" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "${out}"
+      return 0
     fi
     sleep "${i}"
   done
