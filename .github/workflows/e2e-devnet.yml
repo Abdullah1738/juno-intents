@@ -258,8 +258,9 @@ jobs:
           e2e_ec="$?"
           set -e
 
-          if [[ -d "tmp/e2e/aws" ]]; then
-            cp -R "tmp/e2e/aws/." "${JUNO_E2E_LOCAL_AWS_DIR}/" || true
+          src="${GITHUB_WORKSPACE}/tmp/e2e/aws"
+          if [[ -d "${src}" ]]; then
+            cp -R "${src}/." "${JUNO_E2E_LOCAL_AWS_DIR}/" || true
           fi
           exit "${e2e_ec}"
 
