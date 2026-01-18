@@ -6,6 +6,7 @@ on:
       deployment:
         description: "Base deployment name from deployments.json (workflow creates a fresh deployment_id + config PDAs per run)"
         required: true
+        default: "devnet-tee-testnet-base"
         type: string
       crp_mode:
         description: "CRP config mode: v1 (no ORP) or v2 (requires ORP operator records)"
