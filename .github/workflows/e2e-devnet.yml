@@ -213,6 +213,9 @@ jobs:
 
       - name: Run e2e on AWS enclave-enabled instance (v2)
         if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' }}
+        env:
+          JUNO_E2E_SOLVER_KEYPAIR_JSON: ${{ secrets.JUNO_E2E_SOLVER_KEYPAIR_JSON }}
+          JUNO_E2E_CREATOR_KEYPAIR_JSON: ${{ secrets.JUNO_E2E_CREATOR_KEYPAIR_JSON }}
         run: |
           set -euo pipefail
           aws --version

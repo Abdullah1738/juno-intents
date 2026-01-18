@@ -303,6 +303,7 @@ COMMAND_ID="$(
 import json
 import os
 import subprocess
+import base64
 
 region = os.environ["REGION"]
 instance_id = os.environ["INSTANCE_ID"]
@@ -320,6 +321,8 @@ go_version = os.environ.get("GO_VERSION", "1.22.6")
 timeout_seconds = int(os.environ.get("JUNO_E2E_SSM_TIMEOUT_SECONDS", "10200").strip() or "10200")
 output_bucket = os.environ.get("JUNO_E2E_SSM_OUTPUT_S3_BUCKET", "").strip()
 output_prefix = os.environ.get("JUNO_E2E_SSM_OUTPUT_S3_PREFIX", "").strip()
+solver_keypair_json = os.environ.get("JUNO_E2E_SOLVER_KEYPAIR_JSON", "").strip()
+creator_keypair_json = os.environ.get("JUNO_E2E_CREATOR_KEYPAIR_JSON", "").strip()
 
 cmds = [
     "set -e",
@@ -430,6 +433,29 @@ cmds = [
     "rm -rf juno-intents && git clone https://github.com/Abdullah1738/juno-intents.git",
     "cd juno-intents",
     f"git checkout {git_sha}",
+]
+
+if solver_keypair_json:
+    solver_b64 = base64.b64encode(solver_keypair_json.encode("utf-8")).decode("ascii")
+    cmds += [
+        "mkdir -p /root/juno-secrets",
+        "chmod 700 /root/juno-secrets",
+        f"printf '%s' '{solver_b64}' | base64 -d > /root/juno-secrets/solver.json",
+        "chmod 600 /root/juno-secrets/solver.json",
+        "export JUNO_E2E_SOLVER_KEYPAIR=/root/juno-secrets/solver.json",
+    ]
+
+if creator_keypair_json:
+    creator_b64 = base64.b64encode(creator_keypair_json.encode("utf-8")).decode("ascii")
+    cmds += [
+        "mkdir -p /root/juno-secrets",
+        "chmod 700 /root/juno-secrets",
+        f"printf '%s' '{creator_b64}' | base64 -d > /root/juno-secrets/creator.json",
+        "chmod 600 /root/juno-secrets/creator.json",
+        "export JUNO_E2E_CREATOR_KEYPAIR=/root/juno-secrets/creator.json",
+    ]
+
+cmds += [
     f"export JUNO_E2E_PRIORITY_LEVEL={priority_level}",
     (
         "if [ \"{mode}\" = \"v2\" ]; then "

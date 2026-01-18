@@ -172,10 +172,29 @@ GO_NITRO="${WORKDIR}/nitro-operator"
 (cd "${ROOT}" && go build -o "${GO_NITRO}" ./cmd/nitro-operator)
 
 echo "creating funded e2e keypairs..." >&2
+SOLVER_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER_KEYPAIR:-}"
+CREATOR_KEYPAIR_OVERRIDE="${JUNO_E2E_CREATOR_KEYPAIR:-}"
+
 SOLVER_KEYPAIR="${WORKDIR}/solver.json"
 CREATOR_KEYPAIR="${WORKDIR}/creator.json"
-solana-keygen new --no-bip39-passphrase --silent --force -o "${SOLVER_KEYPAIR}"
-solana-keygen new --no-bip39-passphrase --silent --force -o "${CREATOR_KEYPAIR}"
+if [[ -n "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
+  if [[ ! -f "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
+    echo "solver keypair not found: ${SOLVER_KEYPAIR_OVERRIDE}" >&2
+    exit 1
+  fi
+  SOLVER_KEYPAIR="${SOLVER_KEYPAIR_OVERRIDE}"
+else
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${SOLVER_KEYPAIR}"
+fi
+if [[ -n "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
+  if [[ ! -f "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
+    echo "creator keypair not found: ${CREATOR_KEYPAIR_OVERRIDE}" >&2
+    exit 1
+  fi
+  CREATOR_KEYPAIR="${CREATOR_KEYPAIR_OVERRIDE}"
+else
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${CREATOR_KEYPAIR}"
+fi
 SOLVER_PUBKEY="$(solana-keygen pubkey "${SOLVER_KEYPAIR}")"
 CREATOR_PUBKEY="$(solana-keygen pubkey "${CREATOR_KEYPAIR}")"
 
@@ -206,14 +225,38 @@ transfer_sol() {
 }
 
 echo "funding SOL..." >&2
-airdrop "${SOLVER_PUBKEY}" 3 "${SOLVER_KEYPAIR}" || {
-  echo "solver airdrop failed: ${SOLVER_PUBKEY}" >&2
-  exit 1
+min_solver_lamports="${JUNO_E2E_MIN_SOLVER_LAMPORTS:-3000000000}"   # 3 SOL
+min_creator_lamports="${JUNO_E2E_MIN_CREATOR_LAMPORTS:-500000000}" # 0.5 SOL
+
+balance_lamports() {
+  local pubkey="$1"
+  solana -u "${RPC_URL}" balance "${pubkey}" --lamports 2>/dev/null | tr -d '\r\n ' || true
 }
-transfer_sol "${SOLVER_KEYPAIR}" "${CREATOR_PUBKEY}" 1 || {
-  echo "creator funding transfer failed: ${CREATOR_PUBKEY}" >&2
-  exit 1
-}
+
+if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
+  airdrop "${SOLVER_PUBKEY}" 3 "${SOLVER_KEYPAIR}" || {
+    echo "solver airdrop failed: ${SOLVER_PUBKEY}" >&2
+    exit 1
+  }
+else
+  solver_bal="$(balance_lamports "${SOLVER_PUBKEY}")"
+  if [[ ! "${solver_bal}" =~ ^[0-9]+$ || "${solver_bal}" -lt "${min_solver_lamports}" ]]; then
+    echo "solver needs funding (pubkey=${SOLVER_PUBKEY} lamports=${solver_bal:-unknown} min=${min_solver_lamports})" >&2
+    exit 1
+  fi
+fi
+
+creator_bal="$(balance_lamports "${CREATOR_PUBKEY}")"
+if [[ ! "${creator_bal}" =~ ^[0-9]+$ ]]; then
+  creator_bal="0"
+fi
+if [[ "${creator_bal}" -lt "${min_creator_lamports}" ]]; then
+  echo "funding creator from solver..." >&2
+  transfer_sol "${SOLVER_KEYPAIR}" "${CREATOR_PUBKEY}" 1 || {
+    echo "creator funding transfer failed: ${CREATOR_PUBKEY}" >&2
+    exit 1
+  }
+fi
 
 echo "preparing nitro log dir..." >&2
 sudo mkdir -p /var/log/nitro_enclaves
