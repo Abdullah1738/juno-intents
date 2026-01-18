@@ -193,6 +193,16 @@ if [[ "${creator_bal}" -lt "${min_creator_lamports}" ]]; then
   fi
 fi
 
+echo "preparing nitro log dir..." >&2
+sudo mkdir -p /var/log/nitro_enclaves
+sudo touch /var/log/nitro_enclaves/nitro_enclaves.log
+sudo chown root:root /var/log/nitro_enclaves /var/log/nitro_enclaves/nitro_enclaves.log || true
+sudo chmod 755 /var/log/nitro_enclaves || true
+sudo chmod 644 /var/log/nitro_enclaves/nitro_enclaves.log || true
+sudo mkdir -p /run/nitro_enclaves
+sudo chown root:root /run/nitro_enclaves || true
+sudo chmod 775 /run/nitro_enclaves || true
+
 echo "building EIF (preflight)..." >&2
 eif_out="${WORKDIR}/build-eif.stdout.log"
 eif_err="${WORKDIR}/build-eif.stderr.log"
@@ -212,16 +222,6 @@ if [[ -z "${EIF_PCR0}" ]]; then
   tail -n 80 "${eif_err}" >&2 || true
   exit 1
 fi
-
-echo "preparing nitro log dir..." >&2
-sudo mkdir -p /var/log/nitro_enclaves
-sudo touch /var/log/nitro_enclaves/nitro_enclaves.log
-sudo chown root:root /var/log/nitro_enclaves /var/log/nitro_enclaves/nitro_enclaves.log || true
-sudo chmod 755 /var/log/nitro_enclaves || true
-sudo chmod 644 /var/log/nitro_enclaves/nitro_enclaves.log || true
-sudo mkdir -p /run/nitro_enclaves
-sudo chown root:root /run/nitro_enclaves || true
-sudo chmod 775 /run/nitro_enclaves || true
 
 echo "starting enclave (preflight)..." >&2
 CID=16
