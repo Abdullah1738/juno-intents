@@ -411,6 +411,13 @@ cmds = [
     (
         "if [ \"{mode}\" = \"v2\" ]; then "
         "set -e; "
+        "export PATH=/usr/local/cuda/bin:/usr/local/cuda-*/bin:$PATH; "
+        "if ! command -v nvcc >/dev/null 2>&1; then "
+        "sudo apt-get update; "
+        "sudo apt-get install -y --no-install-recommends cuda-toolkit-12-4; "
+        "export PATH=/usr/local/cuda/bin:/usr/local/cuda-*/bin:$PATH; "
+        "fi; "
+        "if ! command -v nvcc >/dev/null 2>&1; then echo 'nvcc not found (CUDA toolkit install incomplete)' >&2; exit 1; fi; "
         "if ! command -v nitro-cli >/dev/null; then "
         "sudo apt-get update; "
         "sudo apt-get install -y --no-install-recommends clang gcc git libclang-dev libssl-dev llvm-dev make pkg-config; "
