@@ -624,16 +624,16 @@ download_ssm_output() {
 ssm_send_script() {
   local timeout_seconds="${1:-600}"
   local payload
-  payload="$(python3 - <<'PY'
-import json,sys
+  payload="$(python3 -c 'import json,sys
 cmds=[]
 for ln in sys.stdin.read().splitlines():
   ln=ln.rstrip("\n")
   if not ln.strip():
     continue
   cmds.append(ln)
-print(json.dumps({"commands": cmds}))
-PY
+if not cmds:
+  cmds=["true"]
+print(json.dumps({"commands": cmds}))'
 )"
 
   local args=(ssm send-command --timeout-seconds "${timeout_seconds}")
