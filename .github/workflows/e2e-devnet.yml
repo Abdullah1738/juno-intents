@@ -79,6 +79,11 @@ jobs:
   e2e:
     runs-on: runs-on=${{ github.run_id }}/family=g5.4xlarge/image=ubuntu22-gpu-x64/spot=false/extras=s3-cache
     timeout-minutes: 180
+    outputs:
+      v2_tee_artifacts_present: ${{ steps.v2_pack.outputs.tee_artifacts_present }}
+      v2_tee_artifacts_tgz_b64: ${{ steps.v2_pack.outputs.tee_artifacts_tgz_b64 }}
+      v2_ssm_output_present: ${{ steps.v2_pack.outputs.ssm_output_present }}
+      v2_ssm_output_tgz_b64: ${{ steps.v2_pack.outputs.ssm_output_tgz_b64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -262,45 +267,48 @@ jobs:
           find "${JUNO_E2E_LOCAL_AWS_DIR}" -maxdepth 6 -type f -print >&2 || true
           exit "${e2e_ec}"
 
-      - name: Detect v2 artifacts
+      - name: Pack v2 artifacts
         if: ${{ always() && env.JUNO_E2E_CRP_MODE == 'v2' }}
-        id: v2_artifacts
+        id: v2_pack
         run: |
           set -euo pipefail
           base="${JUNO_E2E_LOCAL_AWS_DIR:-}"
           if [[ -z "${base}" ]]; then
             echo "JUNO_E2E_LOCAL_AWS_DIR not set" >&2
-            base="${GITHUB_WORKSPACE}/tmp/e2e/aws"
+            exit 1
           fi
-          if find "${base}/artifacts" -type f -name '*.json' -print -quit 2>/dev/null | grep -q .; then
+
+          tee_dir="${base}/artifacts"
+          if find "${tee_dir}" -type f -name '*.json' -print -quit 2>/dev/null | grep -q .; then
             echo "tee_artifacts_present=true" >> "$GITHUB_OUTPUT"
+            tee_tgz="${RUNNER_TEMP}/tee-artifacts.tgz"
+            tar -C "${base}" -czf "${tee_tgz}" artifacts
+            {
+              echo "tee_artifacts_tgz_b64<<EOF"
+              base64 -w 0 "${tee_tgz}"
+              echo
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
           else
             echo "tee_artifacts_present=false" >> "$GITHUB_OUTPUT"
-            echo "no tee artifacts found under: ${base}/artifacts" >&2
-            find "${base}" -maxdepth 6 -type f -print >&2 || true
+            echo "no tee artifacts found under: ${tee_dir}" >&2
           fi
 
-      - name: Upload SSM output (v2)
-        if: ${{ always() && env.JUNO_E2E_CRP_MODE == 'v2' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ssm-output
-          path: ${{ env.JUNO_E2E_LOCAL_AWS_DIR }}/ssm
-          if-no-files-found: ignore
-
-      - name: Upload TEE artifacts (v2)
-        if: ${{ always() && env.JUNO_E2E_CRP_MODE == 'v2' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: tee-artifacts
-          path: ${{ env.JUNO_E2E_LOCAL_AWS_DIR }}/artifacts
-          if-no-files-found: ignore
-
-      - name: Attest TEE artifacts provenance (v2)
-        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' && success() && steps.v2_artifacts.outputs.tee_artifacts_present == 'true' }}
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-path: ${{ env.JUNO_E2E_LOCAL_AWS_DIR }}/artifacts/**/*.json
+          ssm_dir="${base}/ssm"
+          if find "${ssm_dir}" -type f -print -quit 2>/dev/null | grep -q .; then
+            echo "ssm_output_present=true" >> "$GITHUB_OUTPUT"
+            ssm_tgz="${RUNNER_TEMP}/ssm-output.tgz"
+            tar -C "${base}" -czf "${ssm_tgz}" ssm
+            {
+              echo "ssm_output_tgz_b64<<EOF"
+              base64 -w 0 "${ssm_tgz}"
+              echo
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "ssm_output_present=false" >> "$GITHUB_OUTPUT"
+            echo "no ssm output found under: ${ssm_dir}" >&2
+          fi
 
       - name: Load base deployment + generate deployment_id
         if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
@@ -397,7 +405,7 @@ jobs:
 
           blobs_dir="$(find /opt/nitro-cli -type d -name blobs -path '*nitro_enclaves*' | head -n 1 || true)"
           if [[ -n "${blobs_dir}" ]]; then
-            export NITRO_CLI_BLOBS="${blobs_dir}/"
+          export NITRO_CLI_BLOBS="${blobs_dir}/"
             echo "NITRO_CLI_BLOBS=${blobs_dir}/" >> "$GITHUB_ENV"
           fi
 
@@ -719,3 +727,59 @@ jobs:
             sudo nitro-cli terminate-enclave --enclave-id "${JUNO_E2E_NITRO_ENCLAVE_ID2}" || true
           fi
           sudo nitro-cli terminate-enclave --all || true
+
+  publish_v2_artifacts:
+    if: ${{ always() && github.event.inputs.crp_mode == 'v2' }}
+    needs: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Restore v2 artifacts from job outputs
+        id: restore
+        run: |
+          set -euo pipefail
+
+          out_root="${RUNNER_TEMP}/juno-e2e"
+          mkdir -p "${out_root}"
+
+          tee_present="${{ needs.e2e.outputs.v2_tee_artifacts_present }}"
+          if [[ "${tee_present}" == "true" ]]; then
+            tee_tgz="${out_root}/tee-artifacts.tgz"
+            printf '%s' "${{ needs.e2e.outputs.v2_tee_artifacts_tgz_b64 }}" | base64 -d > "${tee_tgz}"
+            tar -xzf "${tee_tgz}" -C "${out_root}"
+            echo "tee_dir=${out_root}/artifacts" >> "$GITHUB_OUTPUT"
+          else
+            echo "tee_dir=" >> "$GITHUB_OUTPUT"
+          fi
+
+          ssm_present="${{ needs.e2e.outputs.v2_ssm_output_present }}"
+          if [[ "${ssm_present}" == "true" ]]; then
+            ssm_tgz="${out_root}/ssm-output.tgz"
+            printf '%s' "${{ needs.e2e.outputs.v2_ssm_output_tgz_b64 }}" | base64 -d > "${ssm_tgz}"
+            tar -xzf "${ssm_tgz}" -C "${out_root}"
+            echo "ssm_dir=${out_root}/ssm" >> "$GITHUB_OUTPUT"
+          else
+            echo "ssm_dir=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload SSM output (v2)
+        if: ${{ always() && needs.e2e.outputs.v2_ssm_output_present == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssm-output
+          path: ${{ steps.restore.outputs.ssm_dir }}
+          if-no-files-found: error
+
+      - name: Upload TEE artifacts (v2)
+        if: ${{ always() && needs.e2e.outputs.v2_tee_artifacts_present == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tee-artifacts
+          path: ${{ steps.restore.outputs.tee_dir }}
+          if-no-files-found: error
+
+      - name: Attest TEE artifacts provenance (v2)
+        if: ${{ needs.e2e.outputs.v2_tee_artifacts_present == 'true' }}
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: ${{ steps.restore.outputs.tee_dir }}/**/*.json
