@@ -260,7 +260,11 @@ jobs:
 
           src="${GITHUB_WORKSPACE}/tmp/e2e/aws"
           if [[ -d "${src}" ]]; then
-            cp -R "${src}/." "${JUNO_E2E_LOCAL_AWS_DIR}/" || true
+            echo "copying local aws artifacts: ${src} -> ${JUNO_E2E_LOCAL_AWS_DIR}" >&2
+            cp -R "${src}/." "${JUNO_E2E_LOCAL_AWS_DIR}/"
+            find "${JUNO_E2E_LOCAL_AWS_DIR}" -maxdepth 6 -type f -print >&2 || true
+          else
+            echo "local aws dir missing: ${src}" >&2
           fi
           exit "${e2e_ec}"
 
