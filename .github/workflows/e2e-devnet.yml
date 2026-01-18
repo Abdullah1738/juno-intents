@@ -231,6 +231,11 @@ jobs:
         run: |
           set -euo pipefail
           aws --version
+          export JUNO_E2E_LOCAL_AWS_DIR="${RUNNER_TEMP}/juno-e2e/aws"
+          rm -rf "${JUNO_E2E_LOCAL_AWS_DIR}"
+          mkdir -p "${JUNO_E2E_LOCAL_AWS_DIR}"
+          echo "JUNO_E2E_LOCAL_AWS_DIR=${JUNO_E2E_LOCAL_AWS_DIR}" >> "$GITHUB_ENV"
+
           mkdir -p "$HOME/.aws"
           cat > "$HOME/.aws/config" <<'EOF'
           [profile juno]
@@ -243,25 +248,37 @@ jobs:
           else
             export JUNO_E2E_INSTANCE_TYPE="g5.2xlarge"
           fi
+          set +e
           ./scripts/aws/e2e-devnet-testnet.sh \
             --deployment "${{ github.event.inputs.deployment }}" \
             --ref "${{ github.sha }}" \
             --crp-mode v2 \
             --mode "${{ github.event.inputs.run_mode }}" \
             --priority-level "${{ github.event.inputs.priority_level }}"
+          e2e_ec="$?"
+          set -e
+
+          if [[ -d "tmp/e2e/aws" ]]; then
+            cp -R "tmp/e2e/aws/." "${JUNO_E2E_LOCAL_AWS_DIR}/" || true
+          fi
+          exit "${e2e_ec}"
 
       - name: Detect v2 artifacts
         if: ${{ always() && env.JUNO_E2E_CRP_MODE == 'v2' }}
         id: v2_artifacts
         run: |
           set -euo pipefail
-          cd "${GITHUB_WORKSPACE}"
-          if compgen -G "tmp/e2e/aws/artifacts/**/*.json" > /dev/null; then
+          base="${JUNO_E2E_LOCAL_AWS_DIR:-}"
+          if [[ -z "${base}" ]]; then
+            echo "JUNO_E2E_LOCAL_AWS_DIR not set" >&2
+            base="${GITHUB_WORKSPACE}/tmp/e2e/aws"
+          fi
+          if find "${base}/artifacts" -type f -name '*.json' -print -quit 2>/dev/null | grep -q .; then
             echo "tee_artifacts_present=true" >> "$GITHUB_OUTPUT"
           else
             echo "tee_artifacts_present=false" >> "$GITHUB_OUTPUT"
-            echo "no tee artifacts found under: ${GITHUB_WORKSPACE}/tmp/e2e/aws/artifacts" >&2
-            find tmp/e2e/aws -maxdepth 6 -type f -print >&2 || true
+            echo "no tee artifacts found under: ${base}/artifacts" >&2
+            find "${base}" -maxdepth 6 -type f -print >&2 || true
           fi
 
       - name: Upload SSM output (v2)
@@ -269,7 +286,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ssm-output
-          path: ${{ github.workspace }}/tmp/e2e/aws/ssm
+          path: ${{ env.JUNO_E2E_LOCAL_AWS_DIR }}/ssm
           if-no-files-found: ignore
 
       - name: Upload TEE artifacts (v2)
@@ -277,14 +294,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tee-artifacts
-          path: ${{ github.workspace }}/tmp/e2e/aws/artifacts
+          path: ${{ env.JUNO_E2E_LOCAL_AWS_DIR }}/artifacts
           if-no-files-found: ignore
 
       - name: Attest TEE artifacts provenance (v2)
         if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' && success() && steps.v2_artifacts.outputs.tee_artifacts_present == 'true' }}
         uses: actions/attest-build-provenance@v1
         with:
-          subject-path: ${{ github.workspace }}/tmp/e2e/aws/artifacts/**/*.json
+          subject-path: ${{ env.JUNO_E2E_LOCAL_AWS_DIR }}/artifacts/**/*.json
 
       - name: Load base deployment + generate deployment_id
         if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
