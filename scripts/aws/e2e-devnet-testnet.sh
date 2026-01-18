@@ -256,6 +256,22 @@ echo "instance: ${INSTANCE_ID}" >&2
 echo "waiting for instance status ok..." >&2
 awsj ec2 wait instance-status-ok --instance-ids "${INSTANCE_ID}"
 
+SSM_OUTPUT_BUCKET="${JUNO_E2E_SSM_OUTPUT_S3_BUCKET:-}"
+SSM_OUTPUT_PREFIX="${JUNO_E2E_SSM_OUTPUT_S3_PREFIX:-}"
+if [[ -z "${SSM_OUTPUT_BUCKET}" ]]; then
+  SSM_OUTPUT_BUCKET="$(get_cf_output RunsOnBucketCache)"
+  if [[ "${SSM_OUTPUT_BUCKET}" == "None" ]]; then
+    SSM_OUTPUT_BUCKET=""
+  fi
+fi
+if [[ -z "${SSM_OUTPUT_PREFIX}" ]]; then
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  # NB: runs-on instance role is scoped to bucket + cache/*.
+  SSM_OUTPUT_PREFIX="cache/ssm/juno-intents/e2e-devnet-testnet/${ts}"
+fi
+export JUNO_E2E_SSM_OUTPUT_S3_BUCKET="${SSM_OUTPUT_BUCKET}"
+export JUNO_E2E_SSM_OUTPUT_S3_PREFIX="${SSM_OUTPUT_PREFIX}"
+
 echo "waiting for SSM online..." >&2
 for _ in $(seq 1 120); do
   ping="$(awsj ssm describe-instance-information \
@@ -302,6 +318,8 @@ risc0_groth16_version = os.environ["RISC0_GROTH16_VERSION"]
 solana_cli_version = os.environ.get("SOLANA_CLI_VERSION", "3.1.6").strip()
 go_version = os.environ.get("GO_VERSION", "1.22.6")
 timeout_seconds = int(os.environ.get("JUNO_E2E_SSM_TIMEOUT_SECONDS", "10200").strip() or "10200")
+output_bucket = os.environ.get("JUNO_E2E_SSM_OUTPUT_S3_BUCKET", "").strip()
+output_prefix = os.environ.get("JUNO_E2E_SSM_OUTPUT_S3_PREFIX", "").strip()
 
 cmds = [
     "set -e",
@@ -475,17 +493,24 @@ cmds = [
 ]
 
 payload = json.dumps({"commands": cmds})
+args = [
+    "aws",
+    "--profile",
+    "juno",
+    "--region",
+    region,
+    "ssm",
+    "send-command",
+    "--timeout-seconds",
+    str(timeout_seconds),
+]
+if output_bucket:
+    args += ["--output-s3-bucket-name", output_bucket]
+    if output_prefix:
+        args += ["--output-s3-key-prefix", output_prefix]
 out = subprocess.check_output(
-    [
-        "aws",
-        "--profile",
-        "juno",
-        "--region",
-        region,
-        "ssm",
-        "send-command",
-        "--timeout-seconds",
-        str(timeout_seconds),
+    args
+    + [
         "--document-name",
         "AWS-RunShellScript",
         "--targets",
@@ -504,6 +529,9 @@ PY
 )"
 
 echo "ssm command id: ${COMMAND_ID}" >&2
+if [[ -n "${SSM_OUTPUT_BUCKET}" ]]; then
+  echo "ssm output s3: s3://${SSM_OUTPUT_BUCKET}/${SSM_OUTPUT_PREFIX}/${COMMAND_ID}/${INSTANCE_ID}/" >&2
+fi
 echo "waiting for command to finish..." >&2
 start_ts="$(date +%s)"
 status=""
@@ -541,7 +569,28 @@ while true; do
   sleep 15
 done
 
+download_ssm_output() {
+  if [[ -z "${SSM_OUTPUT_BUCKET:-}" || -z "${SSM_OUTPUT_PREFIX:-}" ]]; then
+    return 0
+  fi
+  local uri="s3://${SSM_OUTPUT_BUCKET}/${SSM_OUTPUT_PREFIX}/${COMMAND_ID}/${INSTANCE_ID}/"
+  local out_dir="${ROOT}/tmp/e2e/aws/ssm/${INSTANCE_ID}/${COMMAND_ID}"
+  mkdir -p "${out_dir}"
+  echo "downloading ssm output to ${out_dir}..." >&2
+  echo "ssm output uri: ${uri}" >&2
+  for i in $(seq 1 12); do
+    if awsj s3 ls "${uri}" --recursive >/dev/null 2>&1; then
+      awsj s3 cp "${uri}" "${out_dir}/" --recursive >/dev/null || true
+      return 0
+    fi
+    sleep "$((i * 5))"
+  done
+  echo "ssm output not found in s3 (yet): ${uri}" >&2
+  return 1
+}
+
 if [[ "${status}" != "Success" ]]; then
+  download_ssm_output || true
   awsj ssm get-command-invocation \
     --command-id "${COMMAND_ID}" \
     --instance-id "${INSTANCE_ID}" \

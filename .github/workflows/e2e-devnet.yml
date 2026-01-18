@@ -230,6 +230,14 @@ jobs:
             --crp-mode v2 \
             --priority-level "${{ github.event.inputs.priority_level }}"
 
+      - name: Upload SSM output (v2)
+        if: ${{ always() && env.JUNO_E2E_CRP_MODE == 'v2' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssm-output
+          path: tmp/e2e/aws/ssm
+          if-no-files-found: ignore
+
       - name: Load base deployment + generate deployment_id
         if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         run: |
