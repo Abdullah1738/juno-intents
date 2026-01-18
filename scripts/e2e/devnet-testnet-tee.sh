@@ -237,7 +237,7 @@ balance_lamports() {
     out="$(
       python3 -c 'import re,sys
 raw=sys.stdin.read()
-m=re.search(r"(\\d+)\\s*lamports\\b", raw)
+m=re.search(r"(\d+)\s*lamports\b", raw)
 print(m.group(1) if m else "")
 ' <<<"${raw}"
     )"
