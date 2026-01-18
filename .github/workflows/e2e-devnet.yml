@@ -49,6 +49,14 @@ on:
         options:
           - e2e
           - preflight
+      enable_nitro_experimental:
+        description: "Run disabled Nitro/ORP steps (debug only)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 concurrency:
   group: e2e-devnet-${{ github.ref }}-${{ github.event.inputs.crp_mode }}-${{ github.event.inputs.run_mode }}
@@ -363,7 +371,7 @@ jobs:
           PY
 
       - name: Build Nitro Enclaves CLI from source (v2)
-        if: ${{ false }}
+        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' && github.event.inputs.enable_nitro_experimental == 'true' }}
         run: |
           set -euo pipefail
 
@@ -412,7 +420,7 @@ jobs:
           "${nitro_bin}" --version
 
       - name: Setup ORP operators via Nitro enclaves (v2)
-        if: ${{ false }}
+        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' && github.event.inputs.enable_nitro_experimental == 'true' }}
         run: |
           set -euo pipefail
 
@@ -716,7 +724,7 @@ jobs:
             --deployment-file "${JUNO_E2E_DEPLOYMENT_FILE}"
 
       - name: Cleanup Nitro enclaves (v2)
-        if: ${{ false }}
+        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' && github.event.inputs.enable_nitro_experimental == 'true' }}
         run: |
           set -euo pipefail
           sudo nitro-cli describe-enclaves || true

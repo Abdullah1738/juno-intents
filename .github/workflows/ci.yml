@@ -18,6 +18,25 @@ env:
   RZUP_VERSION: 0.5.1
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.10
+
+      - name: Run actionlint
+        run: $(go env GOPATH)/bin/actionlint -color -shellcheck= -pyflakes=
+
   test:
     runs-on: ubuntu-latest
     steps:
