@@ -250,12 +250,26 @@ jobs:
             --mode "${{ github.event.inputs.run_mode }}" \
             --priority-level "${{ github.event.inputs.priority_level }}"
 
+      - name: Detect v2 artifacts
+        if: ${{ always() && env.JUNO_E2E_CRP_MODE == 'v2' }}
+        id: v2_artifacts
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}"
+          if compgen -G "tmp/e2e/aws/artifacts/**/*.json" > /dev/null; then
+            echo "tee_artifacts_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tee_artifacts_present=false" >> "$GITHUB_OUTPUT"
+            echo "no tee artifacts found under: ${GITHUB_WORKSPACE}/tmp/e2e/aws/artifacts" >&2
+            find tmp/e2e/aws -maxdepth 6 -type f -print >&2 || true
+          fi
+
       - name: Upload SSM output (v2)
         if: ${{ always() && env.JUNO_E2E_CRP_MODE == 'v2' }}
         uses: actions/upload-artifact@v4
         with:
           name: ssm-output
-          path: tmp/e2e/aws/ssm
+          path: ${{ github.workspace }}/tmp/e2e/aws/ssm
           if-no-files-found: ignore
 
       - name: Upload TEE artifacts (v2)
@@ -263,14 +277,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tee-artifacts
-          path: tmp/e2e/aws/artifacts
+          path: ${{ github.workspace }}/tmp/e2e/aws/artifacts
           if-no-files-found: ignore
 
       - name: Attest TEE artifacts provenance (v2)
-        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' && success() && hashFiles('tmp/e2e/aws/artifacts/**/*.json') != '' }}
+        if: ${{ env.JUNO_E2E_CRP_MODE == 'v2' && success() && steps.v2_artifacts.outputs.tee_artifacts_present == 'true' }}
         uses: actions/attest-build-provenance@v1
         with:
-          subject-path: tmp/e2e/aws/artifacts/**/*.json
+          subject-path: ${{ github.workspace }}/tmp/e2e/aws/artifacts/**/*.json
 
       - name: Load base deployment + generate deployment_id
         if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
