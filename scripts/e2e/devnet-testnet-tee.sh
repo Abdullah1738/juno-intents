@@ -279,8 +279,18 @@ w1="$(sudo -E "${GO_NITRO}" witness --enclave-cid "${CID1}" --enclave-port "${PO
 w2="$(sudo -E "${GO_NITRO}" witness --enclave-cid "${CID2}" --enclave-port "${PORT}" --deployment-id "${DEPLOYMENT_ID}" --junocash-chain-id "${CHAIN_ID}" --junocash-genesis-hash "${JUNOCASH_GENESIS_HASH}")"
 
 echo "proving attestation bundles (CUDA)..." >&2
-b1_raw="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove_attestation_bundle_v1 -- --witness-hex "${w1}")"
-b2_raw="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove_attestation_bundle_v1 -- --witness-hex "${w2}")"
+b1_err="${WORKDIR}/prove-attestation-1.stderr.log"
+b2_err="${WORKDIR}/prove-attestation-2.stderr.log"
+if ! b1_raw="$(cd "${ROOT}" && CARGO_TERM_COLOR=never CARGO_TERM_PROGRESS_WHEN=never cargo run --quiet --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove_attestation_bundle_v1 -- --witness-hex "${w1}" 2>"${b1_err}")"; then
+  echo "attestation bundle #1 proving failed (tailing stderr)..." >&2
+  tail -n 200 "${b1_err}" >&2 || true
+  exit 1
+fi
+if ! b2_raw="$(cd "${ROOT}" && CARGO_TERM_COLOR=never CARGO_TERM_PROGRESS_WHEN=never cargo run --quiet --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove_attestation_bundle_v1 -- --witness-hex "${w2}" 2>"${b2_err}")"; then
+  echo "attestation bundle #2 proving failed (tailing stderr)..." >&2
+  tail -n 200 "${b2_err}" >&2 || true
+  exit 1
+fi
 b1_hex="$(printf '%s\n' "${b1_raw}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1)"
 b2_hex="$(printf '%s\n' "${b2_raw}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1)"
 if [[ -z "${b1_hex}" || -z "${b2_hex}" ]]; then
