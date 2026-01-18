@@ -278,6 +278,10 @@ fi
 
 echo "running e2e via SSM..." >&2
 export REGION INSTANCE_ID RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION SOLANA_CLI_VERSION GO_VERSION GIT_SHA DEPLOYMENT_NAME CRP_MODE PRIORITY_LEVEL
+
+ssm_timeout_seconds="${JUNO_E2E_SSM_TIMEOUT_SECONDS:-10200}" # 170 minutes
+export JUNO_E2E_SSM_TIMEOUT_SECONDS="${ssm_timeout_seconds}"
+
 COMMAND_ID="$(
   python3 - <<'PY'
 import json
@@ -297,6 +301,7 @@ rzup_version = os.environ["RZUP_VERSION"]
 risc0_groth16_version = os.environ["RISC0_GROTH16_VERSION"]
 solana_cli_version = os.environ.get("SOLANA_CLI_VERSION", "3.1.6").strip()
 go_version = os.environ.get("GO_VERSION", "1.22.6")
+timeout_seconds = int(os.environ.get("JUNO_E2E_SSM_TIMEOUT_SECONDS", "10200").strip() or "10200")
 
 cmds = [
     "set -e",
@@ -479,6 +484,8 @@ out = subprocess.check_output(
         region,
         "ssm",
         "send-command",
+        "--timeout-seconds",
+        str(timeout_seconds),
         "--document-name",
         "AWS-RunShellScript",
         "--targets",
@@ -498,7 +505,6 @@ PY
 
 echo "ssm command id: ${COMMAND_ID}" >&2
 echo "waiting for command to finish..." >&2
-ssm_timeout_seconds="${JUNO_E2E_SSM_TIMEOUT_SECONDS:-10200}" # 170 minutes
 start_ts="$(date +%s)"
 status=""
 last_status=""
