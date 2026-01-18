@@ -141,26 +141,41 @@ CREATOR_PUBKEY="$(solana-keygen pubkey "${CREATOR_KEYPAIR}")"
 
 balance_lamports() {
   local pubkey="$1"
-  local raw
-  raw="$(solana -u "${RPC_URL}" balance "${pubkey}" --lamports 2>/dev/null || true)"
-  python3 -c 'import re,sys
+  local raw out
+  for i in $(seq 1 10); do
+    if raw="$(solana -u "${RPC_URL}" balance "${pubkey}" --lamports 2>&1)"; then
+      out="$(
+        python3 -c 'import re,sys
 raw=sys.stdin.read()
 m=re.search(r"(\\d+)", raw)
 print(m.group(1) if m else "")
 ' <<<"${raw}"
+      )"
+      if [[ "${out}" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "${out}"
+        return 0
+      fi
+    fi
+    sleep "${i}"
+  done
+  echo "failed to fetch solana balance (pubkey=${pubkey})" >&2
+  echo "${raw:-}" >&2
+  return 1
 }
 
 min_solver_lamports="${JUNO_E2E_MIN_SOLVER_LAMPORTS:-3000000000}"   # 3 SOL
 min_creator_lamports="${JUNO_E2E_MIN_CREATOR_LAMPORTS:-500000000}" # 0.5 SOL
 
-solver_bal="$(balance_lamports "${SOLVER_PUBKEY}")"
-creator_bal="$(balance_lamports "${CREATOR_PUBKEY}")"
+creator_bal=""
+if ! solver_bal="$(balance_lamports "${SOLVER_PUBKEY}")"; then
+  exit 1
+fi
+if ! creator_bal="$(balance_lamports "${CREATOR_PUBKEY}")"; then
+  exit 1
+fi
 if [[ ! "${solver_bal}" =~ ^[0-9]+$ || "${solver_bal}" -lt "${min_solver_lamports}" ]]; then
   echo "solver needs funding (pubkey=${SOLVER_PUBKEY} lamports=${solver_bal:-unknown} min=${min_solver_lamports})" >&2
   exit 1
-fi
-if [[ ! "${creator_bal}" =~ ^[0-9]+$ ]]; then
-  creator_bal="0"
 fi
 if [[ "${creator_bal}" -lt "${min_creator_lamports}" ]]; then
   echo "funding creator from solver..." >&2
@@ -170,7 +185,9 @@ if [[ "${creator_bal}" -lt "${min_creator_lamports}" ]]; then
     fi
     sleep "${i}"
   done
-  creator_bal="$(balance_lamports "${CREATOR_PUBKEY}")"
+  if ! creator_bal="$(balance_lamports "${CREATOR_PUBKEY}")"; then
+    exit 1
+  fi
   if [[ ! "${creator_bal}" =~ ^[0-9]+$ || "${creator_bal}" -lt "${min_creator_lamports}" ]]; then
     echo "creator still needs funding (pubkey=${CREATOR_PUBKEY} lamports=${creator_bal:-unknown} min=${min_creator_lamports})" >&2
     exit 1

@@ -231,13 +231,26 @@ min_creator_lamports="${JUNO_E2E_MIN_CREATOR_LAMPORTS:-500000000}" # 0.5 SOL
 
 balance_lamports() {
   local pubkey="$1"
-  local raw
-  raw="$(solana -u "${RPC_URL}" balance "${pubkey}" --lamports 2>/dev/null || true)"
-  python3 -c 'import re,sys
+  local raw out
+  for i in $(seq 1 10); do
+    if raw="$(solana -u "${RPC_URL}" balance "${pubkey}" --lamports 2>&1)"; then
+      out="$(
+        python3 -c 'import re,sys
 raw=sys.stdin.read()
 m=re.search(r"(\\d+)", raw)
 print(m.group(1) if m else "")
 ' <<<"${raw}"
+      )"
+      if [[ "${out}" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "${out}"
+        return 0
+      fi
+    fi
+    sleep "${i}"
+  done
+  echo "failed to fetch solana balance (pubkey=${pubkey})" >&2
+  echo "${raw:-}" >&2
+  return 1
 }
 
 if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
@@ -246,16 +259,17 @@ if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
     exit 1
   }
 else
-  solver_bal="$(balance_lamports "${SOLVER_PUBKEY}")"
-  if [[ ! "${solver_bal}" =~ ^[0-9]+$ || "${solver_bal}" -lt "${min_solver_lamports}" ]]; then
-    echo "solver needs funding (pubkey=${SOLVER_PUBKEY} lamports=${solver_bal:-unknown} min=${min_solver_lamports})" >&2
+  if ! solver_bal="$(balance_lamports "${SOLVER_PUBKEY}")"; then
+    exit 1
+  fi
+  if [[ "${solver_bal}" -lt "${min_solver_lamports}" ]]; then
+    echo "solver needs funding (pubkey=${SOLVER_PUBKEY} lamports=${solver_bal} min=${min_solver_lamports})" >&2
     exit 1
   fi
 fi
 
-creator_bal="$(balance_lamports "${CREATOR_PUBKEY}")"
-if [[ ! "${creator_bal}" =~ ^[0-9]+$ ]]; then
-  creator_bal="0"
+if ! creator_bal="$(balance_lamports "${CREATOR_PUBKEY}")"; then
+  exit 1
 fi
 if [[ "${creator_bal}" -lt "${min_creator_lamports}" ]]; then
   echo "funding creator from solver..." >&2
