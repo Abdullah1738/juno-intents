@@ -248,6 +248,7 @@ jobs:
           else
             export JUNO_E2E_INSTANCE_TYPE="g5.2xlarge"
           fi
+          export JUNO_E2E_LOCAL_OUT_DIR="${JUNO_E2E_LOCAL_AWS_DIR}"
           set +e
           ./scripts/aws/e2e-devnet-testnet.sh \
             --deployment "${{ github.event.inputs.deployment }}" \
@@ -258,14 +259,7 @@ jobs:
           e2e_ec="$?"
           set -e
 
-          src="${GITHUB_WORKSPACE}/tmp/e2e/aws"
-          if [[ -d "${src}" ]]; then
-            echo "copying local aws artifacts: ${src} -> ${JUNO_E2E_LOCAL_AWS_DIR}" >&2
-            cp -R "${src}/." "${JUNO_E2E_LOCAL_AWS_DIR}/"
-            find "${JUNO_E2E_LOCAL_AWS_DIR}" -maxdepth 6 -type f -print >&2 || true
-          else
-            echo "local aws dir missing: ${src}" >&2
-          fi
+          find "${JUNO_E2E_LOCAL_AWS_DIR}" -maxdepth 6 -type f -print >&2 || true
           exit "${e2e_ec}"
 
       - name: Detect v2 artifacts

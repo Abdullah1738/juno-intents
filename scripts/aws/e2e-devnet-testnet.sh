@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.."; pwd)"
+LOCAL_OUT_DIR="${JUNO_E2E_LOCAL_OUT_DIR:-${ROOT}/tmp/e2e/aws}"
 
 PROFILE="juno"
 REGION="${JUNO_AWS_REGION:-us-east-1}"
@@ -635,7 +636,7 @@ download_ssm_output() {
     return 0
   fi
   local uri="s3://${SSM_OUTPUT_BUCKET}/${SSM_OUTPUT_PREFIX}/${cmd_id}/${INSTANCE_ID}/"
-  local out_dir="${ROOT}/tmp/e2e/aws/ssm/${INSTANCE_ID}/${cmd_id}"
+  local out_dir="${LOCAL_OUT_DIR}/ssm/${INSTANCE_ID}/${cmd_id}"
   mkdir -p "${out_dir}"
   echo "downloading ssm output to ${out_dir}..." >&2
   echo "ssm output uri: ${uri}" >&2
@@ -908,10 +909,10 @@ PY
   }
 
   echo "downloading remote artifacts (best effort)..." >&2
-  fetch_remote_file "/var/log/juno-e2e/deployment.json" "${ROOT}/tmp/e2e/aws/artifacts/${INSTANCE_ID}/deployment.json" || true
-  fetch_remote_file "/var/log/juno-e2e/tee-summary.json" "${ROOT}/tmp/e2e/aws/artifacts/${INSTANCE_ID}/tee-summary.json" || true
-  fetch_remote_file "/var/log/juno-e2e/tee-preflight-summary.json" "${ROOT}/tmp/e2e/aws/artifacts/${INSTANCE_ID}/tee-preflight-summary.json" || true
-  fetch_remote_file "/var/log/juno-e2e/crp-monitor-report.json" "${ROOT}/tmp/e2e/aws/artifacts/${INSTANCE_ID}/crp-monitor-report.json" || true
+  fetch_remote_file "/var/log/juno-e2e/deployment.json" "${LOCAL_OUT_DIR}/artifacts/${INSTANCE_ID}/deployment.json" || true
+  fetch_remote_file "/var/log/juno-e2e/tee-summary.json" "${LOCAL_OUT_DIR}/artifacts/${INSTANCE_ID}/tee-summary.json" || true
+  fetch_remote_file "/var/log/juno-e2e/tee-preflight-summary.json" "${LOCAL_OUT_DIR}/artifacts/${INSTANCE_ID}/tee-preflight-summary.json" || true
+  fetch_remote_file "/var/log/juno-e2e/crp-monitor-report.json" "${LOCAL_OUT_DIR}/artifacts/${INSTANCE_ID}/crp-monitor-report.json" || true
 
   if [[ "${e2e_status}" != "done" || "${e2e_exit_code}" != "0" ]]; then
     echo "e2e failed (status=${e2e_status:-unknown} exit_code=${e2e_exit_code:-unknown})" >&2
