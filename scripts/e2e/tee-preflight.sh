@@ -215,10 +215,15 @@ if ! JUNO_EIF_DOCKERFILE=enclave/operator/Dockerfile.e2e \
   tail -n 80 "${eif_err}" >&2 || true
   exit 1
 fi
-EIF_PCR0="$(sed -nE 's/^pcr0=([0-9a-fA-F]{96})$/\\1/p' "${eif_err}" | tail -n 1 || true)"
-EIF_SHA256="$(sed -nE 's/^eif_sha256=([0-9a-fA-F]{64})$/\\1/p' "${eif_err}" | tail -n 1 || true)"
-if [[ -z "${EIF_PCR0}" ]]; then
+EIF_PCR0="$(sed -nE 's/^pcr0=([0-9a-fA-F]{96})$/\1/p' "${eif_err}" | tail -n 1 || true)"
+EIF_SHA256="$(sed -nE 's/^eif_sha256=([0-9a-fA-F]{64})$/\1/p' "${eif_err}" | tail -n 1 || true)"
+if [[ -z "${EIF_PCR0}" || ! "${EIF_PCR0}" =~ ^[0-9a-fA-F]{96}$ ]]; then
   echo "failed to parse eif pcr0" >&2
+  tail -n 80 "${eif_err}" >&2 || true
+  exit 1
+fi
+if [[ -z "${EIF_SHA256}" || ! "${EIF_SHA256}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  echo "failed to parse eif sha256" >&2
   tail -n 80 "${eif_err}" >&2 || true
   exit 1
 fi

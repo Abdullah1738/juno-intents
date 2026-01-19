@@ -75,3 +75,43 @@ func TestAwsE2EDevnetTestnetScriptFetchRemoteFileParsesB64(t *testing.T) {
 		t.Fatalf("script missing strict base64 decode (validate=True)")
 	}
 }
+
+func TestE2ETeeScriptsUseSedBackrefsCorrectly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	t.Run("tee-preflight", func(t *testing.T) {
+		script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "tee-preflight.sh"))
+		src, err := os.ReadFile(script)
+		if err != nil {
+			t.Fatalf("read script: %v", err)
+		}
+		if bytes.Contains(src, []byte(`\\1/p`)) {
+			t.Fatalf("script contains incorrect sed backreference (\\\\1)")
+		}
+		if !bytes.Contains(src, []byte(`s/^pcr0=([0-9a-fA-F]{96})$/\1/p`)) {
+			t.Fatalf("script missing pcr0 sed backreference extraction")
+		}
+		if !bytes.Contains(src, []byte(`s/^eif_sha256=([0-9a-fA-F]{64})$/\1/p`)) {
+			t.Fatalf("script missing eif_sha256 sed backreference extraction")
+		}
+	})
+
+	t.Run("devnet-testnet-tee", func(t *testing.T) {
+		script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet-tee.sh"))
+		src, err := os.ReadFile(script)
+		if err != nil {
+			t.Fatalf("read script: %v", err)
+		}
+		if bytes.Contains(src, []byte(`\\1/p`)) {
+			t.Fatalf("script contains incorrect sed backreference (\\\\1)")
+		}
+		if !bytes.Contains(src, []byte(`s/^measurement=([0-9a-fA-F]{64})$/\1/p`)) {
+			t.Fatalf("script missing measurement sed backreference extraction")
+		}
+		if !bytes.Contains(src, []byte(`s/^operator_pubkey=([1-9A-HJ-NP-Za-km-z]{32,44})$/\1/p`)) {
+			t.Fatalf("script missing operator_pubkey sed backreference extraction")
+		}
+	})
+}

@@ -302,8 +302,18 @@ if ! JUNO_EIF_DOCKERFILE=enclave/operator/Dockerfile.e2e \
   exit 1
 fi
 grep -E '^pcr0=[0-9a-fA-F]{96}$' "${eif_err}" >&2 || true
-EIF_PCR0="$(sed -nE 's/^pcr0=([0-9a-fA-F]{96})$/\\1/p' "${eif_err}" | tail -n 1 || true)"
-EIF_SHA256="$(sed -nE 's/^eif_sha256=([0-9a-fA-F]{64})$/\\1/p' "${eif_err}" | tail -n 1 || true)"
+EIF_PCR0="$(sed -nE 's/^pcr0=([0-9a-fA-F]{96})$/\1/p' "${eif_err}" | tail -n 1 || true)"
+EIF_SHA256="$(sed -nE 's/^eif_sha256=([0-9a-fA-F]{64})$/\1/p' "${eif_err}" | tail -n 1 || true)"
+if [[ -z "${EIF_PCR0}" || ! "${EIF_PCR0}" =~ ^[0-9a-fA-F]{96}$ ]]; then
+  echo "failed to parse eif pcr0" >&2
+  tail -n 80 "${eif_err}" >&2 || true
+  exit 1
+fi
+if [[ -z "${EIF_SHA256}" || ! "${EIF_SHA256}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  echo "failed to parse eif sha256" >&2
+  tail -n 80 "${eif_err}" >&2 || true
+  exit 1
+fi
 if [[ -n "${EIF_PCR0}" ]]; then echo "eif_pcr0=${EIF_PCR0}" >&2; fi
 if [[ -n "${EIF_SHA256}" ]]; then echo "eif_sha256=${EIF_SHA256}" >&2; fi
 
@@ -367,12 +377,12 @@ fi
 
 info1="$("${GO_INTENTS}" orp-attestation-info --bundle-hex "${b1_hex}")"
 info2="$("${GO_INTENTS}" orp-attestation-info --bundle-hex "${b2_hex}")"
-op1="$(printf '%s\n' "${info1}" | sed -nE 's/^operator_pubkey=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' | head -n 1)"
-op2="$(printf '%s\n' "${info2}" | sed -nE 's/^operator_pubkey=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' | head -n 1)"
-meas1="$(printf '%s\n' "${info1}" | sed -nE 's/^measurement=([0-9a-fA-F]{64})$/\\1/p' | head -n 1)"
-meas2="$(printf '%s\n' "${info2}" | sed -nE 's/^measurement=([0-9a-fA-F]{64})$/\\1/p' | head -n 1)"
-img1="$(printf '%s\n' "${info1}" | sed -nE 's/^image_id=([0-9a-fA-F]{64})$/\\1/p' | head -n 1)"
-img2="$(printf '%s\n' "${info2}" | sed -nE 's/^image_id=([0-9a-fA-F]{64})$/\\1/p' | head -n 1)"
+op1="$(printf '%s\n' "${info1}" | sed -nE 's/^operator_pubkey=([1-9A-HJ-NP-Za-km-z]{32,44})$/\1/p' | head -n 1)"
+op2="$(printf '%s\n' "${info2}" | sed -nE 's/^operator_pubkey=([1-9A-HJ-NP-Za-km-z]{32,44})$/\1/p' | head -n 1)"
+meas1="$(printf '%s\n' "${info1}" | sed -nE 's/^measurement=([0-9a-fA-F]{64})$/\1/p' | head -n 1)"
+meas2="$(printf '%s\n' "${info2}" | sed -nE 's/^measurement=([0-9a-fA-F]{64})$/\1/p' | head -n 1)"
+img1="$(printf '%s\n' "${info1}" | sed -nE 's/^image_id=([0-9a-fA-F]{64})$/\1/p' | head -n 1)"
+img2="$(printf '%s\n' "${info2}" | sed -nE 's/^image_id=([0-9a-fA-F]{64})$/\1/p' | head -n 1)"
 if [[ -z "${op1}" || -z "${op2}" || -z "${meas1}" || -z "${meas2}" ]]; then
   echo "failed to parse attestation bundle info" >&2
   exit 1
@@ -419,7 +429,7 @@ if ! ORP_INIT_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-orp \
   tail -n 200 "${orp_init_err}" >&2 || true
   exit 1
 fi
-orp_config="$(sed -nE 's/^orp_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' "${orp_init_err}" | tail -n 1)"
+orp_config="$(sed -nE 's/^orp_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\1/p' "${orp_init_err}" | tail -n 1)"
 if [[ -z "${orp_config}" ]]; then
   echo "failed to parse orp_config" >&2
   tail -n 200 "${orp_init_err}" >&2 || true
@@ -436,7 +446,7 @@ if ! OP1_REGISTER_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" orp-registe
   tail -n 200 "${op1_reg_err}" >&2 || true
   exit 1
 fi
-op1_record="$(sed -nE 's/^operator_record=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' "${op1_reg_err}" | tail -n 1)"
+op1_record="$(sed -nE 's/^operator_record=([1-9A-HJ-NP-Za-km-z]{32,44})$/\1/p' "${op1_reg_err}" | tail -n 1)"
 if [[ -z "${op1_record}" ]]; then
   echo "failed to parse operator_record (1)" >&2
   tail -n 200 "${op1_reg_err}" >&2 || true
@@ -453,7 +463,7 @@ if ! OP2_REGISTER_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" orp-registe
   tail -n 200 "${op2_reg_err}" >&2 || true
   exit 1
 fi
-op2_record="$(sed -nE 's/^operator_record=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' "${op2_reg_err}" | tail -n 1)"
+op2_record="$(sed -nE 's/^operator_record=([1-9A-HJ-NP-Za-km-z]{32,44})$/\1/p' "${op2_reg_err}" | tail -n 1)"
 if [[ -z "${op2_record}" ]]; then
   echo "failed to parse operator_record (2)" >&2
   tail -n 200 "${op2_reg_err}" >&2 || true
@@ -477,7 +487,7 @@ if ! CRP_INIT_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-crp \
   tail -n 200 "${crp_err}" >&2 || true
   exit 1
 fi
-crp_config="$(sed -nE 's/^crp_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' "${crp_err}" | tail -n 1)"
+crp_config="$(sed -nE 's/^crp_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\1/p' "${crp_err}" | tail -n 1)"
 if [[ -z "${crp_config}" ]]; then
   echo "failed to parse crp_config" >&2
   tail -n 200 "${crp_err}" >&2 || true
@@ -501,7 +511,7 @@ if ! IEP_INIT_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-iep \
   tail -n 200 "${iep_err}" >&2 || true
   exit 1
 fi
-iep_config="$(sed -nE 's/^iep_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\\1/p' "${iep_err}" | tail -n 1)"
+iep_config="$(sed -nE 's/^iep_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\1/p' "${iep_err}" | tail -n 1)"
 if [[ -z "${iep_config}" ]]; then
   echo "failed to parse iep_config" >&2
   tail -n 200 "${iep_err}" >&2 || true
