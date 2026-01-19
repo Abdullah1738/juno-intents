@@ -915,6 +915,7 @@ PY
   echo "downloading remote artifacts (best effort)..." >&2
   fetch_remote_file "/var/log/juno-e2e/deployment.json" "${LOCAL_OUT_DIR}/artifacts/${INSTANCE_ID}/deployment.json" || true
   fetch_remote_file "/var/log/juno-e2e/tee-summary.json" "${LOCAL_OUT_DIR}/artifacts/${INSTANCE_ID}/tee-summary.json" || true
+  fetch_remote_file "/var/log/juno-e2e/e2e-summary.json" "${LOCAL_OUT_DIR}/artifacts/${INSTANCE_ID}/e2e-summary.json" || true
   fetch_remote_file "/var/log/juno-e2e/tee-preflight-summary.json" "${LOCAL_OUT_DIR}/artifacts/${INSTANCE_ID}/tee-preflight-summary.json" || true
   fetch_remote_file "/var/log/juno-e2e/crp-monitor-report.json" "${LOCAL_OUT_DIR}/artifacts/${INSTANCE_ID}/crp-monitor-report.json" || true
 

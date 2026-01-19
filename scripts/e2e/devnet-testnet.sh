@@ -357,6 +357,12 @@ mkdir -p "${WORKDIR}"
 SOLVERNET1_PID=""
 SOLVERNET2_PID=""
 
+E2E_STAGE="init"
+set_stage() {
+  E2E_STAGE="$1"
+  echo "e2e_stage=${E2E_STAGE}" >&2
+}
+
 cleanup() {
   if [[ -n "${SOLVERNET1_PID}" ]]; then
     kill "${SOLVERNET1_PID}" >/dev/null 2>&1 || true
@@ -366,7 +372,50 @@ cleanup() {
   fi
   "${JUNOCASH_DOWN}" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
+
+write_e2e_summary() {
+  local exit_code="$1"
+  if [[ -z "${E2E_ARTIFACT_DIR}" ]]; then
+    return 0
+  fi
+  mkdir -p "${E2E_ARTIFACT_DIR}"
+
+  local out="${E2E_ARTIFACT_DIR}/e2e-summary.json"
+  python3 - <<PY
+import json,time
+summary = {
+  "stage": "${E2E_STAGE}",
+  "exit_code": int("${exit_code}"),
+  "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+  "deployment": "${DEPLOYMENT_NAME}",
+  "workdir": "${WORKDIR}",
+  "solana": {
+    "rpc_url": "${SOLANA_RPC_URL}",
+    "solver_pubkey": "${SOLVER_PUBKEY:-}",
+    "solver2_pubkey": "${SOLVER2_PUBKEY:-}",
+    "creator_pubkey": "${CREATOR_PUBKEY:-}",
+  },
+  "junocash": {
+    "chain": "${JUNOCASH_CHAIN}",
+  },
+}
+with open("${out}", "w", encoding="utf-8") as f:
+  json.dump(summary, f, indent=2, sort_keys=True)
+  f.write("\\n")
+PY
+
+  echo "e2e_summary=${out}" >&2
+  echo "e2e_summary_artifact=${E2E_ARTIFACT_DIR}/e2e-summary.json" >&2
+}
+
+on_exit() {
+  local exit_code=$?
+  trap - EXIT
+  write_e2e_summary "${exit_code}" || true
+  cleanup
+  exit "${exit_code}"
+}
+trap on_exit EXIT
 
 echo "workdir: ${WORKDIR}" >&2
 echo "deployment: ${DEPLOYMENT_NAME}" >&2
@@ -383,6 +432,7 @@ fi
 echo "junocash_send_minconf=${JUNOCASH_SEND_MINCONF}" >&2
 echo "junocash_shield_limit=${JUNOCASH_SHIELD_LIMIT}" >&2
 
+set_stage "build_clis"
 echo "building Go CLIs..." >&2
 GO_INTENTS="${WORKDIR}/juno-intents"
 GO_CRP="${WORKDIR}/crp-operator"
@@ -393,6 +443,7 @@ GO_SOLVERNET="${WORKDIR}/solvernet"
 (cd "${ROOT}" && go build -o "${GO_CRP_MONITOR}" ./cmd/crp-monitor)
 (cd "${ROOT}" && go build -o "${GO_SOLVERNET}" ./cmd/solvernet)
 
+set_stage "select_keypairs"
 echo "selecting Solana keypairs..." >&2
 SOLVER_KEYPAIR="${WORKDIR}/solver.json"
 SOLVER2_KEYPAIR="${WORKDIR}/solver2.json"
@@ -430,6 +481,7 @@ OP2_KEYPAIR="${CREATOR_KEYPAIR}"
 if [[ -n "${CRP_OPERATOR1_KEYPAIR}" ]]; then OP1_KEYPAIR="${CRP_OPERATOR1_KEYPAIR}"; fi
 if [[ -n "${CRP_OPERATOR2_KEYPAIR}" ]]; then OP2_KEYPAIR="${CRP_OPERATOR2_KEYPAIR}"; fi
 
+set_stage "fund_keypairs"
 if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" || -z "${SOLVER2_KEYPAIR_OVERRIDE}" || -z "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
   echo "funding Solana keypairs via devnet airdrop..." >&2
 fi
@@ -476,6 +528,7 @@ if [[ "${creator_balance_now}" =~ ^[0-9]+$ && "${creator_balance_now}" -lt "${mi
   airdrop "${CREATOR_PUBKEY}" 2 "${CREATOR_KEYPAIR}"
 fi
 
+set_stage "create_mint"
 echo "creating SPL mint + token accounts..." >&2
 if ! MINT_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-token --decimals 0 --owner "${SOLVER_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact 2>&1)"; then
   printf '%s\n' "${MINT_OUT}" >&2
@@ -564,6 +617,7 @@ fi
 EXPIRY_SLOT="$((slot + 5000))"
 echo "expiry_slot=${EXPIRY_SLOT}" >&2
 
+set_stage "start_solvernet"
 echo "starting solvernet quote servers..." >&2
 SOLVERNET1_LISTEN="${JUNO_E2E_SOLVERNET1_LISTEN:-127.0.0.1:8081}"
 SOLVERNET2_LISTEN="${JUNO_E2E_SOLVERNET2_LISTEN:-127.0.0.1:8082}"
@@ -614,6 +668,7 @@ if ! curl -fsS "${SOLVERNET2_ANN_URL}" >/dev/null 2>&1; then
   exit 1
 fi
 
+set_stage "start_junocash"
 echo "starting JunoCash ${JUNOCASH_CHAIN} docker harness..." >&2
 "${JUNOCASH_UP}" >/dev/null
 

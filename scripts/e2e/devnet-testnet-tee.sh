@@ -633,10 +633,12 @@ fi
 
 write_summary() {
   local stage="$1"
+  local e2e_exit_code="${2:-}"
   local out="${WORKDIR}/tee-summary.json"
 
   python3 - <<PY
 import json,time
+e2e_exit_code = "${e2e_exit_code}".strip()
 summary = {
   "stage": "${stage}",
   "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -694,6 +696,10 @@ summary = {
     "solver_pubkey": "${SOLVER_PUBKEY}",
     "creator_pubkey": "${CREATOR_PUBKEY}",
   },
+  "e2e": {
+    "exit_code": int(e2e_exit_code) if e2e_exit_code else None,
+    "summary_json": "${E2E_ARTIFACT_DIR}/e2e-summary.json" if "${E2E_ARTIFACT_DIR}" else "",
+  },
   "artifacts": {
     "artifact_dir": "${E2E_ARTIFACT_DIR}",
     "deployment_json": "${E2E_ARTIFACT_DIR}/deployment.json" if "${E2E_ARTIFACT_DIR}" else "",
@@ -723,6 +729,15 @@ export JUNO_E2E_PRIORITY_LEVEL="${PRIORITY_LEVEL}"
 export JUNO_E2E_ARTIFACT_DIR="${E2E_ARTIFACT_DIR}"
 
 echo "running full e2e..." >&2
+set +e
 "${ROOT}/scripts/e2e/devnet-testnet.sh" --deployment "${E2E_DEPLOYMENT}" --deployment-file "${TMP_DEPLOYMENTS}"
+e2e_ec="$?"
+set -e
 
-write_summary "e2e_ok"
+if [[ "${e2e_ec}" -ne 0 ]]; then
+  echo "full e2e failed (exit_code=${e2e_ec})" >&2
+  write_summary "e2e_failed" "${e2e_ec}"
+  exit "${e2e_ec}"
+fi
+
+write_summary "e2e_ok" "0"
