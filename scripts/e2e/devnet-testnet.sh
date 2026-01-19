@@ -432,6 +432,17 @@ fi
 echo "junocash_send_minconf=${JUNOCASH_SEND_MINCONF}" >&2
 echo "junocash_shield_limit=${JUNOCASH_SHIELD_LIMIT}" >&2
 
+set_stage "start_junocash"
+echo "starting JunoCash ${JUNOCASH_CHAIN} docker harness (sync begins in background)..." >&2
+junocash_up_out="${WORKDIR}/junocash-up.stdout.log"
+junocash_up_err="${WORKDIR}/junocash-up.stderr.log"
+if ! "${JUNOCASH_UP}" >"${junocash_up_out}" 2>"${junocash_up_err}"; then
+  echo "failed to start JunoCash docker harness (chain=${JUNOCASH_CHAIN})" >&2
+  tail -n 200 "${junocash_up_out}" >&2 || true
+  tail -n 200 "${junocash_up_err}" >&2 || true
+  exit 1
+fi
+
 set_stage "build_clis"
 echo "building Go CLIs..." >&2
 GO_INTENTS="${WORKDIR}/juno-intents"
@@ -668,16 +679,8 @@ if ! curl -fsS "${SOLVERNET2_ANN_URL}" >/dev/null 2>&1; then
   exit 1
 fi
 
-set_stage "start_junocash"
-echo "starting JunoCash ${JUNOCASH_CHAIN} docker harness..." >&2
-junocash_up_out="${WORKDIR}/junocash-up.stdout.log"
-junocash_up_err="${WORKDIR}/junocash-up.stderr.log"
-if ! "${JUNOCASH_UP}" >"${junocash_up_out}" 2>"${junocash_up_err}"; then
-  echo "failed to start JunoCash docker harness (chain=${JUNOCASH_CHAIN})" >&2
-  tail -n 200 "${junocash_up_out}" >&2 || true
-  tail -n 200 "${junocash_up_err}" >&2 || true
-  exit 1
-fi
+set_stage "junocash_setup"
+echo "preparing JunoCash accounts, mining, shielding..." >&2
 
 jcli() { "${JUNOCASH_CLI}" "$@"; }
 
