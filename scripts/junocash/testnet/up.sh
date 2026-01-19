@@ -7,6 +7,7 @@ DATA_DIR_A="${JUNO_TESTNET_DATA_DIR_A:-tmp/junocash-testnet-a}"
 DATA_DIR_B="${JUNO_TESTNET_DATA_DIR_B:-tmp/junocash-testnet-b}"
 IMAGE="${JUNO_TESTNET_BASE_IMAGE:-juno-intents/junocash-testnet:ubuntu22}"
 NETWORK="${JUNO_TESTNET_NETWORK:-juno-testnet-net}"
+DOCKER_PLATFORM="${JUNO_TESTNET_DOCKER_PLATFORM:-${JUNO_DOCKER_PLATFORM:-linux/amd64}}"
 
 JUNOCASH_ROOT="$(scripts/junocash/fetch-linux64.sh)"
 
@@ -20,6 +21,11 @@ fi
 docker rm -f "${NAME_A}" "${NAME_B}" >/dev/null 2>&1 || true
 
 docker network inspect "${NETWORK}" >/dev/null 2>&1 || docker network create "${NETWORK}" >/dev/null
+
+PLATFORM_FLAG=()
+if [[ -n "${DOCKER_PLATFORM}" ]]; then
+  PLATFORM_FLAG=(--platform "${DOCKER_PLATFORM}")
+fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 USER_FLAG=()
@@ -35,7 +41,7 @@ if [[ "${IMAGE}" == "juno-intents/junocash-testnet:ubuntu22" ]]; then
   attempt=0
   while [[ "${attempt}" -lt 3 ]]; do
     attempt="$((attempt + 1))"
-    if docker build -t "${IMAGE}" -f "${script_dir}/Dockerfile" "${script_dir}" >"${build_log}" 2>&1; then
+    if docker build "${PLATFORM_FLAG[@]}" -t "${IMAGE}" -f "${script_dir}/Dockerfile" "${script_dir}" >"${build_log}" 2>&1; then
       break
     fi
     echo "junocash testnet docker build failed (attempt ${attempt}/3)..." >&2
@@ -49,6 +55,7 @@ if [[ "${IMAGE}" == "juno-intents/junocash-testnet:ubuntu22" ]]; then
 fi
 
 docker run -d \
+  "${PLATFORM_FLAG[@]}" \
   --name "${NAME_B}" \
   --network "${NETWORK}" \
   "${USER_FLAG[@]}" \
@@ -69,6 +76,7 @@ docker run -d \
     -connect="${NAME_A}:18234" >/dev/null
 
 docker run -d \
+  "${PLATFORM_FLAG[@]}" \
   --name "${NAME_A}" \
   --network "${NETWORK}" \
   "${USER_FLAG[@]}" \

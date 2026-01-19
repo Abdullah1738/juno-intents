@@ -4,6 +4,7 @@ set -euo pipefail
 NAME="${JUNO_REGTEST_CONTAINER_NAME:-juno-regtest}"
 DATA_DIR="${JUNO_REGTEST_DATA_DIR:-tmp/junocash-regtest}"
 IMAGE="${JUNO_REGTEST_BASE_IMAGE:-juno-intents/junocash-regtest:ubuntu22}"
+DOCKER_PLATFORM="${JUNO_REGTEST_DOCKER_PLATFORM:-${JUNO_DOCKER_PLATFORM:-linux/amd64}}"
 
 JUNOCASH_ROOT="$(scripts/junocash/fetch-linux64.sh)"
 
@@ -16,6 +17,11 @@ fi
 
 docker rm -f "${NAME}" >/dev/null 2>&1 || true
 
+PLATFORM_FLAG=()
+if [[ -n "${DOCKER_PLATFORM}" ]]; then
+  PLATFORM_FLAG=(--platform "${DOCKER_PLATFORM}")
+fi
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 USER_FLAG=()
 if [[ "${JUNO_REGTEST_DOCKER_USER:-}" != "" ]]; then
@@ -25,10 +31,11 @@ elif command -v id >/dev/null; then
 fi
 
 if [[ "${IMAGE}" == "juno-intents/junocash-regtest:ubuntu22" ]]; then
-  docker build -t "${IMAGE}" -f "${script_dir}/Dockerfile" "${script_dir}" >/dev/null
+  docker build "${PLATFORM_FLAG[@]}" -t "${IMAGE}" -f "${script_dir}/Dockerfile" "${script_dir}" >/dev/null
 fi
 
 docker run -d \
+  "${PLATFORM_FLAG[@]}" \
   --name "${NAME}" \
   "${USER_FLAG[@]}" \
   -v "$(pwd)/${JUNOCASH_ROOT}:/opt/junocash:ro" \
