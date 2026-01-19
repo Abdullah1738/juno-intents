@@ -76,6 +76,58 @@ if [[ ! -e /dev/nitro_enclaves ]]; then
   exit 1
 fi
 
+rpc_account_exists() {
+  local pubkey="$1"
+  local commitment="${2:-finalized}"
+  python3 - "${RPC_URL}" "${pubkey}" "${commitment}" <<'PY'
+import json,sys,urllib.request
+url=sys.argv[1]
+pubkey=sys.argv[2]
+commitment=sys.argv[3] if len(sys.argv) > 3 else "finalized"
+payload={
+  "jsonrpc":"2.0",
+  "id":1,
+  "method":"getAccountInfo",
+  "params":[pubkey, {"encoding":"base64", "commitment": commitment}],
+}
+try:
+  req=urllib.request.Request(
+    url,
+    data=json.dumps(payload).encode("utf-8"),
+    headers={"Content-Type":"application/json"},
+  )
+  with urllib.request.urlopen(req, timeout=15) as resp:
+    data=json.load(resp)
+  val=((data.get("result") or {}).get("value"))
+  if val is None:
+    raise SystemExit(1)
+  raise SystemExit(0)
+except Exception:
+  raise SystemExit(1)
+PY
+}
+
+wait_for_rpc_account() {
+  local label="$1"
+  local pubkey="$2"
+  local commitment="${3:-finalized}"
+  local max_attempts="${4:-30}"
+  echo "waiting for ${label} account (commitment=${commitment})..." >&2
+  for i in $(seq 1 "${max_attempts}"); do
+    if rpc_account_exists "${pubkey}" "${commitment}"; then
+      echo "${label} account ready: ${pubkey}" >&2
+      return 0
+    fi
+    sleep_time="${i}"
+    if [[ "${sleep_time}" -gt 10 ]]; then
+      sleep_time=10
+    fi
+    sleep "${sleep_time}"
+  done
+  echo "timed out waiting for ${label} account: ${pubkey} (commitment=${commitment})" >&2
+  return 1
+}
+
 BASE_ENV="$(
   python3 - "${DEPLOYMENT_FILE}" "${BASE_DEPLOYMENT}" <<'PY'
 import json,sys
@@ -435,6 +487,10 @@ if [[ -z "${orp_config}" ]]; then
   tail -n 200 "${orp_init_err}" >&2 || true
   exit 1
 fi
+if ! wait_for_rpc_account "orp_config" "${orp_config}" finalized 30; then
+  tail -n 200 "${orp_init_err}" >&2 || true
+  exit 1
+fi
 
 op1_reg_err="${WORKDIR}/orp-register-operator-1.stderr.log"
 if ! OP1_REGISTER_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" orp-register-operator \
@@ -452,6 +508,10 @@ if [[ -z "${op1_record}" ]]; then
   tail -n 200 "${op1_reg_err}" >&2 || true
   exit 1
 fi
+if ! wait_for_rpc_account "operator_record (1)" "${op1_record}" finalized 30; then
+  tail -n 200 "${op1_reg_err}" >&2 || true
+  exit 1
+fi
 
 op2_reg_err="${WORKDIR}/orp-register-operator-2.stderr.log"
 if ! OP2_REGISTER_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" orp-register-operator \
@@ -466,6 +526,10 @@ fi
 op2_record="$(sed -nE 's/^operator_record=([1-9A-HJ-NP-Za-km-z]{32,44})$/\1/p' "${op2_reg_err}" | tail -n 1)"
 if [[ -z "${op2_record}" ]]; then
   echo "failed to parse operator_record (2)" >&2
+  tail -n 200 "${op2_reg_err}" >&2 || true
+  exit 1
+fi
+if ! wait_for_rpc_account "operator_record (2)" "${op2_record}" finalized 30; then
   tail -n 200 "${op2_reg_err}" >&2 || true
   exit 1
 fi
@@ -493,6 +557,10 @@ if [[ -z "${crp_config}" ]]; then
   tail -n 200 "${crp_err}" >&2 || true
   exit 1
 fi
+if ! wait_for_rpc_account "crp_config" "${crp_config}" finalized 30; then
+  tail -n 200 "${crp_err}" >&2 || true
+  exit 1
+fi
 
 iep_err="${WORKDIR}/init-iep.stderr.log"
 if ! IEP_INIT_SIG="$(SOLANA_RPC_URL="${RPC_URL}" "${GO_INTENTS}" init-iep \
@@ -514,6 +582,10 @@ fi
 iep_config="$(sed -nE 's/^iep_config=([1-9A-HJ-NP-Za-km-z]{32,44})$/\1/p' "${iep_err}" | tail -n 1)"
 if [[ -z "${iep_config}" ]]; then
   echo "failed to parse iep_config" >&2
+  tail -n 200 "${iep_err}" >&2 || true
+  exit 1
+fi
+if ! wait_for_rpc_account "iep_config" "${iep_config}" finalized 30; then
   tail -n 200 "${iep_err}" >&2 || true
   exit 1
 fi
