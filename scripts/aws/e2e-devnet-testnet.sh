@@ -243,26 +243,56 @@ if [[ -n "${INSTANCE_PROFILE_ARN}" ]]; then
 else
   instance_profile_arg="Name=${INSTANCE_PROFILE_NAME}"
 fi
-INSTANCE_ID="$(awsj ec2 run-instances \
-  --image-id "${AMI_ID}" \
-  --instance-type "${INSTANCE_TYPE}" \
-  --subnet-id "${SUBNET_ID}" \
-  --security-group-ids "${SECURITY_GROUP_ID}" \
-  --iam-instance-profile "${instance_profile_arg}" \
-  $(if [[ "${CRP_MODE}" == "v2" ]]; then printf '%s' "--enclave-options Enabled=true"; fi) \
-  --block-device-mappings '[
-    {
-      "DeviceName": "/dev/sda1",
-      "Ebs": { "VolumeSize": 200, "VolumeType": "gp3", "DeleteOnTermination": true }
-    },
-    {
-      "DeviceName": "/dev/sdb",
-      "Ebs": { "VolumeSize": 300, "VolumeType": "gp3", "DeleteOnTermination": true }
-    }
-  ]' \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=juno-intents-e2e-devnet-testnet},{Key=juno-intents,Value=e2e-devnet-testnet}]' \
-  --query 'Instances[0].InstanceId' \
-  --output text)"
+launch_instance() {
+  awsj ec2 run-instances \
+    --image-id "${AMI_ID}" \
+    --instance-type "${INSTANCE_TYPE}" \
+    --subnet-id "${SUBNET_ID}" \
+    --security-group-ids "${SECURITY_GROUP_ID}" \
+    --iam-instance-profile "${instance_profile_arg}" \
+    $(if [[ "${CRP_MODE}" == "v2" ]]; then printf '%s' "--enclave-options Enabled=true"; fi) \
+    --block-device-mappings '[
+      {
+        "DeviceName": "/dev/sda1",
+        "Ebs": { "VolumeSize": 200, "VolumeType": "gp3", "DeleteOnTermination": true }
+      },
+      {
+        "DeviceName": "/dev/sdb",
+        "Ebs": { "VolumeSize": 300, "VolumeType": "gp3", "DeleteOnTermination": true }
+      }
+    ]' \
+    --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=juno-intents-e2e-devnet-testnet},{Key=juno-intents,Value=e2e-devnet-testnet}]' \
+    --query 'Instances[0].InstanceId' \
+    --output text
+}
+
+INSTANCE_ID=""
+launch_attempt=0
+while [[ -z "${INSTANCE_ID}" && "${launch_attempt}" -lt 10 ]]; do
+  launch_attempt="$((launch_attempt + 1))"
+  set +e
+  launch_out="$(launch_instance 2>&1)"
+  launch_ec="$?"
+  set -e
+  if [[ "${launch_ec}" -eq 0 ]]; then
+    INSTANCE_ID="$(printf '%s' "${launch_out}" | tr -d '\r\n ' )"
+    break
+  fi
+  if printf '%s' "${launch_out}" | grep -q "VcpuLimitExceeded"; then
+    backoff="$((launch_attempt * 30))"
+    if [[ "${backoff}" -gt 300 ]]; then backoff=300; fi
+    echo "run-instances failed with VcpuLimitExceeded (attempt ${launch_attempt}/10); retrying in ${backoff}s..." >&2
+    sleep "${backoff}"
+    continue
+  fi
+  echo "run-instances failed (attempt ${launch_attempt}/10):" >&2
+  printf '%s\n' "${launch_out}" >&2
+  exit 1
+done
+if [[ -z "${INSTANCE_ID}" ]]; then
+  echo "run-instances failed after ${launch_attempt} attempts" >&2
+  exit 1
+fi
 
 echo "instance: ${INSTANCE_ID}" >&2
 echo "waiting for instance status ok..." >&2
