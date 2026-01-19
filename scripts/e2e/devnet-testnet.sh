@@ -670,7 +670,14 @@ fi
 
 set_stage "start_junocash"
 echo "starting JunoCash ${JUNOCASH_CHAIN} docker harness..." >&2
-"${JUNOCASH_UP}" >/dev/null
+junocash_up_out="${WORKDIR}/junocash-up.stdout.log"
+junocash_up_err="${WORKDIR}/junocash-up.stderr.log"
+if ! "${JUNOCASH_UP}" >"${junocash_up_out}" 2>"${junocash_up_err}"; then
+  echo "failed to start JunoCash docker harness (chain=${JUNOCASH_CHAIN})" >&2
+  tail -n 200 "${junocash_up_out}" >&2 || true
+  tail -n 200 "${junocash_up_err}" >&2 || true
+  exit 1
+fi
 
 jcli() { "${JUNOCASH_CLI}" "$@"; }
 

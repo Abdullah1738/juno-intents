@@ -23,7 +23,10 @@ download_if_missing() {
   if [[ -f "${out}" ]]; then
     return 0
   fi
-  curl -fsSL "${url}" -o "${out}"
+  tmp="${out}.tmp"
+  rm -f "${tmp}" >/dev/null 2>&1 || true
+  curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors "${url}" -o "${tmp}"
+  mv "${tmp}" "${out}"
 }
 
 download_if_missing \

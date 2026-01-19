@@ -30,7 +30,22 @@ elif command -v id >/dev/null; then
 fi
 
 if [[ "${IMAGE}" == "juno-intents/junocash-testnet:ubuntu22" ]]; then
-  docker build -t "${IMAGE}" -f "${script_dir}/Dockerfile" "${script_dir}" >/dev/null
+  build_log="tmp/junocash/testnet-docker-build.log"
+  mkdir -p "$(dirname "${build_log}")"
+  attempt=0
+  while [[ "${attempt}" -lt 3 ]]; do
+    attempt="$((attempt + 1))"
+    if docker build -t "${IMAGE}" -f "${script_dir}/Dockerfile" "${script_dir}" >"${build_log}" 2>&1; then
+      break
+    fi
+    echo "junocash testnet docker build failed (attempt ${attempt}/3)..." >&2
+    tail -n 120 "${build_log}" >&2 || true
+    sleep "$((attempt * 5))"
+  done
+  if [[ "${attempt}" -ge 3 ]]; then
+    echo "junocash testnet docker build failed after ${attempt} attempts" >&2
+    exit 1
+  fi
 fi
 
 docker run -d \
@@ -104,4 +119,3 @@ docker logs --tail 200 "${NAME_A}" >&2 || true
 docker logs --tail 200 "${NAME_B}" >&2 || true
 echo "testnet rpc did not become ready" >&2
 exit 1
-
