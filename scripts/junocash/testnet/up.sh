@@ -8,15 +8,31 @@ DATA_DIR_B="${JUNO_TESTNET_DATA_DIR_B:-tmp/junocash-testnet-b}"
 IMAGE="${JUNO_TESTNET_BASE_IMAGE:-juno-intents/junocash-testnet:ubuntu22}"
 NETWORK="${JUNO_TESTNET_NETWORK:-juno-testnet-net}"
 DOCKER_PLATFORM="${JUNO_TESTNET_DOCKER_PLATFORM:-${JUNO_DOCKER_PLATFORM:-linux/amd64}}"
+MODE="${JUNO_TESTNET_MODE:-public}"
+IBD_SKIP_TX_VERIFICATION="${JUNO_TESTNET_IBD_SKIP_TX_VERIFICATION:-1}"
 
 JUNOCASH_ROOT="$(scripts/junocash/fetch-linux64.sh)"
 
 mkdir -p "${DATA_DIR_A}" "${DATA_DIR_B}"
 
-if docker ps --format '{{.Names}}' | grep -qx "${NAME_A}" && docker ps --format '{{.Names}}' | grep -qx "${NAME_B}"; then
-  echo "${NAME_A} and ${NAME_B} already running" >&2
-  exit 0
-fi
+case "${MODE}" in
+  public)
+    if docker ps --format '{{.Names}}' | grep -qx "${NAME_A}"; then
+      echo "${NAME_A} already running" >&2
+      exit 0
+    fi
+    ;;
+  pair)
+    if docker ps --format '{{.Names}}' | grep -qx "${NAME_A}" && docker ps --format '{{.Names}}' | grep -qx "${NAME_B}"; then
+      echo "${NAME_A} and ${NAME_B} already running" >&2
+      exit 0
+    fi
+    ;;
+  *)
+    echo "unsupported JUNO_TESTNET_MODE: ${MODE} (expected: public|pair)" >&2
+    exit 2
+    ;;
+esac
 
 docker rm -f "${NAME_A}" "${NAME_B}" >/dev/null 2>&1 || true
 
@@ -54,6 +70,54 @@ if [[ "${IMAGE}" == "juno-intents/junocash-testnet:ubuntu22" ]]; then
   fi
 fi
 
+IBD_FLAGS=()
+if [[ "${IBD_SKIP_TX_VERIFICATION}" == "1" ]]; then
+  IBD_FLAGS=(-ibdskiptxverification)
+fi
+
+if [[ "${MODE}" == "public" ]]; then
+  docker run -d \
+    "${PLATFORM_FLAG[@]}" \
+    --name "${NAME_A}" \
+    "${USER_FLAG[@]}" \
+    -v "$(pwd)/${JUNOCASH_ROOT}:/opt/junocash:ro" \
+    -v "$(pwd)/${DATA_DIR_A}:/data" \
+    "${IMAGE}" \
+    /opt/junocash/bin/junocashd \
+      -testnet \
+      -datadir=/data \
+      -txindex=1 \
+      -server=1 \
+      -printtoconsole=1 \
+      -rpcworkqueue=64 \
+      -rpcclienttimeout=120 \
+      -listen=1 \
+      -bind=0.0.0.0 \
+      "${IBD_FLAGS[@]}" >/dev/null
+
+  echo "waiting for testnet rpc..." >&2
+  for _ in $(seq 1 60); do
+    if ! docker ps -a --format '{{.Names}}' | grep -qx "${NAME_A}"; then
+      echo "testnet container missing: ${NAME_A}" >&2
+      exit 1
+    fi
+    if ! docker ps --format '{{.Names}}' | grep -qx "${NAME_A}"; then
+      echo "testnet container exited early: ${NAME_A}" >&2
+      docker logs "${NAME_A}" >&2 || true
+      exit 1
+    fi
+    if scripts/junocash/testnet/cli.sh getblockcount >/dev/null 2>&1; then
+      echo "testnet ready" >&2
+      exit 0
+    fi
+    sleep 1
+  done
+
+  docker logs --tail 200 "${NAME_A}" >&2 || true
+  echo "testnet rpc did not become ready" >&2
+  exit 1
+fi
+
 docker run -d \
   "${PLATFORM_FLAG[@]}" \
   --name "${NAME_B}" \
@@ -73,6 +137,7 @@ docker run -d \
     -dnsseed=0 \
     -listen=1 \
     -bind=0.0.0.0 \
+    "${IBD_FLAGS[@]}" \
     -connect="${NAME_A}:18234" >/dev/null
 
 docker run -d \
@@ -94,6 +159,7 @@ docker run -d \
     -dnsseed=0 \
     -listen=1 \
     -bind=0.0.0.0 \
+    "${IBD_FLAGS[@]}" \
     -connect="${NAME_B}:18234" >/dev/null
 
 echo "waiting for testnet rpc..." >&2

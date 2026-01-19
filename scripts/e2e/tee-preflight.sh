@@ -205,6 +205,7 @@ case "$(printf '%s' "${JUNOCASH_CHAIN}" | tr '[:upper:]' '[:lower:]' | tr -d ' \
     ;;
   testnet)
     export JUNO_TESTNET_DOCKER_USER="${JUNO_TESTNET_DOCKER_USER:-0:0}"
+    export JUNO_TESTNET_SYNC_TIMEOUT_SECS="${JUNO_TESTNET_SYNC_TIMEOUT_SECS_PREFLIGHT:-1800}"
     export JUNO_TESTNET_MINE_TIMEOUT_SECS="${JUNO_TESTNET_MINE_TIMEOUT_SECS_PREFLIGHT:-600}"
     mine_out="${WORKDIR}/junocash-mine.stdout.log"
     mine_err="${WORKDIR}/junocash-mine.stderr.log"
