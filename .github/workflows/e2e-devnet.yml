@@ -84,7 +84,44 @@ env:
   JUNO_E2E_RUN_MODE: ${{ github.event.inputs.run_mode }}
 
 jobs:
+  validate_base_deployment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Solana CLI (v2 only)
+        if: ${{ github.event.inputs.crp_mode == 'v2' }}
+        run: |
+          set -euo pipefail
+          SOLANA_DIR="$HOME/.local/share/solana/solana-release"
+          if [[ ! -x "${SOLANA_DIR}/bin/solana" ]]; then
+            rm -rf "${SOLANA_DIR}"
+            mkdir -p "$HOME/.local/share/solana"
+            curl -sSfL --retry 8 --retry-delay 5 --retry-all-errors \
+              "https://github.com/anza-xyz/agave/releases/download/v${SOLANA_CLI_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2" \
+              -o /tmp/solana-release.tar.bz2
+            tar -xjf /tmp/solana-release.tar.bz2 -C "$HOME/.local/share/solana"
+          fi
+          echo "${SOLANA_DIR}/bin" >> "$GITHUB_PATH"
+          export PATH="${SOLANA_DIR}/bin:$PATH"
+          solana --version
+
+      - name: Validate base deployment image IDs (v2)
+        if: ${{ github.event.inputs.crp_mode == 'v2' }}
+        run: |
+          set -euo pipefail
+          ./scripts/solana/validate-deployment-image-ids.sh --deployment "${{ github.event.inputs.deployment }}"
+
+      - name: Skip validation (not v2)
+        if: ${{ github.event.inputs.crp_mode != 'v2' }}
+        run: |
+          set -euo pipefail
+          echo "skip: v1 does not require ORP v2 image-id validation"
+
   e2e:
+    needs: validate_base_deployment
     runs-on: runs-on=${{ github.run_id }}/family=g5.4xlarge/image=ubuntu22-gpu-x64/spot=false/extras=s3-cache
     timeout-minutes: 180
     outputs:
