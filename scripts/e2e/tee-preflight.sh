@@ -117,6 +117,8 @@ WORKDIR="${ROOT}/tmp/e2e/tee-preflight/${ts}"
 mkdir -p "${WORKDIR}"
 
 cleanup() {
+  scripts/junocash/testnet/down.sh >/dev/null 2>&1 || true
+  scripts/junocash/regtest/down.sh >/dev/null 2>&1 || true
   sudo "${NITRO_CLI}" terminate-enclave --all >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -193,6 +195,42 @@ if [[ "${creator_bal}" -lt "${min_creator_lamports}" ]]; then
   fi
 fi
 
+echo "junocash preflight..." >&2
+JUNOCASH_PREFLIGHT_HEIGHT=""
+case "$(printf '%s' "${JUNOCASH_CHAIN}" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\r\n')" in
+  regtest)
+    scripts/junocash/regtest/up.sh >/dev/null
+    JUNOCASH_PREFLIGHT_HEIGHT="$(scripts/junocash/regtest/cli.sh getblockcount)"
+    scripts/junocash/regtest/cli.sh generate 1 >/dev/null
+    ;;
+  testnet)
+    export JUNO_TESTNET_DOCKER_USER="${JUNO_TESTNET_DOCKER_USER:-0:0}"
+    export JUNO_TESTNET_MINE_TIMEOUT_SECS="${JUNO_TESTNET_MINE_TIMEOUT_SECS_PREFLIGHT:-600}"
+    mine_out="${WORKDIR}/junocash-mine.stdout.log"
+    mine_err="${WORKDIR}/junocash-mine.stderr.log"
+    if ! scripts/junocash/testnet/mine.sh 1 >"${mine_out}" 2>"${mine_err}"; then
+      echo "junocash testnet mining preflight failed (tailing logs)..." >&2
+      tail -n 120 "${mine_out}" >&2 || true
+      tail -n 120 "${mine_err}" >&2 || true
+      exit 1
+    fi
+    JUNOCASH_PREFLIGHT_HEIGHT="$(scripts/junocash/testnet/cli.sh getblockcount)"
+    ;;
+  *)
+    echo "unsupported junocash_chain: ${JUNOCASH_CHAIN}" >&2
+    exit 1
+    ;;
+esac
+if [[ -z "${JUNOCASH_PREFLIGHT_HEIGHT}" || ! "${JUNOCASH_PREFLIGHT_HEIGHT}" =~ ^[0-9]+$ ]]; then
+  echo "failed to determine junocash height during preflight" >&2
+  exit 1
+fi
+if [[ "${JUNOCASH_PREFLIGHT_HEIGHT}" -lt 1 ]]; then
+  echo "junocash preflight failed (height=${JUNOCASH_PREFLIGHT_HEIGHT})" >&2
+  exit 1
+fi
+echo "junocash preflight ok (height=${JUNOCASH_PREFLIGHT_HEIGHT})" >&2
+
 echo "preparing nitro log dir..." >&2
 sudo mkdir -p /var/log/nitro_enclaves
 sudo touch /var/log/nitro_enclaves/nitro_enclaves.log
@@ -266,6 +304,7 @@ out = {
     "chain": "${JUNOCASH_CHAIN}",
     "chain_id": int("${CHAIN_ID}"),
     "genesis_hash": "${JUNOCASH_GENESIS_HASH}",
+    "height_preflight": int("${JUNOCASH_PREFLIGHT_HEIGHT}"),
   },
   "tee": {
     "eif_pcr0": "${EIF_PCR0}",
