@@ -960,7 +960,14 @@ print(str(d))
 addr=sys.argv[1]; amt=sys.argv[2]
 print(json.dumps([{"address":addr,"amount":float(amt)}]))
 ' "${USER_UA}" "${_prefund_amount_ok}")"
-  opid_prefund="$(jcli z_sendmany "ANY_TADDR" "${recipients_prefund}" "${JUNOCASH_SEND_MINCONF}" | parse_junocash_opid)"
+  prefund_out=""
+  if ! prefund_out="$(jcli z_sendmany "ANY_TADDR" "${recipients_prefund}" "${JUNOCASH_SEND_MINCONF}" 2>&1)"; then
+    echo "prefund via ANY_TADDR failed; falling back to z_shieldcoinbase..." >&2
+    printf '%s\n' "${prefund_out}" >&2
+    opid_prefund="$(jcli z_shieldcoinbase "*" "${USER_UA}" null "${JUNOCASH_SHIELD_LIMIT}" | parse_junocash_opid)"
+  else
+    opid_prefund="$(printf '%s' "${prefund_out}" | parse_junocash_opid)"
+  fi
   txid_prefund="$(wait_for_op_txid "${opid_prefund}" 1800)"
   echo "txid_prefund=${txid_prefund}" >&2
 
