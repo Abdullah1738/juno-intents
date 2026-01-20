@@ -73,7 +73,6 @@ if ! [[ "${start}" =~ ^[0-9]+$ ]]; then
   echo "unexpected getblockcount response: ${start}" >&2
   exit 1
 fi
-target="$((start + want))"
 threads="${JUNO_TESTNET_GENPROCLIMIT:--1}"
 
 timeout="${JUNO_TESTNET_MINE_TIMEOUT_SECS:-1800}"
@@ -82,30 +81,57 @@ if ! [[ "${timeout}" =~ ^[0-9]+$ ]] || [[ "${timeout}" -le 0 ]]; then
   timeout="1800"
 fi
 
+txcount_start="$(
+  jcli getwalletinfo | python3 -c 'import json,sys
+j=json.load(sys.stdin)
+print(int(j.get("txcount") or 0))
+'
+)"
+if ! [[ "${txcount_start}" =~ ^[0-9]+$ ]]; then
+  echo "unexpected getwalletinfo txcount: ${txcount_start}" >&2
+  exit 1
+fi
+txcount_target="$((txcount_start + want))"
+
 progress_secs="${JUNO_TESTNET_MINE_PROGRESS_SECS:-30}"
 if ! [[ "${progress_secs}" =~ ^[0-9]+$ ]] || [[ "${progress_secs}" -le 0 ]]; then
   progress_secs="30"
 fi
 
-echo "mining ${want} blocks (from ${start} to ${target})... threads=${threads} timeout=${timeout}s" >&2
+echo "mining ${want} blocks (chain height starts at ${start})... threads=${threads} timeout=${timeout}s txcount_start=${txcount_start}" >&2
 jcli setgenerate true "${threads}" >/dev/null
 
 last_height="${start}"
 for ((i=1; i<=timeout; i++)); do
   height="$(jcli getblockcount)"
-  if [[ "${height}" -ge "${target}" ]]; then
+  txcount_now="$(
+    jcli getwalletinfo | python3 -c 'import json,sys
+j=json.load(sys.stdin)
+print(int(j.get("txcount") or 0))
+'
+  )"
+  mined_blocks="$((txcount_now - txcount_start))"
+  if [[ "${txcount_now}" -ge "${txcount_target}" ]]; then
     jcli setgenerate false >/dev/null || true
-    echo "mined to height ${height}" >&2
+    echo "mined_blocks=${mined_blocks} height=${height}" >&2
     exit 0
   fi
   if [[ "${height}" != "${last_height}" ]] || (( i % progress_secs == 0 )); then
-    echo "height=${height} target=${target} elapsed=${i}s" >&2
+    echo "height=${height} mined_blocks=${mined_blocks}/${want} elapsed=${i}s" >&2
     last_height="${height}"
   fi
   sleep 1
 done
 
 final_height="$(jcli getblockcount 2>/dev/null || true)"
+final_txcount="$(jcli getwalletinfo 2>/dev/null | python3 -c 'import json,sys
+try:
+  j=json.load(sys.stdin)
+except Exception:
+  print(0); raise SystemExit(0)
+print(int(j.get("txcount") or 0))
+')"
+final_mined="$((final_txcount - txcount_start))"
 jcli setgenerate false >/dev/null || true
-echo "timed out waiting to reach height ${target} (height=${final_height})" >&2
+echo "timed out waiting to mine ${want} blocks (mined_blocks=${final_mined} height=${final_height})" >&2
 exit 1
