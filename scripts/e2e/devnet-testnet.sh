@@ -781,7 +781,9 @@ echo "mining initial blocks for coinbase maturity..." >&2
 if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
   jcli generate 110 >/dev/null
 else
-  scripts/junocash/testnet/mine.sh 110 >/dev/null
+  mine_timeout="${JUNO_E2E_COINBASE_MINE_TIMEOUT_SECS:-3600}"
+  echo "coinbase_mine_timeout_secs=${mine_timeout}" >&2
+  JUNO_TESTNET_MINE_TIMEOUT_SECS="${mine_timeout}" scripts/junocash/testnet/mine.sh 110 >/dev/null
 fi
 
 echo "creating JunoCash accounts + orchard UAs..." >&2
