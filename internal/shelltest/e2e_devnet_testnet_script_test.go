@@ -50,8 +50,7 @@ func TestE2EDevnetTestnetScriptUsesGetTransactionForConfirmations(t *testing.T) 
 	if !bytes.Contains(src, []byte(`raw="$(jcli getrawtransaction "${txid}" 1`)) {
 		t.Fatalf("script missing getrawtransaction fallback path")
 	}
-	if !bytes.Contains(src, []byte(`export JUNO_TESTNET_TXINDEX="${JUNO_TESTNET_TXINDEX:-0}"`)) {
-		t.Fatalf("script missing default txindex=0 for testnet e2e")
+	if bytes.Contains(src, []byte(`export JUNO_TESTNET_TXINDEX="${JUNO_TESTNET_TXINDEX:-0}"`)) {
+		t.Fatalf("script unexpectedly forces txindex=0 for testnet")
 	}
 }
-

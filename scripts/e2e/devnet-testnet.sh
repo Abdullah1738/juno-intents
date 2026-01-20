@@ -366,9 +366,6 @@ if [[ "${JUNOCASH_CHAIN}" == "testnet" ]]; then
   export JUNO_TESTNET_MAXCONNECTIONS="${JUNO_TESTNET_MAXCONNECTIONS:-64}"
   export JUNO_TESTNET_DBCACHE_MB="${JUNO_TESTNET_DBCACHE_MB:-4096}"
   export JUNO_TESTNET_PAR="${JUNO_TESTNET_PAR:-0}"
-  # txindex is expensive during IBD and is not required for this e2e flow when
-  # we use wallet RPCs (gettransaction) for confirmation tracking.
-  export JUNO_TESTNET_TXINDEX="${JUNO_TESTNET_TXINDEX:-0}"
 fi
 
 if [[ "${JUNOCASH_CHAIN}" == "testnet" && -n "${JUNOCASH_TESTNET_WALLET_DAT_GZ_B64}" ]]; then
