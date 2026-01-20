@@ -803,6 +803,8 @@ min_mature_zat="${JUNO_E2E_MIN_MATURE_COINBASE_ZAT:-10000}" # 0.0001 JunoCash
 max_extra_blocks="${JUNO_E2E_MAX_COINBASE_MATURITY_BLOCKS:-2000}"
 step_blocks="${JUNO_E2E_COINBASE_MATURITY_STEP_BLOCKS:-50}"
 extra_mined=0
+no_funds_wait_secs="${JUNO_E2E_COINBASE_WALLET_WAIT_SECS:-180}"
+no_funds_waited=0
 while true; do
   wallet_info="$(jcli getwalletinfo 2>&1)" || {
     printf '%s\n' "${wallet_info}" >&2
@@ -829,6 +831,16 @@ print(to_zat(j.get("balance")), to_zat(j.get("immature_balance")))
   if [[ "${mature_zat}" -ge "${min_mature_zat}" ]]; then
     break
   fi
+  if [[ "${mature_zat}" -eq 0 && "${immature_zat}" -eq 0 ]]; then
+    if [[ "${no_funds_waited}" -lt "${no_funds_wait_secs}" ]]; then
+      echo "wallet has no coinbase yet; waiting 5s for wallet to catch up..." >&2
+      sleep 5
+      no_funds_waited="$((no_funds_waited + 5))"
+      continue
+    fi
+    echo "wallet still has no coinbase after waiting ${no_funds_waited}s" >&2
+    exit 1
+  fi
   if [[ "${extra_mined}" -ge "${max_extra_blocks}" ]]; then
     echo "coinbase did not mature after mining extra blocks (extra_mined=${extra_mined} max=${max_extra_blocks})" >&2
     exit 1
@@ -840,6 +852,7 @@ print(to_zat(j.get("balance")), to_zat(j.get("immature_balance")))
     scripts/junocash/testnet/mine.sh "${step_blocks}" >/dev/null
   fi
   extra_mined="$((extra_mined + step_blocks))"
+  no_funds_waited=0
 done
 
 echo "shielding coinbase to user orchard UA..." >&2
