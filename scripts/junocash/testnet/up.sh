@@ -15,6 +15,15 @@ JUNOCASH_ROOT="$(scripts/junocash/fetch-linux64.sh)"
 
 mkdir -p "${DATA_DIR_A}" "${DATA_DIR_B}"
 
+DATA_DIR_A_HOST="${DATA_DIR_A}"
+if [[ "${DATA_DIR_A_HOST}" != /* ]]; then
+  DATA_DIR_A_HOST="$(pwd)/${DATA_DIR_A_HOST}"
+fi
+DATA_DIR_B_HOST="${DATA_DIR_B}"
+if [[ "${DATA_DIR_B_HOST}" != /* ]]; then
+  DATA_DIR_B_HOST="$(pwd)/${DATA_DIR_B_HOST}"
+fi
+
 case "${MODE}" in
   public)
     if docker ps --format '{{.Names}}' | grep -qx "${NAME_A}"; then
@@ -81,7 +90,7 @@ if [[ "${MODE}" == "public" ]]; then
     --name "${NAME_A}" \
     "${USER_FLAG[@]}" \
     -v "$(pwd)/${JUNOCASH_ROOT}:/opt/junocash:ro" \
-    -v "$(pwd)/${DATA_DIR_A}:/data" \
+    -v "${DATA_DIR_A_HOST}:/data" \
     "${IMAGE}" \
     /opt/junocash/bin/junocashd \
       -testnet \
@@ -124,7 +133,7 @@ docker run -d \
   --network "${NETWORK}" \
   "${USER_FLAG[@]}" \
   -v "$(pwd)/${JUNOCASH_ROOT}:/opt/junocash:ro" \
-  -v "$(pwd)/${DATA_DIR_B}:/data" \
+  -v "${DATA_DIR_B_HOST}:/data" \
   "${IMAGE}" \
   /opt/junocash/bin/junocashd \
     -testnet \
@@ -146,7 +155,7 @@ docker run -d \
   --network "${NETWORK}" \
   "${USER_FLAG[@]}" \
   -v "$(pwd)/${JUNOCASH_ROOT}:/opt/junocash:ro" \
-  -v "$(pwd)/${DATA_DIR_A}:/data" \
+  -v "${DATA_DIR_A_HOST}:/data" \
   "${IMAGE}" \
   /opt/junocash/bin/junocashd \
     -testnet \

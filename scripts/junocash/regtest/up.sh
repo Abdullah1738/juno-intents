@@ -17,6 +17,11 @@ fi
 
 docker rm -f "${NAME}" >/dev/null 2>&1 || true
 
+DATA_DIR_HOST="${DATA_DIR}"
+if [[ "${DATA_DIR_HOST}" != /* ]]; then
+  DATA_DIR_HOST="$(pwd)/${DATA_DIR_HOST}"
+fi
+
 PLATFORM_FLAG=()
 if [[ -n "${DOCKER_PLATFORM}" ]]; then
   PLATFORM_FLAG=(--platform "${DOCKER_PLATFORM}")
@@ -39,7 +44,7 @@ docker run -d \
   --name "${NAME}" \
   "${USER_FLAG[@]}" \
   -v "$(pwd)/${JUNOCASH_ROOT}:/opt/junocash:ro" \
-  -v "$(pwd)/${DATA_DIR}:/data" \
+  -v "${DATA_DIR_HOST}:/data" \
   "${IMAGE}" \
   /opt/junocash/bin/junocashd \
     -regtest \
