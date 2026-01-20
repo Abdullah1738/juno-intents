@@ -809,21 +809,16 @@ while true; do
     exit 1
   }
   read -r mature_zat immature_zat <<<"$(
-    python3 - <<PY
-import json,sys
+    python3 -c 'import json,sys
 from decimal import Decimal
-raw=sys.stdin.read()
-j=json.loads(raw)
+j=json.load(sys.stdin)
 def to_zat(v):
   if v is None:
     return 0
   d=Decimal(str(v))
   return int(d * Decimal(100000000))
-bal=to_zat(j.get("balance"))
-imm=to_zat(j.get("immature_balance"))
-print(bal, imm)
-PY
-  <<<"${wallet_info}"
+print(to_zat(j.get("balance")), to_zat(j.get("immature_balance")))
+' <<<"${wallet_info}"
   )"
   if [[ -z "${mature_zat}" || -z "${immature_zat}" || ! "${mature_zat}" =~ ^[0-9]+$ || ! "${immature_zat}" =~ ^[0-9]+$ ]]; then
     echo "failed to parse getwalletinfo balance fields" >&2
