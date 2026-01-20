@@ -362,6 +362,12 @@ ts="$(date -u +%Y%m%dT%H%M%SZ)"
 WORKDIR="${ROOT}/tmp/e2e/devnet-testnet/${DEPLOYMENT_NAME}/${ts}"
 mkdir -p "${WORKDIR}"
 
+if [[ "${JUNOCASH_CHAIN}" == "testnet" ]]; then
+  export JUNO_TESTNET_MAXCONNECTIONS="${JUNO_TESTNET_MAXCONNECTIONS:-64}"
+  export JUNO_TESTNET_DBCACHE_MB="${JUNO_TESTNET_DBCACHE_MB:-4096}"
+  export JUNO_TESTNET_PAR="${JUNO_TESTNET_PAR:-0}"
+fi
+
 if [[ "${JUNOCASH_CHAIN}" == "testnet" && -n "${JUNOCASH_TESTNET_WALLET_DAT_GZ_B64}" ]]; then
   export JUNO_TESTNET_DATA_DIR_A="${WORKDIR}/junocash-testnet-a"
   JUNOCASH_DATA_DIR="${JUNO_TESTNET_DATA_DIR_A}"

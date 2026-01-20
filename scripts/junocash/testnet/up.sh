@@ -10,6 +10,10 @@ NETWORK="${JUNO_TESTNET_NETWORK:-juno-testnet-net}"
 DOCKER_PLATFORM="${JUNO_TESTNET_DOCKER_PLATFORM:-${JUNO_DOCKER_PLATFORM:-linux/amd64}}"
 MODE="${JUNO_TESTNET_MODE:-public}"
 IBD_SKIP_TX_VERIFICATION="${JUNO_TESTNET_IBD_SKIP_TX_VERIFICATION:-1}"
+MAXCONNECTIONS="${JUNO_TESTNET_MAXCONNECTIONS:-}"
+DBCACHE_MB="${JUNO_TESTNET_DBCACHE_MB:-}"
+PAR="${JUNO_TESTNET_PAR:-}"
+TXINDEX="${JUNO_TESTNET_TXINDEX:-1}"
 
 JUNOCASH_ROOT="$(scripts/junocash/fetch-linux64.sh)"
 
@@ -84,6 +88,22 @@ if [[ "${IBD_SKIP_TX_VERIFICATION}" == "1" ]]; then
   IBD_FLAGS=(-ibdskiptxverification)
 fi
 
+PERF_FLAGS=()
+if [[ -n "${MAXCONNECTIONS}" ]] && [[ "${MAXCONNECTIONS}" =~ ^[0-9]+$ ]] && [[ "${MAXCONNECTIONS}" -gt 0 ]]; then
+  PERF_FLAGS+=(-maxconnections="${MAXCONNECTIONS}")
+fi
+if [[ -n "${DBCACHE_MB}" ]] && [[ "${DBCACHE_MB}" =~ ^[0-9]+$ ]] && [[ "${DBCACHE_MB}" -gt 0 ]]; then
+  PERF_FLAGS+=(-dbcache="${DBCACHE_MB}")
+fi
+if [[ -n "${PAR}" ]] && [[ "${PAR}" =~ ^[0-9]+$ ]] && [[ "${PAR}" -ge 0 ]]; then
+  PERF_FLAGS+=(-par="${PAR}")
+fi
+
+TXINDEX_FLAG=()
+if [[ "${TXINDEX}" == "1" ]]; then
+  TXINDEX_FLAG=(-txindex=1)
+fi
+
 if [[ "${MODE}" == "public" ]]; then
   docker run -d \
     "${PLATFORM_FLAG[@]}" \
@@ -95,13 +115,14 @@ if [[ "${MODE}" == "public" ]]; then
     /opt/junocash/bin/junocashd \
       -testnet \
       -datadir=/data \
-      -txindex=1 \
       -server=1 \
       -printtoconsole=1 \
       -rpcworkqueue=64 \
       -rpcclienttimeout=120 \
       -listen=1 \
       -bind=0.0.0.0 \
+      "${TXINDEX_FLAG[@]}" \
+      "${PERF_FLAGS[@]}" \
       "${IBD_FLAGS[@]}" >/dev/null
 
   echo "waiting for testnet rpc..." >&2
@@ -138,7 +159,6 @@ docker run -d \
   /opt/junocash/bin/junocashd \
     -testnet \
     -datadir=/data \
-    -txindex=1 \
     -server=1 \
     -printtoconsole=1 \
     -rpcworkqueue=64 \
@@ -146,6 +166,8 @@ docker run -d \
     -dnsseed=0 \
     -listen=1 \
     -bind=0.0.0.0 \
+    "${TXINDEX_FLAG[@]}" \
+    "${PERF_FLAGS[@]}" \
     "${IBD_FLAGS[@]}" \
     -connect="${NAME_A}:18234" >/dev/null
 
@@ -160,7 +182,6 @@ docker run -d \
   /opt/junocash/bin/junocashd \
     -testnet \
     -datadir=/data \
-    -txindex=1 \
     -server=1 \
     -printtoconsole=1 \
     -rpcworkqueue=64 \
@@ -168,6 +189,8 @@ docker run -d \
     -dnsseed=0 \
     -listen=1 \
     -bind=0.0.0.0 \
+    "${TXINDEX_FLAG[@]}" \
+    "${PERF_FLAGS[@]}" \
     "${IBD_FLAGS[@]}" \
     -connect="${NAME_B}:18234" >/dev/null
 
