@@ -204,18 +204,67 @@ case "$(printf '%s' "${JUNOCASH_CHAIN}" | tr '[:upper:]' '[:lower:]' | tr -d ' \
     scripts/junocash/regtest/cli.sh generate 1 >/dev/null
     ;;
   testnet)
-    export JUNO_TESTNET_DOCKER_USER="${JUNO_TESTNET_DOCKER_USER:-0:0}"
-    export JUNO_TESTNET_SYNC_TIMEOUT_SECS="${JUNO_TESTNET_SYNC_TIMEOUT_SECS_PREFLIGHT:-1800}"
-    export JUNO_TESTNET_MINE_TIMEOUT_SECS="${JUNO_TESTNET_MINE_TIMEOUT_SECS_PREFLIGHT:-600}"
-    mine_out="${WORKDIR}/junocash-mine.stdout.log"
-    mine_err="${WORKDIR}/junocash-mine.stderr.log"
-    if ! scripts/junocash/testnet/mine.sh 1 >"${mine_out}" 2>"${mine_err}"; then
-      echo "junocash testnet mining preflight failed (tailing logs)..." >&2
-      tail -n 120 "${mine_out}" >&2 || true
-      tail -n 120 "${mine_err}" >&2 || true
-      exit 1
+    if [[ -z "${JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64:-}" ]]; then
+      echo "JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64 is required for testnet preflight" >&2
+      exit 2
     fi
-    JUNOCASH_PREFLIGHT_HEIGHT="$(scripts/junocash/testnet/cli.sh getblockcount)"
+
+    echo "validating testnet wallet.dat (no sync/mining)..." >&2
+    export JUNO_TESTNET_DATA_DIR_A="${WORKDIR}/junocash-testnet-a"
+    mkdir -p "${JUNO_TESTNET_DATA_DIR_A}/testnet3"
+    python3 - "${JUNO_TESTNET_DATA_DIR_A}/testnet3/wallet.dat" <<'PY'
+import base64,gzip,os,sys
+out=sys.argv[1]
+b64=os.environ.get("JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64","")
+if not b64:
+  raise SystemExit(2)
+payload=base64.b64decode("".join(b64.split()))
+raw=gzip.decompress(payload)
+with open(out,"wb") as f:
+  f.write(raw)
+PY
+    chmod 600 "${JUNO_TESTNET_DATA_DIR_A}/testnet3/wallet.dat" || true
+
+    JUNOCASH_ROOT="$(scripts/junocash/fetch-linux64.sh)"
+    "${JUNOCASH_ROOT}/bin/junocashd" \
+      -testnet \
+      -datadir="${JUNO_TESTNET_DATA_DIR_A}" \
+      -server=1 \
+      -printtoconsole=0 \
+      -listen=0 \
+      -dnsseed=0 \
+      -maxconnections=1 \
+      -rpcworkqueue=16 \
+      -rpcclienttimeout=30 \
+      -daemon >/dev/null 2>&1
+
+    for _ in $(seq 1 30); do
+      if "${JUNOCASH_ROOT}/bin/junocash-cli" -testnet -datadir="${JUNO_TESTNET_DATA_DIR_A}" getblockcount >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+
+    accounts="$("${JUNOCASH_ROOT}/bin/junocash-cli" -testnet -datadir="${JUNO_TESTNET_DATA_DIR_A}" z_listaccounts 2>/dev/null || true)"
+    python3 - <<'PY' <<<"${accounts}"
+import json,sys
+raw=sys.stdin.read()
+try:
+  acc=json.loads(raw)
+except Exception:
+  raise SystemExit("z_listaccounts did not return JSON")
+if not isinstance(acc, list) or not acc:
+  raise SystemExit("z_listaccounts returned no accounts")
+addrs=((acc[0] or {}).get("addresses") or [])
+if not addrs:
+  raise SystemExit("account 0 has no addresses")
+ua=((addrs[0] or {}).get("ua") or "").strip()
+if not ua.startswith("jtest"):
+  raise SystemExit(f"unexpected ua: {ua}")
+print(f"wallet_ok ua={ua}")
+PY
+    JUNOCASH_PREFLIGHT_HEIGHT="$("${JUNOCASH_ROOT}/bin/junocash-cli" -testnet -datadir="${JUNO_TESTNET_DATA_DIR_A}" getblockcount 2>/dev/null || true)"
+    "${JUNOCASH_ROOT}/bin/junocash-cli" -testnet -datadir="${JUNO_TESTNET_DATA_DIR_A}" stop >/dev/null 2>&1 || true
     ;;
   *)
     echo "unsupported junocash_chain: ${JUNOCASH_CHAIN}" >&2
@@ -226,7 +275,7 @@ if [[ -z "${JUNOCASH_PREFLIGHT_HEIGHT}" || ! "${JUNOCASH_PREFLIGHT_HEIGHT}" =~ ^
   echo "failed to determine junocash height during preflight" >&2
   exit 1
 fi
-if [[ "${JUNOCASH_PREFLIGHT_HEIGHT}" -lt 1 ]]; then
+if [[ "$(printf '%s' "${JUNOCASH_CHAIN}" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\r\n')" != "testnet" && "${JUNOCASH_PREFLIGHT_HEIGHT}" -lt 1 ]]; then
   echo "junocash preflight failed (height=${JUNOCASH_PREFLIGHT_HEIGHT})" >&2
   exit 1
 fi
