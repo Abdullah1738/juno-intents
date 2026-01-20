@@ -798,6 +798,55 @@ echo "user_ua=${USER_UA}" >&2
 echo "solver1_ua=${SOLVER1_UA}" >&2
 echo "solver2_ua=${SOLVER2_UA}" >&2
 
+echo "checking coinbase maturity (wallet balance)..." >&2
+min_mature_zat="${JUNO_E2E_MIN_MATURE_COINBASE_ZAT:-10000}" # 0.0001 JunoCash
+max_extra_blocks="${JUNO_E2E_MAX_COINBASE_MATURITY_BLOCKS:-2000}"
+step_blocks="${JUNO_E2E_COINBASE_MATURITY_STEP_BLOCKS:-50}"
+extra_mined=0
+while true; do
+  wallet_info="$(jcli getwalletinfo 2>&1)" || {
+    printf '%s\n' "${wallet_info}" >&2
+    exit 1
+  }
+  read -r mature_zat immature_zat <<<"$(
+    python3 - <<PY
+import json,sys
+from decimal import Decimal
+raw=sys.stdin.read()
+j=json.loads(raw)
+def to_zat(v):
+  if v is None:
+    return 0
+  d=Decimal(str(v))
+  return int(d * Decimal(100000000))
+bal=to_zat(j.get("balance"))
+imm=to_zat(j.get("immature_balance"))
+print(bal, imm)
+PY
+  <<<"${wallet_info}"
+  )"
+  if [[ -z "${mature_zat}" || -z "${immature_zat}" || ! "${mature_zat}" =~ ^[0-9]+$ || ! "${immature_zat}" =~ ^[0-9]+$ ]]; then
+    echo "failed to parse getwalletinfo balance fields" >&2
+    printf '%s\n' "${wallet_info}" >&2
+    exit 1
+  fi
+  echo "wallet_balance_zat=${mature_zat} wallet_immature_zat=${immature_zat}" >&2
+  if [[ "${mature_zat}" -ge "${min_mature_zat}" ]]; then
+    break
+  fi
+  if [[ "${extra_mined}" -ge "${max_extra_blocks}" ]]; then
+    echo "coinbase did not mature after mining extra blocks (extra_mined=${extra_mined} max=${max_extra_blocks})" >&2
+    exit 1
+  fi
+  echo "coinbase still immature; mining ${step_blocks} more blocks..." >&2
+  if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+    jcli generate "${step_blocks}" >/dev/null
+  else
+    scripts/junocash/testnet/mine.sh "${step_blocks}" >/dev/null
+  fi
+  extra_mined="$((extra_mined + step_blocks))"
+done
+
 echo "shielding coinbase to user orchard UA..." >&2
 opid="$(jcli z_shieldcoinbase "*" "${USER_UA}" null "${JUNOCASH_SHIELD_LIMIT}" | parse_junocash_opid)"
 
