@@ -12,6 +12,7 @@ JUNOCASH_SEND_AMOUNT_A="${JUNO_E2E_JUNOCASH_SEND_AMOUNT_A:-1.0}"
 JUNOCASH_SEND_AMOUNT_B="${JUNO_E2E_JUNOCASH_SEND_AMOUNT_B:-0.5}"
 JUNOCASH_SEND_MINCONF="${JUNO_E2E_JUNOCASH_SEND_MINCONF:-}"
 JUNOCASH_SHIELD_LIMIT="${JUNO_E2E_JUNOCASH_SHIELD_LIMIT:-10}"
+JUNOCASH_TESTNET_WALLET_DAT_GZ_B64="${JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64:-}"
 JUNOCASH_TESTNET_PREFUND_WIF="${JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF:-}"
 JUNOCASH_TESTNET_PREFUND_AMOUNT="${JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT:-5.0}"
 
@@ -42,6 +43,7 @@ Environment (optional):
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_B  (default: 0.5)
   JUNO_E2E_JUNOCASH_SEND_MINCONF   (default: regtest=1, testnet=1)
   JUNO_E2E_JUNOCASH_SHIELD_LIMIT   (default: 10)
+  JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64 (optional: base64(gzip(wallet.dat)) for a prefunded testnet wallet; required for shielded-only funding)
   JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF (optional: prefunded testnet transparent address private key in WIF format)
   JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT (default: 5.0; amount to fund the user orchard UA from ANY_TADDR)
   JUNO_E2E_PRIORITY_LEVEL          (default: Medium)
@@ -56,7 +58,8 @@ Environment (optional):
 
 Notes:
   - For testnet deployments, the JunoCash Docker harness connects to public testnet.
-  - For reliable CI, provide JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF and fund it once; the run will fund the user UA from ANY_TADDR.
+  - For reliable CI, prefer JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64 and fund the wallet’s UA once.
+    As a fallback, JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF can fund the user UA from ANY_TADDR.
   - Runs both IEP directions (A and B) against the selected Solana devnet deployment.
   - Generates *real* zkVM->Groth16 receipt bundles (CUDA) and settles on Solana.
   - Uses CRP operator run-mode to finalize the Orchard roots (chain type + genesis verified).
@@ -358,6 +361,25 @@ esac
 ts="$(date -u +%Y%m%dT%H%M%SZ)"
 WORKDIR="${ROOT}/tmp/e2e/devnet-testnet/${DEPLOYMENT_NAME}/${ts}"
 mkdir -p "${WORKDIR}"
+
+if [[ "${JUNOCASH_CHAIN}" == "testnet" && -n "${JUNOCASH_TESTNET_WALLET_DAT_GZ_B64}" ]]; then
+  export JUNO_TESTNET_DATA_DIR_A="${WORKDIR}/junocash-testnet-a"
+  JUNOCASH_DATA_DIR="${JUNO_TESTNET_DATA_DIR_A}"
+  echo "seeding junocash testnet wallet.dat from JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64..." >&2
+  mkdir -p "${JUNO_TESTNET_DATA_DIR_A}/testnet3"
+  python3 - "${JUNO_TESTNET_DATA_DIR_A}/testnet3/wallet.dat" <<'PY'
+import base64,gzip,os,sys
+out=sys.argv[1]
+b64=os.environ.get("JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64","")
+if not b64:
+  raise SystemExit(2)
+payload=base64.b64decode("".join(b64.split()))
+raw=gzip.decompress(payload)
+with open(out,"wb") as f:
+  f.write(raw)
+PY
+  chmod 600 "${JUNO_TESTNET_DATA_DIR_A}/testnet3/wallet.dat" || true
+fi
 
 SOLVERNET1_PID=""
 SOLVERNET2_PID=""
@@ -899,13 +921,23 @@ print(int(j.get("height") or 0))
   return 1
 }
 
-echo "mining initial blocks for coinbase maturity..." >&2
-use_prefund="false"
-if [[ "${JUNOCASH_CHAIN}" == "testnet" && -n "${JUNOCASH_TESTNET_PREFUND_WIF}" ]]; then
-  use_prefund="true"
+use_wallet_prefund="false"
+use_taddr_prefund="false"
+if [[ "${JUNOCASH_CHAIN}" == "testnet" ]]; then
+  if [[ -n "${JUNOCASH_TESTNET_WALLET_DAT_GZ_B64}" ]]; then
+    use_wallet_prefund="true"
+  elif [[ -n "${JUNOCASH_TESTNET_PREFUND_WIF}" ]]; then
+    use_taddr_prefund="true"
+  fi
 fi
 
-if [[ "${use_prefund}" == "true" ]]; then
+if [[ "${use_wallet_prefund}" == "true" ]]; then
+  echo "using prefunded testnet wallet.dat (shielded)..." >&2
+  sync_timeout="${JUNO_TESTNET_SYNC_TIMEOUT_SECS:-7200}"
+  sync_poll_secs="${JUNO_TESTNET_SYNC_POLL_SECS:-5}"
+  sync_progress_secs="${JUNO_TESTNET_SYNC_PROGRESS_SECS:-30}"
+  wait_for_testnet_sync "${sync_timeout}" "${sync_poll_secs}" "${sync_progress_secs}"
+elif [[ "${use_taddr_prefund}" == "true" ]]; then
   echo "using prefunded testnet transparent key (skipping coinbase mining)..." >&2
   sync_timeout="${JUNO_TESTNET_SYNC_TIMEOUT_SECS:-7200}"
   sync_poll_secs="${JUNO_TESTNET_SYNC_POLL_SECS:-5}"
@@ -915,6 +947,7 @@ if [[ "${use_prefund}" == "true" ]]; then
   echo "importing prefunded testnet key (importprivkey + rescan)..." >&2
   jcli importprivkey "${JUNOCASH_TESTNET_PREFUND_WIF}" "e2e-testnet-prefund" true >/dev/null
 else
+  echo "mining initial blocks for coinbase maturity..." >&2
   if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
     jcli generate 110 >/dev/null
   else
@@ -925,10 +958,27 @@ else
 fi
 
 echo "creating JunoCash accounts + orchard UAs..." >&2
-USER_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
+if [[ "${use_wallet_prefund}" == "true" ]]; then
+  read -r USER_ACCOUNT USER_UA <<<"$(
+    jcli z_listaccounts | python3 -c 'import json,sys
+items=json.load(sys.stdin)
+if not isinstance(items, list) or not items:
+  raise SystemExit("no accounts in wallet")
+it=items[0] or {}
+acct=it.get("account")
+addrs=it.get("addresses") or []
+ua=((addrs[0] or {}).get("ua") or "").strip() if addrs else ""
+if acct is None or ua == "":
+  raise SystemExit("failed to parse z_listaccounts")
+print(int(acct), ua)
+'
+  )"
+else
+  USER_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
+  USER_UA="$(jcli z_getaddressforaccount "${USER_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
+fi
 SOLVER1_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
 SOLVER2_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
-USER_UA="$(jcli z_getaddressforaccount "${USER_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
 SOLVER1_UA="$(jcli z_getaddressforaccount "${SOLVER1_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
 SOLVER2_UA="$(jcli z_getaddressforaccount "${SOLVER2_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
 echo "user_account=${USER_ACCOUNT}" >&2
@@ -938,7 +988,7 @@ echo "user_ua=${USER_UA}" >&2
 echo "solver1_ua=${SOLVER1_UA}" >&2
 echo "solver2_ua=${SOLVER2_UA}" >&2
 
-if [[ "${use_prefund}" == "true" ]]; then
+if [[ "${use_taddr_prefund}" == "true" ]]; then
   echo "funding user orchard UA from ANY_TADDR (amount=${JUNOCASH_TESTNET_PREFUND_AMOUNT})..." >&2
   _prefund_amount_ok="$(
     python3 -c 'from decimal import Decimal; import sys
@@ -974,6 +1024,8 @@ print(json.dumps([{"address":addr,"amount":float(amt)}]))
   echo "waiting for prefund tx confirmation..." >&2
   prefund_height="$(wait_for_tx_confirmations "${txid_prefund}" 1 1800)"
   echo "prefund_height=${prefund_height}" >&2
+elif [[ "${use_wallet_prefund}" == "true" ]]; then
+  echo "prefunded wallet selected; skipping coinbase shielding" >&2
 else
   echo "checking coinbase maturity (wallet balance)..." >&2
   min_mature_zat="${JUNO_E2E_MIN_MATURE_COINBASE_ZAT:-10000}" # 0.0001 JunoCash
