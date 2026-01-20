@@ -764,10 +764,29 @@ wait_for_op_txid() {
   local opid="$1"
   local wait_secs="${2:-1800}"
 
+  local last_nonjson=""
+  local nonjson_count=0
   for _ in $(seq 1 "${wait_secs}"); do
     res="$(jcli z_getoperationresult "[\"${opid}\"]" 2>/dev/null || true)"
     compact="$(printf '%s' "${res}" | tr -d ' \n\r\t')"
+    if [[ -z "${compact}" ]]; then
+      # Treat empty output as transient RPC failure.
+      sleep 1
+      continue
+    fi
     if [[ "${compact}" == "[]" ]]; then
+      sleep 1
+      continue
+    fi
+
+    # Some CLI/RPC failures print non-JSON output to stdout/stderr; keep waiting.
+    if [[ "${compact}" != \[* ]]; then
+      last_nonjson="${res}"
+      nonjson_count="$((nonjson_count + 1))"
+      if (( nonjson_count == 1 || nonjson_count % 30 == 0 )); then
+        echo "z_getoperationresult returned non-JSON (opid=${opid} count=${nonjson_count})" >&2
+        printf '%s\n' "${res}" | head -n 5 >&2 || true
+      fi
       sleep 1
       continue
     fi
@@ -807,6 +826,10 @@ sys.exit(2)
   done
 
   echo "operation did not complete (opid=${opid})" >&2
+  if [[ -n "${last_nonjson}" ]]; then
+    echo "last non-JSON z_getoperationresult output (opid=${opid}):" >&2
+    printf '%s\n' "${last_nonjson}" >&2
+  fi
   return 1
 }
 

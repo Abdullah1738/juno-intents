@@ -54,3 +54,22 @@ func TestE2EDevnetTestnetScriptUsesGetTransactionForConfirmations(t *testing.T) 
 		t.Fatalf("script unexpectedly forces txindex=0 for testnet")
 	}
 }
+
+func TestE2EDevnetTestnetScriptWaitForOpTxidHandlesTransientNonJSON(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	if !bytes.Contains(src, []byte(`if [[ -z "${compact}" ]]; then`)) {
+		t.Fatalf("script missing empty-output handling in wait_for_op_txid")
+	}
+	if !bytes.Contains(src, []byte(`z_getoperationresult returned non-JSON`)) {
+		t.Fatalf("script missing non-JSON handling message in wait_for_op_txid")
+	}
+}
