@@ -366,6 +366,9 @@ if [[ "${JUNOCASH_CHAIN}" == "testnet" ]]; then
   export JUNO_TESTNET_MAXCONNECTIONS="${JUNO_TESTNET_MAXCONNECTIONS:-64}"
   export JUNO_TESTNET_DBCACHE_MB="${JUNO_TESTNET_DBCACHE_MB:-4096}"
   export JUNO_TESTNET_PAR="${JUNO_TESTNET_PAR:-0}"
+  # txindex is expensive during IBD and is not required for this e2e flow when
+  # we use wallet RPCs (gettransaction) for confirmation tracking.
+  export JUNO_TESTNET_TXINDEX="${JUNO_TESTNET_TXINDEX:-0}"
 fi
 
 if [[ "${JUNOCASH_CHAIN}" == "testnet" && -n "${JUNOCASH_TESTNET_WALLET_DAT_GZ_B64}" ]]; then
@@ -883,7 +886,11 @@ wait_for_tx_confirmations() {
   fi
 
   for _ in $(seq 1 "${wait_secs}"); do
-    raw="$(jcli getrawtransaction "${txid}" 1 2>/dev/null || true)"
+    raw="$(jcli gettransaction "${txid}" 2>/dev/null || true)"
+    if [[ -z "${raw}" ]]; then
+      # Fallback for non-wallet transactions when txindex is enabled.
+      raw="$(jcli getrawtransaction "${txid}" 1 2>/dev/null || true)"
+    fi
     if [[ -z "${raw}" ]]; then
       sleep 1
       continue
@@ -1121,6 +1128,9 @@ if [[ "${user_note_ok}" != "true" ]]; then
 fi
 
 DATA_DIR="${JUNOCASH_DATA_DIR}"
+if [[ "${DATA_DIR}" != /* ]]; then
+  DATA_DIR="${ROOT}/${DATA_DIR}"
+fi
 wallet_candidates=(
   "${DATA_DIR}/wallet.dat"
   "${DATA_DIR}/testnet3/wallet.dat"
@@ -1131,8 +1141,8 @@ wallet_candidates=(
 )
 WALLET_DAT=""
 for p in "${wallet_candidates[@]}"; do
-  if [[ -f "${ROOT}/${p}" ]]; then
-    WALLET_DAT="${ROOT}/${p}"
+  if [[ -f "${p}" ]]; then
+    WALLET_DAT="${p}"
     break
   fi
 done
