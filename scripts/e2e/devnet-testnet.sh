@@ -12,6 +12,8 @@ JUNOCASH_SEND_AMOUNT_A="${JUNO_E2E_JUNOCASH_SEND_AMOUNT_A:-1.0}"
 JUNOCASH_SEND_AMOUNT_B="${JUNO_E2E_JUNOCASH_SEND_AMOUNT_B:-0.5}"
 JUNOCASH_SEND_MINCONF="${JUNO_E2E_JUNOCASH_SEND_MINCONF:-}"
 JUNOCASH_SHIELD_LIMIT="${JUNO_E2E_JUNOCASH_SHIELD_LIMIT:-10}"
+JUNOCASH_TESTNET_PREFUND_WIF="${JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF:-}"
+JUNOCASH_TESTNET_PREFUND_AMOUNT="${JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT:-5.0}"
 
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
@@ -38,8 +40,10 @@ Environment (optional):
   JUNO_E2E_NET_AMOUNT_B            (default: 1000)
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_A  (default: 1.0)
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_B  (default: 0.5)
-  JUNO_E2E_JUNOCASH_SEND_MINCONF   (default: regtest=1, testnet=10)
+  JUNO_E2E_JUNOCASH_SEND_MINCONF   (default: regtest=1, testnet=1)
   JUNO_E2E_JUNOCASH_SHIELD_LIMIT   (default: 10)
+  JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF (optional: prefunded testnet transparent address private key in WIF format)
+  JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT (default: 5.0; amount to fund the user orchard UA from ANY_TADDR)
   JUNO_E2E_PRIORITY_LEVEL          (default: Medium)
   JUNO_E2E_SOLVER_KEYPAIR          (optional: funded Solana CLI JSON keypair path; skips airdrop)
   JUNO_E2E_SOLVER2_KEYPAIR         (optional: funded Solana CLI JSON keypair path for second solver)
@@ -51,7 +55,8 @@ Environment (optional):
   JUNO_E2E_CRP_SUBMIT_ENCLAVE_PORT (default: 5000)
 
 Notes:
-  - Starts a local JunoCash "testnet" Docker network (isolated, mined).
+  - For testnet deployments, the JunoCash Docker harness connects to public testnet.
+  - For reliable CI, provide JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF and fund it once; the run will fund the user UA from ANY_TADDR.
   - Runs both IEP directions (A and B) against the selected Solana devnet deployment.
   - Generates *real* zkVM->Groth16 receipt bundles (CUDA) and settles on Solana.
   - Uses CRP operator run-mode to finalize the Orchard roots (chain type + genesis verified).
@@ -426,7 +431,7 @@ if [[ -z "${JUNOCASH_SEND_MINCONF}" ]]; then
   if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
     JUNOCASH_SEND_MINCONF="1"
   else
-    JUNOCASH_SEND_MINCONF="10"
+    JUNOCASH_SEND_MINCONF="1"
   fi
 fi
 echo "junocash_send_minconf=${JUNOCASH_SEND_MINCONF}" >&2
@@ -777,13 +782,146 @@ sys.exit(2)
   return 1
 }
 
+wait_for_testnet_sync() {
+  local timeout_secs="${1:-7200}"
+  local poll_secs="${2:-5}"
+  local progress_secs="${3:-30}"
+  local elapsed=0
+  local info complete summary
+
+  if ! [[ "${timeout_secs}" =~ ^[0-9]+$ ]] || [[ "${timeout_secs}" -le 0 ]]; then
+    timeout_secs="7200"
+  fi
+  if ! [[ "${poll_secs}" =~ ^[0-9]+$ ]] || [[ "${poll_secs}" -le 0 ]]; then
+    poll_secs="5"
+  fi
+  if ! [[ "${progress_secs}" =~ ^[0-9]+$ ]] || [[ "${progress_secs}" -le 0 ]]; then
+    progress_secs="30"
+  fi
+
+  echo "waiting for testnet sync (initial_block_download_complete=true)..." >&2
+  while [[ "${elapsed}" -lt "${timeout_secs}" ]]; do
+    info="$(jcli getblockchaininfo 2>/dev/null || true)"
+    if [[ -n "${info}" ]]; then
+      complete="$(
+        python3 -c 'import json,sys
+try:
+  j=json.load(sys.stdin)
+except Exception:
+  print("0"); raise SystemExit(0)
+print("1" if j.get("initial_block_download_complete") else "0")
+' <<<"${info}"
+      )"
+      if [[ "${complete}" == "1" ]]; then
+        return 0
+      fi
+      if (( elapsed % progress_secs == 0 )); then
+        summary="$(
+          python3 -c 'import json,sys
+try: j=json.load(sys.stdin)
+except Exception: print(""); raise SystemExit(0)
+blocks=j.get("blocks"); headers=j.get("headers"); est=j.get("estimatedheight")
+print(f"blocks={blocks} headers={headers} estimatedheight={est}")
+' <<<"${info}"
+        )"
+        if [[ -n "${summary}" ]]; then
+          echo "sync_status ${summary} elapsed=${elapsed}s" >&2
+        fi
+      fi
+    fi
+    sleep "${poll_secs}"
+    elapsed="$((elapsed + poll_secs))"
+  done
+
+  echo "timed out waiting for testnet sync (elapsed=${elapsed}s timeout=${timeout_secs}s)" >&2
+  return 1
+}
+
+wait_for_tx_confirmations() {
+  local txid="$1"
+  local minconf="${2:-1}"
+  local wait_secs="${3:-1800}"
+  local raw conf blockhash header height
+
+  if [[ -z "${txid}" ]]; then
+    echo "wait_for_tx_confirmations: txid required" >&2
+    return 2
+  fi
+  if ! [[ "${minconf}" =~ ^[0-9]+$ ]] || [[ "${minconf}" -le 0 ]]; then
+    minconf="1"
+  fi
+  if ! [[ "${wait_secs}" =~ ^[0-9]+$ ]] || [[ "${wait_secs}" -le 0 ]]; then
+    wait_secs="1800"
+  fi
+
+  for _ in $(seq 1 "${wait_secs}"); do
+    raw="$(jcli getrawtransaction "${txid}" 1 2>/dev/null || true)"
+    if [[ -z "${raw}" ]]; then
+      sleep 1
+      continue
+    fi
+    read -r conf blockhash <<<"$(
+      python3 -c 'import json,sys
+j=json.load(sys.stdin)
+conf=int(j.get("confirmations") or 0)
+bh=(j.get("blockhash") or "").strip()
+print(conf, bh)
+' <<<"${raw}"
+    )"
+    if [[ -z "${conf}" || ! "${conf}" =~ ^[0-9]+$ ]]; then
+      sleep 1
+      continue
+    fi
+    if [[ "${conf}" -ge "${minconf}" ]]; then
+      if [[ -z "${blockhash}" ]]; then
+        echo "tx confirmed but missing blockhash: ${txid} (conf=${conf})" >&2
+        return 1
+      fi
+      header="$(jcli getblockheader "${blockhash}" 1 2>/dev/null || true)"
+      height="$(
+        python3 -c 'import json,sys
+j=json.load(sys.stdin)
+print(int(j.get("height") or 0))
+' <<<"${header}"
+      )"
+      if [[ -z "${height}" || ! "${height}" =~ ^[0-9]+$ || "${height}" -le 0 ]]; then
+        echo "failed to parse confirmed tx height: ${txid} (blockhash=${blockhash})" >&2
+        printf '%s\n' "${header}" >&2
+        return 1
+      fi
+      printf '%s\n' "${height}"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "timeout waiting for confirmations (txid=${txid} minconf=${minconf} wait_secs=${wait_secs})" >&2
+  return 1
+}
+
 echo "mining initial blocks for coinbase maturity..." >&2
-if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
-  jcli generate 110 >/dev/null
+use_prefund="false"
+if [[ "${JUNOCASH_CHAIN}" == "testnet" && -n "${JUNOCASH_TESTNET_PREFUND_WIF}" ]]; then
+  use_prefund="true"
+fi
+
+if [[ "${use_prefund}" == "true" ]]; then
+  echo "using prefunded testnet transparent key (skipping coinbase mining)..." >&2
+  sync_timeout="${JUNO_TESTNET_SYNC_TIMEOUT_SECS:-7200}"
+  sync_poll_secs="${JUNO_TESTNET_SYNC_POLL_SECS:-5}"
+  sync_progress_secs="${JUNO_TESTNET_SYNC_PROGRESS_SECS:-30}"
+  wait_for_testnet_sync "${sync_timeout}" "${sync_poll_secs}" "${sync_progress_secs}"
+
+  echo "importing prefunded testnet key (importprivkey + rescan)..." >&2
+  jcli importprivkey "${JUNOCASH_TESTNET_PREFUND_WIF}" "e2e-testnet-prefund" true >/dev/null
 else
-  mine_timeout="${JUNO_E2E_COINBASE_MINE_TIMEOUT_SECS:-3600}"
-  echo "coinbase_mine_timeout_secs=${mine_timeout}" >&2
-  JUNO_TESTNET_MINE_TIMEOUT_SECS="${mine_timeout}" scripts/junocash/testnet/mine.sh 110 >/dev/null
+  if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+    jcli generate 110 >/dev/null
+  else
+    mine_timeout="${JUNO_E2E_COINBASE_MINE_TIMEOUT_SECS:-3600}"
+    echo "coinbase_mine_timeout_secs=${mine_timeout}" >&2
+    JUNO_TESTNET_MINE_TIMEOUT_SECS="${mine_timeout}" scripts/junocash/testnet/mine.sh 110 >/dev/null
+  fi
 fi
 
 echo "creating JunoCash accounts + orchard UAs..." >&2
@@ -800,20 +938,50 @@ echo "user_ua=${USER_UA}" >&2
 echo "solver1_ua=${SOLVER1_UA}" >&2
 echo "solver2_ua=${SOLVER2_UA}" >&2
 
-echo "checking coinbase maturity (wallet balance)..." >&2
-min_mature_zat="${JUNO_E2E_MIN_MATURE_COINBASE_ZAT:-10000}" # 0.0001 JunoCash
-max_extra_blocks="${JUNO_E2E_MAX_COINBASE_MATURITY_BLOCKS:-2000}"
-step_blocks="${JUNO_E2E_COINBASE_MATURITY_STEP_BLOCKS:-50}"
-extra_mined=0
-no_funds_wait_secs="${JUNO_E2E_COINBASE_WALLET_WAIT_SECS:-180}"
-no_funds_waited=0
-while true; do
-  wallet_info="$(jcli getwalletinfo 2>&1)" || {
-    printf '%s\n' "${wallet_info}" >&2
-    exit 1
-  }
-  read -r mature_zat immature_zat <<<"$(
-    python3 -c 'import json,sys
+if [[ "${use_prefund}" == "true" ]]; then
+  echo "funding user orchard UA from ANY_TADDR (amount=${JUNOCASH_TESTNET_PREFUND_AMOUNT})..." >&2
+  _prefund_amount_ok="$(
+    python3 -c 'from decimal import Decimal; import sys
+s=sys.argv[1]
+try:
+  d=Decimal(s)
+except Exception:
+  raise SystemExit(1)
+if d<=0:
+  raise SystemExit(1)
+print(str(d))
+' "${JUNOCASH_TESTNET_PREFUND_AMOUNT}" 2>/dev/null || true
+  )"
+  if [[ -z "${_prefund_amount_ok}" ]]; then
+    echo "invalid JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT: ${JUNOCASH_TESTNET_PREFUND_AMOUNT}" >&2
+    exit 2
+  fi
+  recipients_prefund="$(python3 -c 'import json,sys
+addr=sys.argv[1]; amt=sys.argv[2]
+print(json.dumps([{"address":addr,"amount":float(amt)}]))
+' "${USER_UA}" "${_prefund_amount_ok}")"
+  opid_prefund="$(jcli z_sendmany "ANY_TADDR" "${recipients_prefund}" "${JUNOCASH_SEND_MINCONF}" | parse_junocash_opid)"
+  txid_prefund="$(wait_for_op_txid "${opid_prefund}" 1800)"
+  echo "txid_prefund=${txid_prefund}" >&2
+
+  echo "waiting for prefund tx confirmation..." >&2
+  prefund_height="$(wait_for_tx_confirmations "${txid_prefund}" 1 1800)"
+  echo "prefund_height=${prefund_height}" >&2
+else
+  echo "checking coinbase maturity (wallet balance)..." >&2
+  min_mature_zat="${JUNO_E2E_MIN_MATURE_COINBASE_ZAT:-10000}" # 0.0001 JunoCash
+  max_extra_blocks="${JUNO_E2E_MAX_COINBASE_MATURITY_BLOCKS:-2000}"
+  step_blocks="${JUNO_E2E_COINBASE_MATURITY_STEP_BLOCKS:-50}"
+  extra_mined=0
+  no_funds_wait_secs="${JUNO_E2E_COINBASE_WALLET_WAIT_SECS:-180}"
+  no_funds_waited=0
+  while true; do
+    wallet_info="$(jcli getwalletinfo 2>&1)" || {
+      printf '%s\n' "${wallet_info}" >&2
+      exit 1
+    }
+    read -r mature_zat immature_zat <<<"$(
+      python3 -c 'import json,sys
 from decimal import Decimal
 j=json.load(sys.stdin)
 def to_zat(v):
@@ -823,61 +991,69 @@ def to_zat(v):
   return int(d * Decimal(100000000))
 print(to_zat(j.get("balance")), to_zat(j.get("immature_balance")))
 ' <<<"${wallet_info}"
-  )"
-  if [[ -z "${mature_zat}" || -z "${immature_zat}" || ! "${mature_zat}" =~ ^[0-9]+$ || ! "${immature_zat}" =~ ^[0-9]+$ ]]; then
-    echo "failed to parse getwalletinfo balance fields" >&2
-    printf '%s\n' "${wallet_info}" >&2
-    exit 1
-  fi
-  echo "wallet_balance_zat=${mature_zat} wallet_immature_zat=${immature_zat}" >&2
-  if [[ "${mature_zat}" -ge "${min_mature_zat}" ]]; then
-    break
-  fi
-  if [[ "${mature_zat}" -eq 0 && "${immature_zat}" -eq 0 ]]; then
-    if [[ "${no_funds_waited}" -lt "${no_funds_wait_secs}" ]]; then
-      echo "wallet has no coinbase yet; waiting 5s for wallet to catch up..." >&2
-      sleep 5
-      no_funds_waited="$((no_funds_waited + 5))"
-      continue
+    )"
+    if [[ -z "${mature_zat}" || -z "${immature_zat}" || ! "${mature_zat}" =~ ^[0-9]+$ || ! "${immature_zat}" =~ ^[0-9]+$ ]]; then
+      echo "failed to parse getwalletinfo balance fields" >&2
+      printf '%s\n' "${wallet_info}" >&2
+      exit 1
     fi
-    echo "wallet still has no coinbase after waiting ${no_funds_waited}s" >&2
-    exit 1
-  fi
-  if [[ "${extra_mined}" -ge "${max_extra_blocks}" ]]; then
-    echo "coinbase did not mature after mining extra blocks (extra_mined=${extra_mined} max=${max_extra_blocks})" >&2
-    exit 1
-  fi
-  echo "coinbase still immature; mining ${step_blocks} more blocks..." >&2
+    echo "wallet_balance_zat=${mature_zat} wallet_immature_zat=${immature_zat}" >&2
+    if [[ "${mature_zat}" -ge "${min_mature_zat}" ]]; then
+      break
+    fi
+    if [[ "${mature_zat}" -eq 0 && "${immature_zat}" -eq 0 ]]; then
+      if [[ "${no_funds_waited}" -lt "${no_funds_wait_secs}" ]]; then
+        echo "wallet has no coinbase yet; waiting 5s for wallet to catch up..." >&2
+        sleep 5
+        no_funds_waited="$((no_funds_waited + 5))"
+        continue
+      fi
+      echo "wallet still has no coinbase after waiting ${no_funds_waited}s" >&2
+      exit 1
+    fi
+    if [[ "${extra_mined}" -ge "${max_extra_blocks}" ]]; then
+      echo "coinbase did not mature after mining extra blocks (extra_mined=${extra_mined} max=${max_extra_blocks})" >&2
+      exit 1
+    fi
+    echo "coinbase still immature; mining ${step_blocks} more blocks..." >&2
+    if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+      jcli generate "${step_blocks}" >/dev/null
+    else
+      scripts/junocash/testnet/mine.sh "${step_blocks}" >/dev/null
+    fi
+    extra_mined="$((extra_mined + step_blocks))"
+    no_funds_waited=0
+  done
+
+  echo "shielding coinbase to user orchard UA..." >&2
+  opid="$(jcli z_shieldcoinbase "*" "${USER_UA}" null "${JUNOCASH_SHIELD_LIMIT}" | parse_junocash_opid)"
+
+  echo "waiting for shield operation..." >&2
+  txid_shield="$(wait_for_op_txid "${opid}" 1800)"
+  echo "txid_shield=${txid_shield}" >&2
+
+  echo "waiting for shield tx confirmation..." >&2
   if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
-    jcli generate "${step_blocks}" >/dev/null
+    jcli generate 1 >/dev/null
   else
-    scripts/junocash/testnet/mine.sh "${step_blocks}" >/dev/null
+    shield_height="$(wait_for_tx_confirmations "${txid_shield}" 1 3600)"
+    echo "shield_height=${shield_height}" >&2
   fi
-  extra_mined="$((extra_mined + step_blocks))"
-  no_funds_waited=0
-done
-
-echo "shielding coinbase to user orchard UA..." >&2
-opid="$(jcli z_shieldcoinbase "*" "${USER_UA}" null "${JUNOCASH_SHIELD_LIMIT}" | parse_junocash_opid)"
-
-echo "waiting for shield operation..." >&2
-txid_shield="$(wait_for_op_txid "${opid}" 1800)"
-echo "txid_shield=${txid_shield}" >&2
-
-echo "mining block to include shield tx..." >&2
-if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
-  jcli generate 1 >/dev/null
-else
-  scripts/junocash/testnet/mine.sh 1 >/dev/null
 fi
 
-echo "waiting for orchard note to be spendable..." >&2
-for _ in $(seq 1 120); do
+echo "waiting for user orchard note to be spendable..." >&2
+user_note_ok="false"
+for _ in $(seq 1 1800); do
   if jcli z_listunspent 1 9999999 false | python3 -c "import json,sys; notes=json.load(sys.stdin); ok=any(n.get('pool')=='orchard' and n.get('spendable') and n.get('account')==${USER_ACCOUNT} for n in notes); sys.exit(0 if ok else 1)"; then
+    user_note_ok="true"
     break
   fi
   sleep 1
 done
+if [[ "${user_note_ok}" != "true" ]]; then
+  echo "user orchard note did not become spendable" >&2
+  exit 1
+fi
 
 DATA_DIR="${JUNOCASH_DATA_DIR}"
 wallet_candidates=(
@@ -976,19 +1152,21 @@ txid_a="$(wait_for_op_txid "${opid_a}" 1800)"
 echo "txid_a=${txid_a}" >&2
 
 height_a_before="$(jcli getblockcount)"
-echo "mining block to include payment tx (A)..." >&2
 if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+  echo "mining block to include payment tx (A)..." >&2
   jcli generate 1 >/dev/null
+  height_a_after="$(jcli getblockcount)"
+  PAYMENT_HEIGHT_A="${height_a_after}"
+  echo "payment_height_a=${PAYMENT_HEIGHT_A} (before=${height_a_before} after=${height_a_after})" >&2
 else
-  scripts/junocash/testnet/mine.sh 1 >/dev/null
+  echo "waiting for payment tx confirmation (A)..." >&2
+  PAYMENT_HEIGHT_A="$(wait_for_tx_confirmations "${txid_a}" 1 3600)"
+  echo "payment_height_a=${PAYMENT_HEIGHT_A} (before=${height_a_before})" >&2
 fi
-height_a_after="$(jcli getblockcount)"
-PAYMENT_HEIGHT_A="${height_a_after}"
-echo "payment_height_a=${PAYMENT_HEIGHT_A} (before=${height_a_before} after=${height_a_after})" >&2
 
   echo "waiting for solver orchard note to appear (A)..." >&2
   ACTION_A=""
-  for _ in $(seq 1 120); do
+  for _ in $(seq 1 1800); do
   ACTION_A="$(jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys
 txid=sys.argv[1].strip().lower()
 acct=int(sys.argv[2])
@@ -1035,11 +1213,11 @@ echo "orchard_root_a=${ORCHARD_ROOT_A}" >&2
 echo "receiver_tag_a=${RECEIVER_TAG_A}" >&2
 echo "junocash_amount_a_zat=${AMOUNT_A}" >&2
 
-echo "mining 1 extra block (reorg safety)..." >&2
+echo "waiting for +1 confirmation (reorg safety)..." >&2
 if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
   jcli generate 1 >/dev/null
 else
-  scripts/junocash/testnet/mine.sh 1 >/dev/null
+  wait_for_tx_confirmations "${txid_a}" 2 7200 >/dev/null
 fi
 
 echo "=== Direction B (Solana -> JunoCash) ===" >&2
@@ -1117,16 +1295,18 @@ if [[ "${SOLVER_B_UA}" != "${SOLVER_A_UA}" ]]; then
   opid_fund="$(jcli z_sendmany "${USER_UA}" "${recipients_fund}" "${JUNOCASH_SEND_MINCONF}" | parse_junocash_opid)"
   txid_fund="$(wait_for_op_txid "${opid_fund}" 1800)"
   echo "txid_fund_b=${txid_fund}" >&2
-  echo "mining block to include funding tx (B)..." >&2
   if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+    echo "mining block to include funding tx (B)..." >&2
     jcli generate 1 >/dev/null
   else
-    scripts/junocash/testnet/mine.sh 1 >/dev/null
+    echo "waiting for funding tx confirmation (B)..." >&2
+    fund_height_b="$(wait_for_tx_confirmations "${txid_fund}" 1 3600)"
+    echo "fund_height_b=${fund_height_b}" >&2
   fi
 
   echo "waiting for solver B orchard note to become spendable..." >&2
   FUND_ACTION_B=""
-  for _ in $(seq 1 120); do
+  for _ in $(seq 1 1800); do
     FUND_ACTION_B="$(jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys
 txid=sys.argv[1].strip().lower()
 acct=int(sys.argv[2])
@@ -1161,19 +1341,21 @@ txid_b="$(wait_for_op_txid "${opid_b}" 1800)"
 echo "txid_b=${txid_b}" >&2
 
 height_b_before="$(jcli getblockcount)"
-echo "mining block to include payment tx (B)..." >&2
 if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+  echo "mining block to include payment tx (B)..." >&2
   jcli generate 1 >/dev/null
+  height_b_after="$(jcli getblockcount)"
+  PAYMENT_HEIGHT_B="${height_b_after}"
+  echo "payment_height_b=${PAYMENT_HEIGHT_B} (before=${height_b_before} after=${height_b_after})" >&2
 else
-  scripts/junocash/testnet/mine.sh 1 >/dev/null
+  echo "waiting for payment tx confirmation (B)..." >&2
+  PAYMENT_HEIGHT_B="$(wait_for_tx_confirmations "${txid_b}" 1 3600)"
+  echo "payment_height_b=${PAYMENT_HEIGHT_B} (before=${height_b_before})" >&2
 fi
-height_b_after="$(jcli getblockcount)"
-PAYMENT_HEIGHT_B="${height_b_after}"
-echo "payment_height_b=${PAYMENT_HEIGHT_B} (before=${height_b_before} after=${height_b_after})" >&2
 
 echo "waiting for user orchard note to appear (B)..." >&2
 ACTION_B=""
-for _ in $(seq 1 120); do
+for _ in $(seq 1 1800); do
   ACTION_B="$(jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys
 txid=sys.argv[1].strip().lower()
 acct=int(sys.argv[2])
@@ -1221,11 +1403,11 @@ echo "orchard_root_b=${ORCHARD_ROOT_B}" >&2
 echo "receiver_tag_b=${RECEIVER_TAG_B}" >&2
 echo "junocash_amount_b_zat=${AMOUNT_B}" >&2
 
-echo "mining 1 extra block (reorg safety)..." >&2
+echo "waiting for +1 confirmation (reorg safety)..." >&2
 if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
   jcli generate 1 >/dev/null
 else
-  scripts/junocash/testnet/mine.sh 1 >/dev/null
+  wait_for_tx_confirmations "${txid_b}" 2 7200 >/dev/null
 fi
 
 echo "finalizing CRP checkpoints (run-mode, chain verified)..." >&2

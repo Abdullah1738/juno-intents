@@ -280,6 +280,7 @@ jobs:
         env:
           JUNO_E2E_SOLVER_KEYPAIR_JSON: ${{ secrets.JUNO_E2E_SOLVER_KEYPAIR_JSON }}
           JUNO_E2E_CREATOR_KEYPAIR_JSON: ${{ secrets.JUNO_E2E_CREATOR_KEYPAIR_JSON }}
+          JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF: ${{ secrets.JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF }}
         run: |
           set -euo pipefail
           aws --version
