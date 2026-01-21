@@ -970,6 +970,54 @@ PY
   fetch_remote_file "/var/log/juno-e2e/crp-monitor-report.json" "${LOCAL_OUT_DIR}/artifacts/${INSTANCE_ID}/crp-monitor-report.json" || true
 
   if [[ "${e2e_status}" != "done" || "${e2e_exit_code}" != "0" ]]; then
+    echo "downloading failure debug artifacts (best effort)..." >&2
+    max_bytes="${JUNO_E2E_DEBUG_ARTIFACT_MAX_BYTES:-20000}"
+    if ! [[ "${max_bytes}" =~ ^[0-9]+$ ]] || [[ "${max_bytes}" -le 0 ]]; then
+      max_bytes="20000"
+    fi
+
+    list_id="$(
+      ssm_send_script 600 <<'EOF'
+	set -eu
+d=/var/log/juno-e2e
+if [ -d "$d" ]; then
+  for f in \
+    "$d"/junocash-*.docker.inspect.json \
+    "$d"/junocash-*.docker.log* \
+    "$d"/junocash-opstatus-*.json \
+    "$d"/junocash-opresult-*.json; do
+    if [ -f "$f" ]; then
+      bytes="$(wc -c < "$f" | tr -d ' ')"
+      echo "file=$f size=$bytes"
+    fi
+  done
+fi
+EOF
+    )"
+    list_status="$(ssm_wait "${list_id}" 300)"
+    download_ssm_output "${list_id}" || true
+    if [[ "${list_status}" != "Success" ]]; then
+      echo "failed to list debug artifacts (status=${list_status})" >&2
+      ssm_stdout "${list_id}" >&2 || true
+      ssm_stderr "${list_id}" >&2 || true
+    else
+      out="$(ssm_stdout "${list_id}" | tr -d '\r' || true)"
+      if [[ -n "${out}" ]]; then
+        while IFS= read -r line; do
+          if [[ "${line}" =~ ^file=([^[:space:]]+)[[:space:]]size=([0-9]+)$ ]]; then
+            remote_path="${BASH_REMATCH[1]}"
+            size_bytes="${BASH_REMATCH[2]}"
+            base="$(basename "${remote_path}")"
+            if [[ "${size_bytes}" -le "${max_bytes}" ]]; then
+              fetch_remote_file "${remote_path}" "${LOCAL_OUT_DIR}/artifacts/${INSTANCE_ID}/debug/${base}" || true
+            else
+              echo "skipping large debug artifact: ${remote_path} size=${size_bytes} max=${max_bytes}" >&2
+            fi
+          fi
+        done <<<"${out}"
+      fi
+    fi
+
     echo "e2e failed (status=${e2e_status:-unknown} exit_code=${e2e_exit_code:-unknown})" >&2
     exit 1
   fi
