@@ -1046,7 +1046,7 @@ wait_for_testnet_sync() {
     progress_secs="30"
   fi
 
-  echo "waiting for testnet sync (initial_block_download_complete=true)..." >&2
+  echo "waiting for testnet sync (initial_block_download_complete=true, blocks==headers)..." >&2
   while [[ "${elapsed}" -lt "${timeout_secs}" ]]; do
     info="$(jcli getblockchaininfo 2>/dev/null || true)"
     if [[ -n "${info}" ]]; then
@@ -1056,7 +1056,25 @@ try:
   j=json.load(sys.stdin)
 except Exception:
   print("0"); raise SystemExit(0)
-print("1" if j.get("initial_block_download_complete") else "0")
+ibd=bool(j.get("initial_block_download_complete"))
+try:
+  blocks=int(j.get("blocks") or -1)
+except Exception:
+  blocks=-1
+headers_raw=j.get("headers", None)
+headers=-1
+if headers_raw is not None:
+  try:
+    headers=int(headers_raw)
+  except Exception:
+    headers=-1
+fully=j.get("fullyNotified", None)
+ok=ibd and blocks > 0
+if headers >= 0:
+  ok = ok and (blocks == headers)
+if fully is not None:
+  ok = ok and bool(fully)
+print("1" if ok else "0")
 ' <<<"${info}"
       )"
       if [[ "${complete}" == "1" ]]; then
