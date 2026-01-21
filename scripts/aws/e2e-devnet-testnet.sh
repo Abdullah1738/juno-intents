@@ -971,9 +971,9 @@ PY
 
   if [[ "${e2e_status}" != "done" || "${e2e_exit_code}" != "0" ]]; then
     echo "downloading failure debug artifacts (best effort)..." >&2
-    max_bytes="${JUNO_E2E_DEBUG_ARTIFACT_MAX_BYTES:-20000}"
+    max_bytes="${JUNO_E2E_DEBUG_ARTIFACT_MAX_BYTES:-60000}"
     if ! [[ "${max_bytes}" =~ ^[0-9]+$ ]] || [[ "${max_bytes}" -le 0 ]]; then
-      max_bytes="20000"
+      max_bytes="60000"
     fi
 
     list_id="$(
