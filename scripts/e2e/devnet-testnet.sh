@@ -791,10 +791,10 @@ junocash_dump_docker_logs() {
       log_base="${out_dir}/junocash-${name}.docker.log"
       if command -v gzip >/dev/null; then
         log_path="${log_base}.gz"
-        docker logs --tail 500 "${name}" 2>&1 | gzip -c >"${log_path}" || true
+        docker logs --tail 200 "${name}" 2>&1 | gzip -c >"${log_path}" || true
       else
         log_path="${log_base}"
-        docker logs --tail 500 "${name}" >"${log_path}" 2>&1 || true
+        docker logs --tail 200 "${name}" >"${log_path}" 2>&1 || true
       fi
 
       echo "junocash docker logs saved: ${log_path}" >&2
