@@ -125,7 +125,7 @@ jobs:
   e2e:
     needs: validate_base_deployment
     runs-on: runs-on=${{ github.run_id }}/family=g5.4xlarge/image=ubuntu22-gpu-x64/spot=false/extras=s3-cache
-    timeout-minutes: 180
+    timeout-minutes: 240
     outputs:
       v2_tee_artifacts_present: ${{ steps.v2_pack.outputs.tee_artifacts_present }}
       v2_tee_artifacts_tgz_b64: ${{ steps.v2_pack.outputs.tee_artifacts_tgz_b64 }}
