@@ -72,4 +72,10 @@ func TestE2EDevnetTestnetScriptWaitForOpTxidHandlesTransientNonJSON(t *testing.T
 	if !bytes.Contains(src, []byte(`z_getoperationresult returned non-JSON`)) {
 		t.Fatalf("script missing non-JSON handling message in wait_for_op_txid")
 	}
+	if !bytes.Contains(src, []byte(`z_getoperationstatus`)) {
+		t.Fatalf("script missing z_getoperationstatus diagnostics for wait_for_op_txid")
+	}
+	if !bytes.Contains(src, []byte(`wait_for_wallet_scan_complete`)) {
+		t.Fatalf("script missing wallet scan wait helper")
+	}
 }

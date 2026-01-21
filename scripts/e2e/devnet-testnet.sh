@@ -760,21 +760,164 @@ select_solver_by_pubkey() {
   esac
 }
 
+junocash_dump_docker_logs() {
+  if ! command -v docker >/dev/null; then
+    return 0
+  fi
+
+  local names=()
+  if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+    names+=("${JUNO_REGTEST_CONTAINER_NAME:-juno-regtest}")
+  else
+    names+=("${JUNO_TESTNET_CONTAINER_NAME_A:-juno-testnet-a}")
+    names+=("${JUNO_TESTNET_CONTAINER_NAME_B:-juno-testnet-b}")
+  fi
+
+  for name in "${names[@]}"; do
+    if docker ps -a --format '{{.Names}}' | grep -qx "${name}"; then
+      if ! docker ps --format '{{.Names}}' | grep -qx "${name}"; then
+        echo "junocash container exited: ${name}" >&2
+      fi
+      echo "---- docker logs (${name}) ----" >&2
+      docker logs --tail 200 "${name}" >&2 || true
+    fi
+  done
+}
+
+junocash_op_status_summary() {
+  local opid="$1"
+  local st
+  st="$(jcli z_getoperationstatus "[\"${opid}\"]" 2>/dev/null || true)"
+  if [[ -z "${st}" ]]; then
+    return 0
+  fi
+  python3 - "${opid}" <<'PY' <<<"${st}"
+import json,sys
+opid=sys.argv[1]
+raw=sys.stdin.read()
+try:
+  items=json.loads(raw)
+except Exception:
+  print(f"op_status=unparseable opid={opid}")
+  raise SystemExit(0)
+it=(items[0] if isinstance(items, list) and items else {}) or {}
+status=str(it.get("status") or "").strip()
+method=str(it.get("method") or "").strip()
+msg=""
+err=it.get("error")
+if isinstance(err, dict):
+  msg=str(err.get("message") or err.get("code") or "").strip()
+elif err is not None:
+  msg=str(err).strip()
+extra=""
+if msg:
+  extra=" message="+msg.replace("\\n"," ")[:200]
+print(f"op_status={status or 'unknown'} method={method or 'unknown'} opid={opid}{extra}")
+PY
+}
+
+wait_for_wallet_scan_complete() {
+  local wait_secs="${1:-3600}"
+  local progress_secs="${2:-30}"
+  local elapsed=0
+  local info summary done
+
+  if ! [[ "${wait_secs}" =~ ^[0-9]+$ ]] || [[ "${wait_secs}" -le 0 ]]; then
+    wait_secs="3600"
+  fi
+  if ! [[ "${progress_secs}" =~ ^[0-9]+$ ]] || [[ "${progress_secs}" -le 0 ]]; then
+    progress_secs="30"
+  fi
+
+  echo "waiting for wallet scan to complete..." >&2
+  while [[ "${elapsed}" -lt "${wait_secs}" ]]; do
+    info="$(jcli getwalletinfo 2>/dev/null || true)"
+    if [[ -n "${info}" ]]; then
+      read -r done summary <<<"$(
+        python3 -c 'import json,sys
+try:
+  j=json.load(sys.stdin)
+except Exception:
+  print("0", "unparseable")
+  raise SystemExit(0)
+sc=j.get("scanning", None)
+if sc is False or sc is None:
+  print("1", "done")
+  raise SystemExit(0)
+if isinstance(sc, dict):
+  prog=sc.get("progress")
+  dur=sc.get("duration")
+  parts=[]
+  if prog is not None:
+    try:
+      parts.append(f"progress={float(prog):.4f}")
+    except Exception:
+      parts.append(f"progress={prog}")
+  if dur is not None:
+    parts.append(f"duration={dur}")
+  msg="scanning " + (" ".join(parts) if parts else "active")
+  print("0", msg.replace(" ", "_"))
+  raise SystemExit(0)
+print("0", "scanning")
+' <<<"${info}"
+      )"
+      if [[ "${done}" == "1" ]]; then
+        return 0
+      fi
+      if (( elapsed % progress_secs == 0 )); then
+        echo "wallet_scan ${summary} elapsed=${elapsed}s" >&2
+      fi
+    fi
+    sleep 1
+    elapsed="$((elapsed + 1))"
+  done
+
+  echo "wallet scan did not complete (elapsed=${elapsed}s timeout=${wait_secs}s)" >&2
+  printf '%s\n' "${info}" >&2
+  return 1
+}
+
 wait_for_op_txid() {
   local opid="$1"
   local wait_secs="${2:-1800}"
 
   local last_nonjson=""
   local nonjson_count=0
-  for _ in $(seq 1 "${wait_secs}"); do
+  local empty_count=0
+  local i=0
+  for i in $(seq 1 "${wait_secs}"); do
     res="$(jcli z_getoperationresult "[\"${opid}\"]" 2>/dev/null || true)"
     compact="$(printf '%s' "${res}" | tr -d ' \n\r\t')"
     if [[ -z "${compact}" ]]; then
       # Treat empty output as transient RPC failure.
+      empty_count="$((empty_count + 1))"
+      if (( empty_count == 30 || empty_count % 120 == 0 )); then
+        echo "z_getoperationresult returned empty output (opid=${opid} count=${empty_count})" >&2
+        junocash_op_status_summary "${opid}" >&2 || true
+        if command -v docker >/dev/null; then
+          if [[ "${JUNOCASH_CHAIN}" == "testnet" ]]; then
+            name_a="${JUNO_TESTNET_CONTAINER_NAME_A:-juno-testnet-a}"
+            if docker ps -a --format '{{.Names}}' | grep -qx "${name_a}" && ! docker ps --format '{{.Names}}' | grep -qx "${name_a}"; then
+              junocash_dump_docker_logs
+              return 1
+            fi
+          else
+            name="${JUNO_REGTEST_CONTAINER_NAME:-juno-regtest}"
+            if docker ps -a --format '{{.Names}}' | grep -qx "${name}" && ! docker ps --format '{{.Names}}' | grep -qx "${name}"; then
+              junocash_dump_docker_logs
+              return 1
+            fi
+          fi
+        fi
+      fi
       sleep 1
       continue
     fi
+    empty_count=0
     if [[ "${compact}" == "[]" ]]; then
+      if (( i == 1 || i % 120 == 0 )); then
+        junocash_op_status_summary "${opid}" >&2 || true
+      fi
       sleep 1
       continue
     fi
@@ -826,6 +969,8 @@ sys.exit(2)
   done
 
   echo "operation did not complete (opid=${opid})" >&2
+  junocash_op_status_summary "${opid}" >&2 || true
+  junocash_dump_docker_logs || true
   if [[ -n "${last_nonjson}" ]]; then
     echo "last non-JSON z_getoperationresult output (opid=${opid}):" >&2
     printf '%s\n' "${last_nonjson}" >&2
@@ -1055,7 +1200,8 @@ print(json.dumps([{"address":addr,"amount":float(amt)}]))
   echo "txid_prefund=${txid_prefund}" >&2
 
   echo "waiting for prefund tx confirmation..." >&2
-  prefund_height="$(wait_for_tx_confirmations "${txid_prefund}" 1 1800)"
+  scripts/junocash/testnet/mine.sh 1 >/dev/null
+  prefund_height="$(wait_for_tx_confirmations "${txid_prefund}" 1 600)"
   echo "prefund_height=${prefund_height}" >&2
 elif [[ "${use_wallet_prefund}" == "true" ]]; then
   echo "prefunded wallet selected; skipping coinbase shielding" >&2
@@ -1128,7 +1274,8 @@ print(to_zat(j.get("balance")), to_zat(j.get("immature_balance")))
   if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
     jcli generate 1 >/dev/null
   else
-    shield_height="$(wait_for_tx_confirmations "${txid_shield}" 1 3600)"
+    scripts/junocash/testnet/mine.sh 1 >/dev/null
+    shield_height="$(wait_for_tx_confirmations "${txid_shield}" 1 600)"
     echo "shield_height=${shield_height}" >&2
   fi
 fi
@@ -1145,6 +1292,11 @@ done
 if [[ "${user_note_ok}" != "true" ]]; then
   echo "user orchard note did not become spendable" >&2
   exit 1
+fi
+
+if [[ "${JUNOCASH_CHAIN}" == "testnet" && ( "${use_wallet_prefund}" == "true" || "${use_taddr_prefund}" == "true" ) ]]; then
+  wallet_scan_timeout="${JUNO_E2E_WALLET_SCAN_TIMEOUT_SECS:-3600}"
+  wait_for_wallet_scan_complete "${wallet_scan_timeout}" 30
 fi
 
 DATA_DIR="${JUNOCASH_DATA_DIR}"
@@ -1254,8 +1406,9 @@ if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
   PAYMENT_HEIGHT_A="${height_a_after}"
   echo "payment_height_a=${PAYMENT_HEIGHT_A} (before=${height_a_before} after=${height_a_after})" >&2
 else
-  echo "waiting for payment tx confirmation (A)..." >&2
-  PAYMENT_HEIGHT_A="$(wait_for_tx_confirmations "${txid_a}" 1 3600)"
+  echo "mining block to include payment tx (A)..." >&2
+  scripts/junocash/testnet/mine.sh 1 >/dev/null
+  PAYMENT_HEIGHT_A="$(wait_for_tx_confirmations "${txid_a}" 1 600)"
   echo "payment_height_a=${PAYMENT_HEIGHT_A} (before=${height_a_before})" >&2
 fi
 
@@ -1312,7 +1465,8 @@ echo "waiting for +1 confirmation (reorg safety)..." >&2
 if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
   jcli generate 1 >/dev/null
 else
-  wait_for_tx_confirmations "${txid_a}" 2 7200 >/dev/null
+  scripts/junocash/testnet/mine.sh 1 >/dev/null
+  wait_for_tx_confirmations "${txid_a}" 2 600 >/dev/null
 fi
 
 echo "=== Direction B (Solana -> JunoCash) ===" >&2
@@ -1394,8 +1548,9 @@ if [[ "${SOLVER_B_UA}" != "${SOLVER_A_UA}" ]]; then
     echo "mining block to include funding tx (B)..." >&2
     jcli generate 1 >/dev/null
   else
-    echo "waiting for funding tx confirmation (B)..." >&2
-    fund_height_b="$(wait_for_tx_confirmations "${txid_fund}" 1 3600)"
+    echo "mining block to include funding tx (B)..." >&2
+    scripts/junocash/testnet/mine.sh 1 >/dev/null
+    fund_height_b="$(wait_for_tx_confirmations "${txid_fund}" 1 600)"
     echo "fund_height_b=${fund_height_b}" >&2
   fi
 
@@ -1443,8 +1598,9 @@ if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
   PAYMENT_HEIGHT_B="${height_b_after}"
   echo "payment_height_b=${PAYMENT_HEIGHT_B} (before=${height_b_before} after=${height_b_after})" >&2
 else
-  echo "waiting for payment tx confirmation (B)..." >&2
-  PAYMENT_HEIGHT_B="$(wait_for_tx_confirmations "${txid_b}" 1 3600)"
+  echo "mining block to include payment tx (B)..." >&2
+  scripts/junocash/testnet/mine.sh 1 >/dev/null
+  PAYMENT_HEIGHT_B="$(wait_for_tx_confirmations "${txid_b}" 1 600)"
   echo "payment_height_b=${PAYMENT_HEIGHT_B} (before=${height_b_before})" >&2
 fi
 
@@ -1502,7 +1658,8 @@ echo "waiting for +1 confirmation (reorg safety)..." >&2
 if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
   jcli generate 1 >/dev/null
 else
-  wait_for_tx_confirmations "${txid_b}" 2 7200 >/dev/null
+  scripts/junocash/testnet/mine.sh 1 >/dev/null
+  wait_for_tx_confirmations "${txid_b}" 2 600 >/dev/null
 fi
 
 echo "finalizing CRP checkpoints (run-mode, chain verified)..." >&2
