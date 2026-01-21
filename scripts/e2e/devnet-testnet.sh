@@ -1149,16 +1149,27 @@ print(conf, bh)
       header="$(jcli getblockheader "${blockhash}" 1 2>/dev/null || true)"
       height="$(
         python3 -c 'import json,sys
-j=json.load(sys.stdin)
-print(int(j.get("height") or 0))
+raw=sys.stdin.read()
+try:
+  j=json.loads(raw)
+except Exception:
+  print("")
+  raise SystemExit(0)
+h=j.get("height", None)
+try:
+  h_int=int(h)
+except Exception:
+  print("")
+  raise SystemExit(0)
+print(h_int if h_int>0 else "")
 ' <<<"${header}"
       )"
-      if [[ -z "${height}" || ! "${height}" =~ ^[0-9]+$ || "${height}" -le 0 ]]; then
-        echo "failed to parse confirmed tx height: ${txid} (blockhash=${blockhash})" >&2
-        printf '%s\n' "${header}" >&2
-        return 1
+      if [[ -z "${height}" ]]; then
+        echo "tx confirmed but failed to parse block height: ${txid} (blockhash=${blockhash})" >&2
+        printf '%s\n' "${header}" | head -n 20 >&2 || true
+      else
+        printf '%s\n' "${height}"
       fi
-      printf '%s\n' "${height}"
       return 0
     fi
     sleep 1

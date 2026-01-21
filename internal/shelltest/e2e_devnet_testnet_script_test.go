@@ -151,3 +151,22 @@ func TestE2EDevnetTestnetScriptWaitForTestnetSyncRequiresHeadersMatch(t *testing
 		t.Fatalf("script missing fullyNotified sync requirement")
 	}
 }
+
+func TestE2EDevnetTestnetScriptWaitForTxConfirmationsHandlesBadBlockHeaders(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	if !bytes.Contains(src, []byte(`tx confirmed but failed to parse block height`)) {
+		t.Fatalf("script missing blockheader parse failure warning")
+	}
+	if !bytes.Contains(src, []byte(`json.loads(raw)`)) {
+		t.Fatalf("script missing safe blockheader JSON parsing")
+	}
+}
