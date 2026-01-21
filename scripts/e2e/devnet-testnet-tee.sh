@@ -309,17 +309,26 @@ if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
     echo "solver airdrop failed: ${SOLVER_PUBKEY}" >&2
     exit 1
   }
-else
-  if ! solver_bal="$(balance_lamports "${SOLVER_PUBKEY}")"; then
-    exit 1
-  fi
-  if [[ "${solver_bal}" -lt "${min_solver_lamports}" ]]; then
-    echo "solver needs funding (pubkey=${SOLVER_PUBKEY} lamports=${solver_bal} min=${min_solver_lamports})" >&2
-    exit 1
-  fi
-fi
+	else
+	  if ! solver_bal="$(balance_lamports "${SOLVER_PUBKEY}")"; then
+	    exit 1
+	  fi
+	  if [[ "${solver_bal}" -lt "${min_solver_lamports}" ]]; then
+	    echo "solver needs funding (pubkey=${SOLVER_PUBKEY} lamports=${solver_bal} min=${min_solver_lamports})" >&2
+	    echo "attempting solana devnet airdrop top-up..." >&2
+	    topup_sol="${JUNO_E2E_SOLVER_TOPUP_SOL:-1}"
+	    airdrop "${SOLVER_PUBKEY}" "${topup_sol}" "${SOLVER_KEYPAIR}" || true
+	    if ! solver_bal="$(balance_lamports "${SOLVER_PUBKEY}")"; then
+	      exit 1
+	    fi
+	  fi
+	  if [[ "${solver_bal}" -lt "${min_solver_lamports}" ]]; then
+	    echo "solver still needs funding (pubkey=${SOLVER_PUBKEY} lamports=${solver_bal} min=${min_solver_lamports})" >&2
+	    exit 1
+	  fi
+	fi
 
-if ! creator_bal="$(balance_lamports "${CREATOR_PUBKEY}")"; then
+	if ! creator_bal="$(balance_lamports "${CREATOR_PUBKEY}")"; then
   exit 1
 fi
 if [[ "${creator_bal}" -lt "${min_creator_lamports}" ]]; then

@@ -164,6 +164,19 @@ print(m.group(1) if m else "")
   return 1
 }
 
+airdrop() {
+  local pubkey="$1"
+  local sol="$2"
+  local kp="$3"
+  for i in $(seq 1 30); do
+    if solana -u "${RPC_URL}" airdrop "${sol}" "${pubkey}" --keypair "${kp}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "${i}"
+  done
+  return 1
+}
+
 min_solver_lamports="${JUNO_E2E_MIN_SOLVER_LAMPORTS:-3000000000}"   # 3 SOL
 min_creator_lamports="${JUNO_E2E_MIN_CREATOR_LAMPORTS:-500000000}" # 0.5 SOL
 
@@ -176,7 +189,16 @@ if ! creator_bal="$(balance_lamports "${CREATOR_PUBKEY}")"; then
 fi
 if [[ ! "${solver_bal}" =~ ^[0-9]+$ || "${solver_bal}" -lt "${min_solver_lamports}" ]]; then
   echo "solver needs funding (pubkey=${SOLVER_PUBKEY} lamports=${solver_bal:-unknown} min=${min_solver_lamports})" >&2
-  exit 1
+  echo "attempting solana devnet airdrop top-up..." >&2
+  topup_sol="${JUNO_E2E_SOLVER_TOPUP_SOL:-1}"
+  airdrop "${SOLVER_PUBKEY}" "${topup_sol}" "${SOLVER_KEYPAIR}" || true
+  if ! solver_bal="$(balance_lamports "${SOLVER_PUBKEY}")"; then
+    exit 1
+  fi
+  if [[ ! "${solver_bal}" =~ ^[0-9]+$ || "${solver_bal}" -lt "${min_solver_lamports}" ]]; then
+    echo "solver still needs funding (pubkey=${SOLVER_PUBKEY} lamports=${solver_bal:-unknown} min=${min_solver_lamports})" >&2
+    exit 1
+  fi
 fi
 if [[ "${creator_bal}" -lt "${min_creator_lamports}" ]]; then
   echo "funding creator from solver..." >&2
