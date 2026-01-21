@@ -65,10 +65,10 @@ func TestAwsE2EDevnetTestnetScriptFetchRemoteFileParsesB64(t *testing.T) {
 		t.Fatalf("read script: %v", err)
 	}
 
-	if !bytes.Contains(src, []byte("sed -nE 's/^b64=(.+)$/\\1/p'")) {
+	if !bytes.Contains(src, []byte("sed -nE 's/^b64=(.*)$/\\1/p'")) {
 		t.Fatalf("script missing b64 sed backreference extraction")
 	}
-	if bytes.Contains(src, []byte("sed -nE 's/^b64=(.+)$/\\\\1/p'")) {
+	if bytes.Contains(src, []byte("sed -nE 's/^b64=(.*)$/\\\\1/p'")) {
 		t.Fatalf("script contains incorrect b64 sed extraction (\\\\1)")
 	}
 	if !bytes.Contains(src, []byte("base64.b64decode(b64.encode(\"ascii\"), validate=True)")) {

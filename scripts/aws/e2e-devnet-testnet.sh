@@ -938,12 +938,12 @@ EOF
       return 1
     fi
 
-    b64="$(printf '%s\n' "${out}" | sed -nE 's/^b64=(.+)$/\1/p' | tail -n 1)"
-    if [[ -z "${b64}" ]]; then
+    if ! printf '%s\n' "${out}" | grep -q '^b64='; then
       echo "missing b64 payload for ${remote_path}" >&2
       printf '%s\n' "${out}" | tail -n 40 >&2 || true
       return 1
     fi
+    b64="$(printf '%s\n' "${out}" | sed -nE 's/^b64=(.*)$/\1/p' | tail -n 1)"
 
     mkdir -p "$(dirname "${local_path}")"
     if ! python3 - "${local_path}" "${b64}" <<'PY'
