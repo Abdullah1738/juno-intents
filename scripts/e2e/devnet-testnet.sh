@@ -765,7 +765,14 @@ junocash_dump_docker_logs() {
     return 0
   fi
 
+  local out_dir="${E2E_ARTIFACT_DIR:-${WORKDIR}}"
+  if [[ -z "${out_dir}" ]]; then
+    return 0
+  fi
+  mkdir -p "${out_dir}" >/dev/null 2>&1 || true
+
   local names=()
+  local inspect_path log_base log_path
   if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
     names+=("${JUNO_REGTEST_CONTAINER_NAME:-juno-regtest}")
   else
@@ -778,8 +785,20 @@ junocash_dump_docker_logs() {
       if ! docker ps --format '{{.Names}}' | grep -qx "${name}"; then
         echo "junocash container exited: ${name}" >&2
       fi
-      echo "---- docker logs (${name}) ----" >&2
-      docker logs --tail 200 "${name}" >&2 || true
+      inspect_path="${out_dir}/junocash-${name}.docker.inspect.json"
+      docker inspect "${name}" >"${inspect_path}" 2>/dev/null || true
+
+      log_base="${out_dir}/junocash-${name}.docker.log"
+      if command -v gzip >/dev/null; then
+        log_path="${log_base}.gz"
+        docker logs --tail 2000 "${name}" 2>&1 | gzip -c >"${log_path}" || true
+      else
+        log_path="${log_base}"
+        docker logs --tail 2000 "${name}" >"${log_path}" 2>&1 || true
+      fi
+
+      echo "junocash docker logs saved: ${log_path}" >&2
+      echo "junocash docker inspect saved: ${inspect_path}" >&2
     fi
   done
 }
@@ -816,11 +835,26 @@ print(f"op_status={status or 'unknown'} method={method or 'unknown'} opid={opid}
 PY
 }
 
+junocash_save_op_debug() {
+  local opid="$1"
+  local out_dir="${E2E_ARTIFACT_DIR:-${WORKDIR}}"
+  if [[ -z "${out_dir}" ]]; then
+    return 0
+  fi
+  mkdir -p "${out_dir}" >/dev/null 2>&1 || true
+
+  local safe
+  safe="$(printf '%s' "${opid}" | tr -cs 'a-zA-Z0-9._-' '_' )"
+  jcli z_getoperationstatus "[\"${opid}\"]" >"${out_dir}/junocash-opstatus-${safe}.json" 2>/dev/null || true
+  jcli z_getoperationresult "[\"${opid}\"]" >"${out_dir}/junocash-opresult-${safe}.json" 2>/dev/null || true
+}
+
 wait_for_wallet_scan_complete() {
   local wait_secs="${1:-3600}"
   local progress_secs="${2:-30}"
   local elapsed=0
   local info summary done
+  local err_short
 
   if ! [[ "${wait_secs}" =~ ^[0-9]+$ ]] || [[ "${wait_secs}" -le 0 ]]; then
     wait_secs="3600"
@@ -831,8 +865,19 @@ wait_for_wallet_scan_complete() {
 
   echo "waiting for wallet scan to complete..." >&2
   while [[ "${elapsed}" -lt "${wait_secs}" ]]; do
-    info="$(jcli getwalletinfo 2>/dev/null || true)"
+    info="$(jcli getwalletinfo 2>&1 || true)"
     if [[ -n "${info}" ]]; then
+      if [[ "${info}" == error\ code:* ]]; then
+        if (( elapsed % progress_secs == 0 )); then
+          err_short="$(printf '%s\n' "${info}" | head -n 3 | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g' | sed -E 's/ $//')"
+          if [[ -n "${err_short}" ]]; then
+            echo "wallet_scan rpc_error=$(printf '%s' "${err_short}" | tr ' ' '_') elapsed=${elapsed}s" >&2
+          fi
+        fi
+        sleep 1
+        elapsed="$((elapsed + 1))"
+        continue
+      fi
       read -r done summary <<<"$(
         python3 -c 'import json,sys
 try:
@@ -898,12 +943,14 @@ wait_for_op_txid() {
           if [[ "${JUNOCASH_CHAIN}" == "testnet" ]]; then
             name_a="${JUNO_TESTNET_CONTAINER_NAME_A:-juno-testnet-a}"
             if docker ps -a --format '{{.Names}}' | grep -qx "${name_a}" && ! docker ps --format '{{.Names}}' | grep -qx "${name_a}"; then
+              junocash_save_op_debug "${opid}" || true
               junocash_dump_docker_logs
               return 1
             fi
           else
             name="${JUNO_REGTEST_CONTAINER_NAME:-juno-regtest}"
             if docker ps -a --format '{{.Names}}' | grep -qx "${name}" && ! docker ps --format '{{.Names}}' | grep -qx "${name}"; then
+              junocash_save_op_debug "${opid}" || true
               junocash_dump_docker_logs
               return 1
             fi
@@ -955,21 +1002,25 @@ sys.exit(2)
       if [[ "${ec}" == "2" ]]; then
         echo "operation failed: ${parsed} (opid=${opid})" >&2
         printf '%s\n' "${res}" >&2
+        junocash_save_op_debug "${opid}" || true
         return 1
       fi
       if [[ "${ec}" == "3" ]]; then
         echo "operation completed without txid (opid=${opid})" >&2
         printf '%s\n' "${res}" >&2
+        junocash_save_op_debug "${opid}" || true
         return 1
       fi
       echo "unexpected z_getoperationresult parser exit code: ${ec} (opid=${opid})" >&2
       printf '%s\n' "${res}" >&2
+      junocash_save_op_debug "${opid}" || true
       return 1
     fi
   done
 
   echo "operation did not complete (opid=${opid})" >&2
   junocash_op_status_summary "${opid}" >&2 || true
+  junocash_save_op_debug "${opid}" || true
   junocash_dump_docker_logs || true
   if [[ -n "${last_nonjson}" ]]; then
     echo "last non-JSON z_getoperationresult output (opid=${opid}):" >&2
@@ -1115,6 +1166,8 @@ if [[ "${use_wallet_prefund}" == "true" ]]; then
   sync_poll_secs="${JUNO_TESTNET_SYNC_POLL_SECS:-5}"
   sync_progress_secs="${JUNO_TESTNET_SYNC_PROGRESS_SECS:-30}"
   wait_for_testnet_sync "${sync_timeout}" "${sync_poll_secs}" "${sync_progress_secs}"
+  wallet_scan_timeout="${JUNO_E2E_WALLET_SCAN_TIMEOUT_SECS:-3600}"
+  wait_for_wallet_scan_complete "${wallet_scan_timeout}" 30
 elif [[ "${use_taddr_prefund}" == "true" ]]; then
   echo "using prefunded testnet transparent key (skipping coinbase mining)..." >&2
   sync_timeout="${JUNO_TESTNET_SYNC_TIMEOUT_SECS:-7200}"
@@ -1124,6 +1177,8 @@ elif [[ "${use_taddr_prefund}" == "true" ]]; then
 
   echo "importing prefunded testnet key (importprivkey + rescan)..." >&2
   jcli importprivkey "${JUNOCASH_TESTNET_PREFUND_WIF}" "e2e-testnet-prefund" true >/dev/null
+  wallet_scan_timeout="${JUNO_E2E_WALLET_SCAN_TIMEOUT_SECS:-3600}"
+  wait_for_wallet_scan_complete "${wallet_scan_timeout}" 30
 else
   echo "mining initial blocks for coinbase maturity..." >&2
   if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
@@ -1282,21 +1337,51 @@ fi
 
 echo "waiting for user orchard note to be spendable..." >&2
 user_note_ok="false"
-for _ in $(seq 1 1800); do
-  if jcli z_listunspent 1 9999999 false | python3 -c "import json,sys; notes=json.load(sys.stdin); ok=any(n.get('pool')=='orchard' and n.get('spendable') and n.get('account')==${USER_ACCOUNT} for n in notes); sys.exit(0 if ok else 1)"; then
+note_wait_secs="${JUNO_E2E_USER_NOTE_WAIT_SECS:-1800}"
+note_progress_secs="${JUNO_E2E_USER_NOTE_PROGRESS_SECS:-30}"
+if ! [[ "${note_wait_secs}" =~ ^[0-9]+$ ]] || [[ "${note_wait_secs}" -le 0 ]]; then
+  note_wait_secs="1800"
+fi
+if ! [[ "${note_progress_secs}" =~ ^[0-9]+$ ]] || [[ "${note_progress_secs}" -le 0 ]]; then
+  note_progress_secs="30"
+fi
+user_note_elapsed=0
+last_unspent=""
+while [[ "${user_note_elapsed}" -lt "${note_wait_secs}" ]]; do
+  unspent="$(jcli z_listunspent 1 9999999 false 2>&1 || true)"
+  last_unspent="${unspent}"
+  if python3 -c "import json,sys
+try:
+  notes=json.load(sys.stdin)
+except Exception:
+  raise SystemExit(1)
+acct=int(\"${USER_ACCOUNT}\")
+ok=any(n.get('pool')=='orchard' and n.get('spendable') and n.get('account')==acct for n in notes)
+raise SystemExit(0 if ok else 1)
+" <<<"${unspent}"; then
     user_note_ok="true"
     break
   fi
+  if (( user_note_elapsed % note_progress_secs == 0 )); then
+    if [[ "${unspent}" == error\ code:* ]]; then
+      err_short="$(printf '%s\n' "${unspent}" | head -n 3 | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g' | sed -E 's/ $//')"
+      if [[ -n "${err_short}" ]]; then
+        echo "user_note_wait rpc_error=$(printf '%s' "${err_short}" | tr ' ' '_') elapsed=${user_note_elapsed}s" >&2
+      fi
+    else
+      echo "user_note_wait elapsed=${user_note_elapsed}s" >&2
+    fi
+  fi
   sleep 1
+  user_note_elapsed="$((user_note_elapsed + 1))"
 done
 if [[ "${user_note_ok}" != "true" ]]; then
   echo "user orchard note did not become spendable" >&2
+  if [[ -n "${last_unspent}" ]]; then
+    printf '%s\n' "${last_unspent}" | head -n 20 >&2 || true
+  fi
+  junocash_dump_docker_logs || true
   exit 1
-fi
-
-if [[ "${JUNOCASH_CHAIN}" == "testnet" && ( "${use_wallet_prefund}" == "true" || "${use_taddr_prefund}" == "true" ) ]]; then
-  wallet_scan_timeout="${JUNO_E2E_WALLET_SCAN_TIMEOUT_SECS:-3600}"
-  wait_for_wallet_scan_complete "${wallet_scan_timeout}" 30
 fi
 
 DATA_DIR="${JUNOCASH_DATA_DIR}"
@@ -1324,6 +1409,7 @@ if [[ -z "${WALLET_DAT}" ]]; then
 fi
 echo "wallet_dat=${WALLET_DAT}" >&2
 
+set_stage "direction_a"
 echo "=== Direction A (JunoCash -> Solana) ===" >&2
 
 create_intent_a_raw=""
@@ -1469,6 +1555,7 @@ else
   wait_for_tx_confirmations "${txid_a}" 2 600 >/dev/null
 fi
 
+set_stage "direction_b"
 echo "=== Direction B (Solana -> JunoCash) ===" >&2
 
 create_intent_b_raw=""
@@ -1817,6 +1904,7 @@ print(str(amt))
 ' "${token_account}" <<<"${out}"
 }
 
+set_stage "verify_balances"
 echo "verifying balances..." >&2
 creator_balance="$(spl_balance_amount "${CREATOR_TA}")"
 solver_balance="$(spl_balance_amount "${SOLVER_TA}")"
@@ -1834,6 +1922,7 @@ echo "solver_balance=${solver_balance}" >&2
 echo "solver2_balance=${solver2_balance}" >&2
 echo "fee_balance=${fee_balance}" >&2
 
+set_stage "crp_report"
 echo "producing CRP checkpoint report..." >&2
 CRP_REPORT_PATH="${WORKDIR}/crp-monitor-report.json"
 for i in $(seq 1 3); do
@@ -1859,4 +1948,5 @@ if [[ -n "${E2E_ARTIFACT_DIR}" ]]; then
   echo "crp_monitor_report_artifact=${E2E_ARTIFACT_DIR}/crp-monitor-report.json" >&2
 fi
 
+set_stage "complete"
 echo "e2e ok" >&2

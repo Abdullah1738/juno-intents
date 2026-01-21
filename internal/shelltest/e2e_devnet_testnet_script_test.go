@@ -75,7 +75,41 @@ func TestE2EDevnetTestnetScriptWaitForOpTxidHandlesTransientNonJSON(t *testing.T
 	if !bytes.Contains(src, []byte(`z_getoperationstatus`)) {
 		t.Fatalf("script missing z_getoperationstatus diagnostics for wait_for_op_txid")
 	}
+	if !bytes.Contains(src, []byte(`junocash_save_op_debug`)) {
+		t.Fatalf("script missing op debug artifact helper")
+	}
 	if !bytes.Contains(src, []byte(`wait_for_wallet_scan_complete`)) {
 		t.Fatalf("script missing wallet scan wait helper")
+	}
+}
+
+func TestE2EDevnetTestnetScriptUsesGranularStagesAndArtifacts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	for _, needle := range []string{
+		`set_stage "direction_a"`,
+		`set_stage "direction_b"`,
+		`set_stage "verify_balances"`,
+		`set_stage "crp_report"`,
+		`set_stage "complete"`,
+	} {
+		if !bytes.Contains(src, []byte(needle)) {
+			t.Fatalf("script missing stage marker: %s", needle)
+		}
+	}
+
+	if bytes.Contains(src, []byte(`---- docker logs (`)) {
+		t.Fatalf("script still prints docker logs inline; should save to artifacts instead")
+	}
+	if !bytes.Contains(src, []byte(`junocash-`)) || !bytes.Contains(src, []byte(`.docker.log`)) {
+		t.Fatalf("script missing docker log artifact filenames")
 	}
 }
