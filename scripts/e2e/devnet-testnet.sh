@@ -41,7 +41,7 @@ Environment (optional):
   JUNO_E2E_NET_AMOUNT_B            (default: 1000)
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_A  (default: 1.0)
   JUNO_E2E_JUNOCASH_SEND_AMOUNT_B  (default: 0.5)
-  JUNO_E2E_JUNOCASH_SEND_MINCONF   (default: regtest=1, testnet=1)
+  JUNO_E2E_JUNOCASH_SEND_MINCONF   (default: regtest=1, testnet=10)
   JUNO_E2E_JUNOCASH_SHIELD_LIMIT   (default: 10)
   JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64 (optional: base64(gzip(wallet.dat)) for a prefunded testnet wallet; required for shielded-only funding)
   JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF (optional: prefunded testnet transparent address private key in WIF format)
@@ -459,7 +459,7 @@ if [[ -z "${JUNOCASH_SEND_MINCONF}" ]]; then
   if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
     JUNOCASH_SEND_MINCONF="1"
   else
-    JUNOCASH_SEND_MINCONF="1"
+    JUNOCASH_SEND_MINCONF="10"
   fi
 fi
 echo "junocash_send_minconf=${JUNOCASH_SEND_MINCONF}" >&2

@@ -113,3 +113,22 @@ func TestE2EDevnetTestnetScriptUsesGranularStagesAndArtifacts(t *testing.T) {
 		t.Fatalf("script missing docker log artifact filenames")
 	}
 }
+
+func TestE2EDevnetTestnetScriptDefaultsTestnetMinConfToTen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	if !bytes.Contains(src, []byte(`JUNO_E2E_JUNOCASH_SEND_MINCONF   (default: regtest=1, testnet=10)`)) {
+		t.Fatalf("script usage text missing updated testnet minconf default")
+	}
+	if !bytes.Contains(src, []byte(`JUNOCASH_SEND_MINCONF="10"`)) {
+		t.Fatalf("script missing testnet minconf default assignment")
+	}
+}
