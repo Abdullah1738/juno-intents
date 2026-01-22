@@ -170,3 +170,25 @@ func TestE2EDevnetTestnetScriptWaitForTxConfirmationsHandlesBadBlockHeaders(t *t
 		t.Fatalf("script missing safe blockheader JSON parsing")
 	}
 }
+
+func TestE2EDevnetTestnetScriptWaitsForMinconfSpendableNotesWhenNeeded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	for _, needle := range []string{
+		`unspent="$(jcli z_listunspent "${JUNOCASH_SEND_MINCONF}"`,
+		`FUND_ACTION_B="$(jcli z_listunspent "${JUNOCASH_SEND_MINCONF}"`,
+		`extra_conf_blocks="$((JUNOCASH_SEND_MINCONF - 1))"`,
+	} {
+		if !bytes.Contains(src, []byte(needle)) {
+			t.Fatalf("script missing minconf wait logic: %s", needle)
+		}
+	}
+}
