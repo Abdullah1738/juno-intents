@@ -530,6 +530,15 @@ if junocash_testnet_wif:
         "chmod 600 /root/juno-secrets/junocash-testnet-wif",
     ]
 
+if run_mode == "e2e":
+    cmds += [
+        "mkdir -p /root/juno-secrets",
+        "chmod 700 /root/juno-secrets",
+        "db_dump_path=$(bash ./scripts/berkeleydb/install-db-dump.sh)",
+        "printf '%s' \"${db_dump_path}\" > /root/juno-secrets/db_dump_path",
+        "chmod 600 /root/juno-secrets/db_dump_path",
+    ]
+
 run_script = "./scripts/e2e/devnet-testnet-tee.sh"
 if run_mode == "preflight":
     run_script = "./scripts/e2e/tee-preflight.sh"
@@ -594,7 +603,7 @@ cmds += [
         "if [ ! -e /dev/nitro_enclaves ]; then echo \"/dev/nitro_enclaves missing\" >&2; exit 1; fi; "
         "mkdir -p /var/log/juno-e2e; "
         "rm -f /var/log/juno-e2e/e2e.pid /var/log/juno-e2e/e2e.exit; "
-        "nohup bash -lc 'cd /root/juno-intents && JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64=\"$(cat /root/juno-secrets/junocash-testnet-wallet.dat.gz.b64 2>/dev/null || true)\" JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF=\"$(cat /root/juno-secrets/junocash-testnet-wif 2>/dev/null || true)\" JUNO_E2E_ARTIFACT_DIR=/var/log/juno-e2e {run_script} --base-deployment {deployment}; ec=$?; echo $ec > /var/log/juno-e2e/e2e.exit' "
+        "nohup bash -lc 'cd /root/juno-intents && JUNO_DB_DUMP=\"$(cat /root/juno-secrets/db_dump_path 2>/dev/null || true)\" JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64=\"$(cat /root/juno-secrets/junocash-testnet-wallet.dat.gz.b64 2>/dev/null || true)\" JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF=\"$(cat /root/juno-secrets/junocash-testnet-wif 2>/dev/null || true)\" JUNO_E2E_ARTIFACT_DIR=/var/log/juno-e2e {run_script} --base-deployment {deployment}; ec=$?; echo $ec > /var/log/juno-e2e/e2e.exit' "
         ">/var/log/juno-e2e/e2e.log 2>&1 & "
         "echo $! > /var/log/juno-e2e/e2e.pid; "
         "echo \"e2e_pid=$(cat /var/log/juno-e2e/e2e.pid)\" >&2; "

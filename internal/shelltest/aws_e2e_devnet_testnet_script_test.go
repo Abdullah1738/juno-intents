@@ -26,6 +26,8 @@ func TestAWSE2EDevnetTestnetScriptFetchesFailureDebugArtifacts(t *testing.T) {
 		`junocash-opstatus-`,
 		`junocash-opresult-`,
 		`db5.3-util`,
+		`install-db-dump.sh`,
+		`JUNO_DB_DUMP=`,
 		`JUNO_E2E_REMOTE_TAIL_INTERVAL_SECONDS`,
 		`e2e tail (periodic):`,
 		`/debug/`,
