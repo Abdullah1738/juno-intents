@@ -25,6 +25,8 @@ func TestAWSE2EDevnetTestnetScriptFetchesFailureDebugArtifacts(t *testing.T) {
 		`junocash-*.docker.log`,
 		`junocash-opstatus-`,
 		`junocash-opresult-`,
+		`JUNO_E2E_REMOTE_TAIL_INTERVAL_SECONDS`,
+		`e2e tail (periodic):`,
 		`/debug/`,
 	} {
 		if !bytes.Contains(src, []byte(needle)) {
@@ -32,4 +34,3 @@ func TestAWSE2EDevnetTestnetScriptFetchesFailureDebugArtifacts(t *testing.T) {
 		}
 	}
 }
-

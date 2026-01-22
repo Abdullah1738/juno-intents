@@ -814,14 +814,17 @@ if [[ "${CRP_MODE}" == "v2" ]]; then
   if [[ "${RUN_MODE}" == "preflight" ]]; then
     remote_timeout_seconds="${JUNO_E2E_REMOTE_TIMEOUT_SECONDS:-3600}" # 1h
     poll_interval_seconds="${JUNO_E2E_REMOTE_POLL_INTERVAL_SECONDS:-20}"
+    tail_interval_seconds="${JUNO_E2E_REMOTE_TAIL_INTERVAL_SECONDS:-120}"
   else
     remote_timeout_seconds="${JUNO_E2E_REMOTE_TIMEOUT_SECONDS:-14400}" # 4h
     poll_interval_seconds="${JUNO_E2E_REMOTE_POLL_INTERVAL_SECONDS:-60}"
+    tail_interval_seconds="${JUNO_E2E_REMOTE_TAIL_INTERVAL_SECONDS:-600}"
   fi
 
   e2e_status=""
   e2e_exit_code=""
   start_ts="$(date +%s)"
+  last_tail_ts="${start_ts}"
   while true; do
     check_id="$(
       ssm_send_script 600 <<'EOF'
@@ -874,6 +877,27 @@ EOF
       break
     fi
     echo "e2e status: ${e2e_status:-unknown} (elapsed=$((now_ts-start_ts))s)" >&2
+
+    if (( now_ts - last_tail_ts >= tail_interval_seconds )); then
+      tail_id="$(
+        ssm_send_script 600 <<'EOF'
+		set -eu
+	d=/var/log/juno-e2e
+	echo "---- e2e.log (tail) ----"
+	tail -n 80 "$d/e2e.log" 2>/dev/null || true
+	EOF
+      )"
+      tail_status="$(ssm_wait "${tail_id}" 300)"
+      download_ssm_output "${tail_id}" || true
+      if [[ "${tail_status}" == "Success" ]]; then
+        echo "e2e tail (periodic):" >&2
+        ssm_stdout "${tail_id}" >&2 || true
+      else
+        echo "SSM periodic e2e tail failed (status=${tail_status})" >&2
+      fi
+      last_tail_ts="${now_ts}"
+    fi
+
     sleep "${poll_interval_seconds}"
   done
 
