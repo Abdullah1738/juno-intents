@@ -1652,45 +1652,45 @@ echo "solver_b_pubkey=${SOLVER_B_PUBKEY}" >&2
 echo "solver_b_ua=${SOLVER_B_UA}" >&2
 echo "quote_amount_b_zat=${AMOUNT_B_ZAT} (${PAYMENT_AMOUNT_B_STR})" >&2
 
-	if [[ "${SOLVER_B_UA}" != "${SOLVER_A_UA}" ]]; then
-	  echo "funding solver B from user (so it can pay on JunoCash)..." >&2
-	  fund_zat="$((AMOUNT_B_ZAT + 20000000))"
-	  fund_str="$(zat_to_junocash_amount "${fund_zat}")"
-	  recipients_fund="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_B_UA}" "${fund_str}")"
-	  opid_fund="$(jcli z_sendmany "${USER_UA}" "${recipients_fund}" "${JUNOCASH_SEND_MINCONF}" | parse_junocash_opid)"
-	  txid_fund="$(wait_for_op_txid "${opid_fund}" 1800)"
-	  echo "txid_fund_b=${txid_fund}" >&2
-	  extra_conf_blocks="$((JUNOCASH_SEND_MINCONF - 1))"
-	  if (( extra_conf_blocks < 0 )); then
-	    extra_conf_blocks=0
-	  fi
-	  if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
-	    echo "mining block to include funding tx (B)..." >&2
-	    jcli generate 1 >/dev/null
-	    if (( extra_conf_blocks > 0 )); then
-	      echo "mining ${extra_conf_blocks} additional blocks for minconf=${JUNOCASH_SEND_MINCONF}..." >&2
-	      jcli generate "${extra_conf_blocks}" >/dev/null
-	    fi
-	  else
-	    echo "mining block to include funding tx (B)..." >&2
-	    scripts/junocash/testnet/mine.sh 1 >/dev/null
-	    if (( extra_conf_blocks > 0 )); then
-	      echo "mining ${extra_conf_blocks} additional blocks for minconf=${JUNOCASH_SEND_MINCONF}..." >&2
-	      scripts/junocash/testnet/mine.sh "${extra_conf_blocks}" >/dev/null
-	    fi
-	    fund_height_b="$(wait_for_tx_confirmations "${txid_fund}" "${JUNOCASH_SEND_MINCONF}" 3600)"
-	    echo "fund_height_b=${fund_height_b}" >&2
-	  fi
+  if [[ "${SOLVER_B_UA}" != "${SOLVER_A_UA}" ]]; then
+    echo "funding solver B from user (so it can pay on JunoCash)..." >&2
+    fund_zat="$((AMOUNT_B_ZAT + 20000000))"
+    fund_str="$(zat_to_junocash_amount "${fund_zat}")"
+    recipients_fund="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_B_UA}" "${fund_str}")"
+    opid_fund="$(jcli z_sendmany "${USER_UA}" "${recipients_fund}" "${JUNOCASH_SEND_MINCONF}" | parse_junocash_opid)"
+    txid_fund="$(wait_for_op_txid "${opid_fund}" 1800)"
+    echo "txid_fund_b=${txid_fund}" >&2
+    extra_conf_blocks="$((JUNOCASH_SEND_MINCONF - 1))"
+    if (( extra_conf_blocks < 0 )); then
+      extra_conf_blocks=0
+    fi
+    if [[ "${JUNOCASH_CHAIN}" == "regtest" ]]; then
+      echo "mining block to include funding tx (B)..." >&2
+      jcli generate 1 >/dev/null
+      if (( extra_conf_blocks > 0 )); then
+        echo "mining ${extra_conf_blocks} additional blocks for minconf=${JUNOCASH_SEND_MINCONF}..." >&2
+        jcli generate "${extra_conf_blocks}" >/dev/null
+      fi
+    else
+      echo "mining block to include funding tx (B)..." >&2
+      scripts/junocash/testnet/mine.sh 1 >/dev/null
+      if (( extra_conf_blocks > 0 )); then
+        echo "mining ${extra_conf_blocks} additional blocks for minconf=${JUNOCASH_SEND_MINCONF}..." >&2
+        scripts/junocash/testnet/mine.sh "${extra_conf_blocks}" >/dev/null
+      fi
+      fund_height_b="$(wait_for_tx_confirmations "${txid_fund}" "${JUNOCASH_SEND_MINCONF}" 3600)"
+      echo "fund_height_b=${fund_height_b}" >&2
+    fi
 
-	  echo "waiting for solver B orchard note to become spendable..." >&2
-	  FUND_ACTION_B=""
-	  for _ in $(seq 1 1800); do
-	    FUND_ACTION_B="$(jcli z_listunspent "${JUNOCASH_SEND_MINCONF}" 9999999 false | python3 -c 'import json,sys
-	txid=sys.argv[1].strip().lower()
-	acct=int(sys.argv[2])
-	notes=json.load(sys.stdin)
-	for n in notes:
-	  if str(n.get("pool",""))!="orchard":
+    echo "waiting for solver B orchard note to become spendable..." >&2
+    FUND_ACTION_B=""
+    for _ in $(seq 1 1800); do
+      FUND_ACTION_B="$(jcli z_listunspent "${JUNOCASH_SEND_MINCONF}" 9999999 false | python3 -c 'import json,sys
+txid=sys.argv[1].strip().lower()
+acct=int(sys.argv[2])
+notes=json.load(sys.stdin)
+for n in notes:
+  if str(n.get("pool",""))!="orchard":
     continue
   if str(n.get("txid","")).strip().lower()!=txid:
     continue
@@ -1702,13 +1702,13 @@ echo "quote_amount_b_zat=${AMOUNT_B_ZAT} (${PAYMENT_AMOUNT_B_STR})" >&2
   sys.exit(0)
 sys.exit(1)
 ' "${txid_fund}" "${SOLVER_B_ACCOUNT}")" && break || true
-    sleep 1
-  done
-  if [[ -z "${FUND_ACTION_B}" ]]; then
-    echo "solver B funding note did not become spendable" >&2
-    exit 1
+      sleep 1
+    done
+    if [[ -z "${FUND_ACTION_B}" ]]; then
+      echo "solver B funding note did not become spendable" >&2
+      exit 1
+    fi
   fi
-fi
 
 echo "sending JunoCash payment solver->user (amount=${PAYMENT_AMOUNT_B_STR})..." >&2
 recipients_b="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${USER_UA}" "${PAYMENT_AMOUNT_B_STR}")"

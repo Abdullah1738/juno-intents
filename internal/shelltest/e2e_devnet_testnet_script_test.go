@@ -192,3 +192,37 @@ func TestE2EDevnetTestnetScriptWaitsForMinconfSpendableNotesWhenNeeded(t *testin
 		}
 	}
 }
+
+func TestE2EDevnetTestnetScriptContainsNoTabs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	if bytes.Contains(src, []byte("\t")) {
+		t.Fatalf("script contains tab characters; these can break embedded python3 -c snippets")
+	}
+}
+
+func TestE2EDevnetTestnetScriptFundActionPythonSnippetHasNoLeadingIndent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	needle := `FUND_ACTION_B="$(jcli z_listunspent "${JUNOCASH_SEND_MINCONF}" 9999999 false | python3 -c 'import json,sys
+txid=sys.argv[1].strip().lower()`
+	if !bytes.Contains(src, []byte(needle)) {
+		t.Fatalf("script missing unindented FUND_ACTION_B python snippet")
+	}
+}
