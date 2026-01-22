@@ -226,3 +226,25 @@ txid=sys.argv[1].strip().lower()`
 		t.Fatalf("script missing unindented FUND_ACTION_B python snippet")
 	}
 }
+
+func TestE2EDevnetTestnetScriptPassesDbDumpToWitnessGenerator(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	for _, needle := range []string{
+		`elif command -v db5.3_dump >/dev/null; then`,
+		`db_dump_flag=(--db-dump "${db_dump}")`,
+		`"${db_dump_flag[@]}"`,
+	} {
+		if !bytes.Contains(src, []byte(needle)) {
+			t.Fatalf("script missing db_dump wiring: %s", needle)
+		}
+	}
+}

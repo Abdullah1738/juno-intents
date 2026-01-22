@@ -25,6 +25,7 @@ func TestAWSE2EDevnetTestnetScriptFetchesFailureDebugArtifacts(t *testing.T) {
 		`junocash-*.docker.log`,
 		`junocash-opstatus-`,
 		`junocash-opresult-`,
+		`db5.3-util`,
 		`JUNO_E2E_REMOTE_TAIL_INTERVAL_SECONDS`,
 		`e2e tail (periodic):`,
 		`/debug/`,

@@ -1438,6 +1438,24 @@ if [[ -z "${WALLET_DAT}" ]]; then
 fi
 echo "wallet_dat=${WALLET_DAT}" >&2
 
+db_dump=""
+if [[ "${JUNO_DB_DUMP:-}" != "" ]]; then
+  db_dump="${JUNO_DB_DUMP}"
+elif [[ -x "/opt/homebrew/opt/berkeley-db/bin/db_dump" ]]; then
+  db_dump="/opt/homebrew/opt/berkeley-db/bin/db_dump"
+elif command -v db_dump >/dev/null; then
+  db_dump="db_dump"
+elif command -v db5.3_dump >/dev/null; then
+  db_dump="db5.3_dump"
+fi
+db_dump_flag=()
+if [[ -n "${db_dump}" ]]; then
+  echo "db_dump=${db_dump}" >&2
+  db_dump_flag=(--db-dump "${db_dump}")
+else
+  echo "db_dump=not_found (witness generation may fall back to chain scan)" >&2
+fi
+
 set_stage "direction_a"
 echo "=== Direction A (JunoCash -> Solana) ===" >&2
 
@@ -1559,6 +1577,7 @@ echo "generating receipt witness (A)..." >&2
 WITNESS_A="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wallet_witness_v1 -- \
   --junocash-cli "${JUNOCASH_CLI}" \
   --wallet "${WALLET_DAT}" \
+  "${db_dump_flag[@]}" \
   --txid "${txid_a}" \
   --action "${ACTION_A}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
@@ -1764,6 +1783,7 @@ echo "generating receipt witness (B, outgoing via solver ovk)..." >&2
 WITNESS_B="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wallet_witness_v1 -- \
   --junocash-cli "${JUNOCASH_CLI}" \
   --wallet "${WALLET_DAT}" \
+  "${db_dump_flag[@]}" \
   --txid "${txid_b}" \
   --action "${ACTION_B}" \
   --unified-address "${SOLVER_B_UA}" \

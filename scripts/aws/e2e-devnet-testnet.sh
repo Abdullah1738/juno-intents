@@ -378,6 +378,7 @@ cmds = [
     "if ! command -v python3 >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends python3; fi",
     "if ! command -v git >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends git; fi",
     "if ! command -v curl >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends curl; fi",
+    "if ! command -v db_dump >/dev/null && ! command -v db5.3_dump >/dev/null; then sudo apt-get update && sudo apt-get install -y --no-install-recommends db5.3-util; fi",
     "rm -rf /root/juno-intents && git clone https://github.com/Abdullah1738/juno-intents.git /root/juno-intents",
     "cd /root/juno-intents",
     f"git checkout {git_sha}",
