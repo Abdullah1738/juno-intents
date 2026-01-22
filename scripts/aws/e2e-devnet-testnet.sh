@@ -881,11 +881,11 @@ EOF
     if (( now_ts - last_tail_ts >= tail_interval_seconds )); then
       tail_id="$(
         ssm_send_script 600 <<'EOF'
-		set -eu
+	set -eu
 	d=/var/log/juno-e2e
 	echo "---- e2e.log (tail) ----"
 	tail -n 80 "$d/e2e.log" 2>/dev/null || true
-	EOF
+EOF
       )"
       tail_status="$(ssm_wait "${tail_id}" 300)"
       download_ssm_output "${tail_id}" || true
