@@ -1146,7 +1146,7 @@ print(conf, bh)
         echo "tx confirmed but missing blockhash: ${txid} (conf=${conf})" >&2
         return 1
       fi
-      header="$(jcli getblockheader "${blockhash}" 1 2>/dev/null || true)"
+      header="$(jcli getblockheader "${blockhash}" 2>/dev/null || true)"
       height="$(
         python3 -c 'import json,sys
 raw=sys.stdin.read()
@@ -1574,9 +1574,25 @@ fi
 echo "action_a=${ACTION_A}" >&2
 
 echo "generating receipt witness (A)..." >&2
+WALLET_WITNESS_DAT_A="${WALLET_DAT}"
+wallet_rel_a="${WALLET_DAT#"${DATA_DIR}/"}"
+if [[ "${wallet_rel_a}" == "${WALLET_DAT}" ]]; then
+  echo "wallet.dat is not under DATA_DIR; cannot map backupwallet path (A): WALLET_DAT=${WALLET_DAT} DATA_DIR=${DATA_DIR}" >&2
+  exit 1
+fi
+wallet_backup_rel_a="${wallet_rel_a%.dat}.witness-a.dat"
+wallet_backup_container_a="/data/${wallet_backup_rel_a}"
+wallet_backup_host_a="${DATA_DIR}/${wallet_backup_rel_a}"
+echo "backupwallet for witness (A): ${wallet_backup_container_a}" >&2
+jcli backupwallet "${wallet_backup_container_a}" >/dev/null
+if [[ ! -f "${wallet_backup_host_a}" ]]; then
+  echo "backupwallet did not create expected file: ${wallet_backup_host_a}" >&2
+  exit 1
+fi
+WALLET_WITNESS_DAT_A="${wallet_backup_host_a}"
 WITNESS_A="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wallet_witness_v1 -- \
   --junocash-cli "${JUNOCASH_CLI}" \
-  --wallet "${WALLET_DAT}" \
+  --wallet "${WALLET_WITNESS_DAT_A}" \
   "${db_dump_flag[@]}" \
   --txid "${txid_a}" \
   --action "${ACTION_A}" \
@@ -1780,9 +1796,25 @@ fi
 echo "action_b=${ACTION_B}" >&2
 
 echo "generating receipt witness (B, outgoing via solver ovk)..." >&2
+WALLET_WITNESS_DAT_B="${WALLET_DAT}"
+wallet_rel_b="${WALLET_DAT#"${DATA_DIR}/"}"
+if [[ "${wallet_rel_b}" == "${WALLET_DAT}" ]]; then
+  echo "wallet.dat is not under DATA_DIR; cannot map backupwallet path (B): WALLET_DAT=${WALLET_DAT} DATA_DIR=${DATA_DIR}" >&2
+  exit 1
+fi
+wallet_backup_rel_b="${wallet_rel_b%.dat}.witness-b.dat"
+wallet_backup_container_b="/data/${wallet_backup_rel_b}"
+wallet_backup_host_b="${DATA_DIR}/${wallet_backup_rel_b}"
+echo "backupwallet for witness (B): ${wallet_backup_container_b}" >&2
+jcli backupwallet "${wallet_backup_container_b}" >/dev/null
+if [[ ! -f "${wallet_backup_host_b}" ]]; then
+  echo "backupwallet did not create expected file: ${wallet_backup_host_b}" >&2
+  exit 1
+fi
+WALLET_WITNESS_DAT_B="${wallet_backup_host_b}"
 WITNESS_B="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wallet_witness_v1 -- \
   --junocash-cli "${JUNOCASH_CLI}" \
-  --wallet "${WALLET_DAT}" \
+  --wallet "${WALLET_WITNESS_DAT_B}" \
   "${db_dump_flag[@]}" \
   --txid "${txid_b}" \
   --action "${ACTION_B}" \

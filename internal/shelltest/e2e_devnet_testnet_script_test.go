@@ -114,6 +114,29 @@ func TestE2EDevnetTestnetScriptUsesGranularStagesAndArtifacts(t *testing.T) {
 	}
 }
 
+func TestE2EDevnetTestnetScriptBacksUpWalletBeforeWitnessGeneration(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	for _, needle := range []string{
+		`backupwallet for witness (A):`,
+		`--wallet "${WALLET_WITNESS_DAT_A}"`,
+		`backupwallet for witness (B):`,
+		`--wallet "${WALLET_WITNESS_DAT_B}"`,
+	} {
+		if !bytes.Contains(src, []byte(needle)) {
+			t.Fatalf("script missing witness backup behavior: %s", needle)
+		}
+	}
+}
+
 func TestE2EDevnetTestnetScriptDefaultsTestnetMinConfToTen(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script tests are not supported on windows")
