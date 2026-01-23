@@ -12,8 +12,10 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     io::{BufRead, BufReader, Cursor, Read},
+    fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use zcash_encoding::{CompactSize, Optional, Vector};
 use zcash_primitives::transaction::Transaction;
@@ -510,9 +512,98 @@ fn build_receipt_witness_v1(
     Ok(out)
 }
 
+struct TempDirGuard {
+    path: PathBuf,
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+struct WalletDumpContext {
+    dump_wallet_path: PathBuf,
+    dump_home: Option<PathBuf>,
+    _temp_guard: Option<TempDirGuard>,
+}
+
+fn prepare_wallet_dump(wallet_path: &Path) -> Result<WalletDumpContext> {
+    let wallet_dir = wallet_path
+        .parent()
+        .ok_or_else(|| anyhow!("wallet path has no parent dir: {}", wallet_path.display()))?;
+
+    let log_dir = wallet_dir.join("database");
+    let mut has_logs = false;
+    if log_dir.is_dir() {
+        if let Ok(rd) = fs::read_dir(&log_dir) {
+            for e in rd.flatten() {
+                let name = e.file_name();
+                if name.to_string_lossy().starts_with("log.") {
+                    has_logs = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if !has_logs {
+        return Ok(WalletDumpContext {
+            dump_wallet_path: wallet_path.to_path_buf(),
+            dump_home: None,
+            _temp_guard: None,
+        });
+    }
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp_home = std::env::temp_dir().join(format!("juno-walletdump-{}-{}", std::process::id(), nanos));
+    let tmp_log_dir = tmp_home.join("database");
+    fs::create_dir_all(&tmp_log_dir).context("create temp wallet dump dirs")?;
+
+    let wallet_filename = wallet_path
+        .file_name()
+        .ok_or_else(|| anyhow!("wallet path has no filename: {}", wallet_path.display()))?;
+    let tmp_wallet_path = tmp_home.join(wallet_filename);
+    fs::copy(wallet_path, &tmp_wallet_path).context("copy wallet.dat to temp dir")?;
+
+    if let Ok(rd) = fs::read_dir(&log_dir) {
+        for e in rd {
+            let e = e?;
+            let ft = e.file_type()?;
+            if !ft.is_file() {
+                continue;
+            }
+            let name = e.file_name();
+            if !name.to_string_lossy().starts_with("log.") {
+                continue;
+            }
+            fs::copy(e.path(), tmp_log_dir.join(name)).context("copy bdb log file")?;
+        }
+    }
+
+    // Ensure db_dump can locate the log directory, matching the daemon's `set_lg_dir(database)`.
+    fs::write(tmp_home.join("DB_CONFIG"), b"set_lg_dir database\n").context("write DB_CONFIG")?;
+
+    Ok(WalletDumpContext {
+        dump_wallet_path: tmp_wallet_path,
+        dump_home: Some(tmp_home.clone()),
+        _temp_guard: Some(TempDirGuard { path: tmp_home }),
+    })
+}
+
 fn wallet_record_bytes(wallet_path: &Path, db_dump: &Path, record_name: &str) -> Result<Vec<u8>> {
-    let mut child = Command::new(db_dump)
-        .arg(wallet_path)
+    let ctx = prepare_wallet_dump(wallet_path)?;
+
+    let mut cmd = Command::new(db_dump);
+    if let Some(home) = &ctx.dump_home {
+        cmd.arg("-R").arg("-h").arg(home);
+    }
+
+    let mut child = cmd
+        .arg(&ctx.dump_wallet_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -585,6 +676,56 @@ fn wallet_record_bytes(wallet_path: &Path, db_dump: &Path, record_name: &str) ->
         record_name,
         stderr.trim()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{}-{}", name, nanos))
+    }
+
+    #[test]
+    fn prepare_wallet_dump_uses_temp_home_when_bdb_logs_present() {
+        let root = mk_temp_dir("juno-walletdump-test");
+        let wallet_dir = root.join("testnet3");
+        let log_dir = wallet_dir.join("database");
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(wallet_dir.join("wallet.dat"), b"wallet").unwrap();
+        fs::write(log_dir.join("log.0000000001"), b"log").unwrap();
+
+        let ctx = prepare_wallet_dump(&wallet_dir.join("wallet.dat")).unwrap();
+        assert!(ctx.dump_home.is_some());
+        let home = ctx.dump_home.as_ref().unwrap();
+        assert!(home.join("DB_CONFIG").exists());
+        let cfg = fs::read_to_string(home.join("DB_CONFIG")).unwrap();
+        assert!(cfg.contains("set_lg_dir database"));
+        assert!(home.join("database").join("log.0000000001").exists());
+        assert!(ctx.dump_wallet_path.exists());
+
+        drop(ctx);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prepare_wallet_dump_passthrough_when_no_logs_present() {
+        let root = mk_temp_dir("juno-walletdump-test-nolog");
+        fs::create_dir_all(&root).unwrap();
+        let wallet = root.join("wallet.dat");
+        fs::write(&wallet, b"wallet").unwrap();
+
+        let ctx = prepare_wallet_dump(&wallet).unwrap();
+        assert!(ctx.dump_home.is_none());
+        assert_eq!(ctx.dump_wallet_path, wallet);
+
+        drop(ctx);
+        let _ = fs::remove_dir_all(&root);
+    }
 }
 
 fn parse_orchard_note_commitment_tree(
