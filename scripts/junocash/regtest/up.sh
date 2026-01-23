@@ -49,6 +49,7 @@ docker run -d \
   /opt/junocash/bin/junocashd \
     -regtest \
     -datadir=/data \
+    -exportdir=/data \
     -txindex=1 \
     -server=1 \
     -printtoconsole=1 \

@@ -115,6 +115,7 @@ if [[ "${MODE}" == "public" ]]; then
     /opt/junocash/bin/junocashd \
       -testnet \
       -datadir=/data \
+      -exportdir=/data \
       -server=1 \
       -printtoconsole=1 \
       -rpcworkqueue=64 \
@@ -159,6 +160,7 @@ docker run -d \
   /opt/junocash/bin/junocashd \
     -testnet \
     -datadir=/data \
+    -exportdir=/data \
     -server=1 \
     -printtoconsole=1 \
     -rpcworkqueue=64 \
@@ -182,6 +184,7 @@ docker run -d \
   /opt/junocash/bin/junocashd \
     -testnet \
     -datadir=/data \
+    -exportdir=/data \
     -server=1 \
     -printtoconsole=1 \
     -rpcworkqueue=64 \

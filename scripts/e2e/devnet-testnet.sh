@@ -1575,16 +1575,10 @@ echo "action_a=${ACTION_A}" >&2
 
 echo "generating receipt witness (A)..." >&2
 WALLET_WITNESS_DAT_A="${WALLET_DAT}"
-wallet_rel_a="${WALLET_DAT#"${DATA_DIR}/"}"
-if [[ "${wallet_rel_a}" == "${WALLET_DAT}" ]]; then
-  echo "wallet.dat is not under DATA_DIR; cannot map backupwallet path (A): WALLET_DAT=${WALLET_DAT} DATA_DIR=${DATA_DIR}" >&2
-  exit 1
-fi
-wallet_backup_rel_a="${wallet_rel_a%.dat}.witness-a.dat"
-wallet_backup_container_a="/data/${wallet_backup_rel_a}"
-wallet_backup_host_a="${DATA_DIR}/${wallet_backup_rel_a}"
-echo "backupwallet for witness (A): ${wallet_backup_container_a}" >&2
-jcli backupwallet "${wallet_backup_container_a}" >/dev/null
+wallet_backup_file_a="wallet.witness-a.dat"
+wallet_backup_host_a="${DATA_DIR}/${wallet_backup_file_a}"
+echo "backupwallet for witness (A): ${wallet_backup_file_a}" >&2
+jcli backupwallet "${wallet_backup_file_a}" >/dev/null
 if [[ ! -f "${wallet_backup_host_a}" ]]; then
   echo "backupwallet did not create expected file: ${wallet_backup_host_a}" >&2
   exit 1
@@ -1797,16 +1791,10 @@ echo "action_b=${ACTION_B}" >&2
 
 echo "generating receipt witness (B, outgoing via solver ovk)..." >&2
 WALLET_WITNESS_DAT_B="${WALLET_DAT}"
-wallet_rel_b="${WALLET_DAT#"${DATA_DIR}/"}"
-if [[ "${wallet_rel_b}" == "${WALLET_DAT}" ]]; then
-  echo "wallet.dat is not under DATA_DIR; cannot map backupwallet path (B): WALLET_DAT=${WALLET_DAT} DATA_DIR=${DATA_DIR}" >&2
-  exit 1
-fi
-wallet_backup_rel_b="${wallet_rel_b%.dat}.witness-b.dat"
-wallet_backup_container_b="/data/${wallet_backup_rel_b}"
-wallet_backup_host_b="${DATA_DIR}/${wallet_backup_rel_b}"
-echo "backupwallet for witness (B): ${wallet_backup_container_b}" >&2
-jcli backupwallet "${wallet_backup_container_b}" >/dev/null
+wallet_backup_file_b="wallet.witness-b.dat"
+wallet_backup_host_b="${DATA_DIR}/${wallet_backup_file_b}"
+echo "backupwallet for witness (B): ${wallet_backup_file_b}" >&2
+jcli backupwallet "${wallet_backup_file_b}" >/dev/null
 if [[ ! -f "${wallet_backup_host_b}" ]]; then
   echo "backupwallet did not create expected file: ${wallet_backup_host_b}" >&2
   exit 1
