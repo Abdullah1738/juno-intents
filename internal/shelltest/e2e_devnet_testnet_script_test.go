@@ -127,8 +127,10 @@ func TestE2EDevnetTestnetScriptBacksUpWalletBeforeWitnessGeneration(t *testing.T
 
 	for _, needle := range []string{
 		`backupwallet for witness (A):`,
+		`walletwitnessadat`,
 		`--wallet "${WALLET_WITNESS_DAT_A}"`,
 		`backupwallet for witness (B):`,
+		`walletwitnessbdat`,
 		`--wallet "${WALLET_WITNESS_DAT_B}"`,
 	} {
 		if !bytes.Contains(src, []byte(needle)) {

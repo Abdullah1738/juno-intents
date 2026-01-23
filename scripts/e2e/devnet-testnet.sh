@@ -1575,7 +1575,7 @@ echo "action_a=${ACTION_A}" >&2
 
 echo "generating receipt witness (A)..." >&2
 WALLET_WITNESS_DAT_A="${WALLET_DAT}"
-wallet_backup_file_a="wallet.witness-a.dat"
+wallet_backup_file_a="walletwitnessadat"
 wallet_backup_host_a="${DATA_DIR}/${wallet_backup_file_a}"
 echo "backupwallet for witness (A): ${wallet_backup_file_a}" >&2
 jcli backupwallet "${wallet_backup_file_a}" >/dev/null
@@ -1791,7 +1791,7 @@ echo "action_b=${ACTION_B}" >&2
 
 echo "generating receipt witness (B, outgoing via solver ovk)..." >&2
 WALLET_WITNESS_DAT_B="${WALLET_DAT}"
-wallet_backup_file_b="wallet.witness-b.dat"
+wallet_backup_file_b="walletwitnessbdat"
 wallet_backup_host_b="${DATA_DIR}/${wallet_backup_file_b}"
 echo "backupwallet for witness (B): ${wallet_backup_file_b}" >&2
 jcli backupwallet "${wallet_backup_file_b}" >/dev/null
