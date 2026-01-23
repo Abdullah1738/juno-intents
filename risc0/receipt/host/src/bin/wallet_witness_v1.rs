@@ -528,6 +528,38 @@ struct WalletDumpContext {
     _temp_guard: Option<TempDirGuard>,
 }
 
+fn maybe_recover_wallet_db(home: &Path, bin_dir: &Path) -> Result<()> {
+    let db_recover = bin_dir.join("db_recover");
+    let db_checkpoint = bin_dir.join("db_checkpoint");
+
+    if db_recover.exists() {
+        let out = Command::new(&db_recover)
+            .arg("-h")
+            .arg(home)
+            .output()
+            .with_context(|| format!("run db_recover at {}", db_recover.display()))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            bail!("db_recover failed: {}", stderr.trim());
+        }
+    }
+
+    if db_checkpoint.exists() {
+        let out = Command::new(&db_checkpoint)
+            .arg("-1")
+            .arg("-h")
+            .arg(home)
+            .output()
+            .with_context(|| format!("run db_checkpoint at {}", db_checkpoint.display()))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            eprintln!("warning: db_checkpoint failed: {}", stderr.trim());
+        }
+    }
+
+    Ok(())
+}
+
 fn prepare_wallet_dump(wallet_path: &Path) -> Result<WalletDumpContext> {
     let wallet_dir = wallet_path
         .parent()
@@ -596,31 +628,7 @@ fn wallet_record_bytes(wallet_path: &Path, db_dump: &Path, record_name: &str) ->
 
     if let Some(home) = &ctx.dump_home {
         let bin_dir = db_dump.parent().unwrap_or_else(|| Path::new(""));
-        let db_recover = bin_dir.join("db_recover");
-        let db_checkpoint = bin_dir.join("db_checkpoint");
-
-        if db_recover.exists() {
-            let out = Command::new(&db_recover)
-                .arg("-h")
-                .arg(home)
-                .output()
-                .with_context(|| format!("run db_recover at {}", db_recover.display()))?;
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                bail!("db_recover failed: {}", stderr.trim());
-            }
-        }
-        if db_checkpoint.exists() {
-            let out = Command::new(&db_checkpoint)
-                .arg("-h")
-                .arg(home)
-                .output()
-                .with_context(|| format!("run db_checkpoint at {}", db_checkpoint.display()))?;
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                bail!("db_checkpoint failed: {}", stderr.trim());
-            }
-        }
+        maybe_recover_wallet_db(home, bin_dir).context("recover wallet bdb env")?;
     }
 
     let mut child = Command::new(db_dump)
@@ -702,6 +710,7 @@ fn wallet_record_bytes(wallet_path: &Path, db_dump: &Path, record_name: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn mk_temp_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -730,6 +739,57 @@ mod tests {
         assert!(ctx.dump_wallet_path.exists());
 
         drop(ctx);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn write_executable(path: &Path, contents: &str) {
+        fs::write(path, contents).unwrap();
+        let mut perms = fs::metadata(path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).unwrap();
+    }
+
+    #[test]
+    fn maybe_recover_wallet_db_runs_checkpoint_with_force_flag() {
+        let root = mk_temp_dir("juno-walletdump-tools-test");
+        let bin_dir = root.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+
+        write_executable(
+            &bin_dir.join("db_recover"),
+            r#"#!/bin/sh
+set -e
+home=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-h" ]; then home="$a"; break; fi
+  prev="$a"
+done
+if [ -n "$home" ]; then echo "$@" > "$home/db_recover.args"; fi
+exit 0
+"#,
+        );
+        write_executable(
+            &bin_dir.join("db_checkpoint"),
+            r#"#!/bin/sh
+set -e
+home=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-h" ]; then home="$a"; break; fi
+  prev="$a"
+done
+if [ -n "$home" ]; then echo "$@" > "$home/db_checkpoint.args"; fi
+exit 0
+"#,
+        );
+
+        maybe_recover_wallet_db(&root, &bin_dir).unwrap();
+        let args = fs::read_to_string(root.join("db_checkpoint.args")).unwrap();
+        assert!(args.split_whitespace().any(|a| a == "-1"));
+        assert!(args.split_whitespace().any(|a| a == "-h"));
+
         let _ = fs::remove_dir_all(&root);
     }
 
