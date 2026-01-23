@@ -577,10 +577,7 @@ fn prepare_wallet_dump(wallet_path: &Path) -> Result<WalletDumpContext> {
                 continue;
             }
             let name = e.file_name();
-            if !name.to_string_lossy().starts_with("log.") {
-                continue;
-            }
-            fs::copy(e.path(), tmp_log_dir.join(name)).context("copy bdb log file")?;
+            fs::copy(e.path(), tmp_log_dir.join(name)).context("copy bdb env file")?;
         }
     }
 
@@ -597,12 +594,36 @@ fn prepare_wallet_dump(wallet_path: &Path) -> Result<WalletDumpContext> {
 fn wallet_record_bytes(wallet_path: &Path, db_dump: &Path, record_name: &str) -> Result<Vec<u8>> {
     let ctx = prepare_wallet_dump(wallet_path)?;
 
-    let mut cmd = Command::new(db_dump);
     if let Some(home) = &ctx.dump_home {
-        cmd.arg("-R").arg("-h").arg(home);
+        let bin_dir = db_dump.parent().unwrap_or_else(|| Path::new(""));
+        let db_recover = bin_dir.join("db_recover");
+        let db_checkpoint = bin_dir.join("db_checkpoint");
+
+        if db_recover.exists() {
+            let out = Command::new(&db_recover)
+                .arg("-h")
+                .arg(home)
+                .output()
+                .with_context(|| format!("run db_recover at {}", db_recover.display()))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                bail!("db_recover failed: {}", stderr.trim());
+            }
+        }
+        if db_checkpoint.exists() {
+            let out = Command::new(&db_checkpoint)
+                .arg("-h")
+                .arg(home)
+                .output()
+                .with_context(|| format!("run db_checkpoint at {}", db_checkpoint.display()))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                bail!("db_checkpoint failed: {}", stderr.trim());
+            }
+        }
     }
 
-    let mut child = cmd
+    let mut child = Command::new(db_dump)
         .arg(&ctx.dump_wallet_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
