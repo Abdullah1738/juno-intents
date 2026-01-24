@@ -218,6 +218,28 @@ func TestE2EDevnetTestnetScriptWaitsForMinconfSpendableNotesWhenNeeded(t *testin
 	}
 }
 
+func TestE2EDevnetTestnetScriptMinesExtraBlocksAfterUserFundingForMinconf(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	for _, needle := range []string{
+		`mining ${extra_conf_blocks} additional blocks for minconf=${JUNOCASH_SEND_MINCONF}`,
+		`shield_height="$(wait_for_tx_confirmations "${txid_shield}" "${JUNOCASH_SEND_MINCONF}" 3600)"`,
+		`prefund_height="$(wait_for_tx_confirmations "${txid_prefund}" "${JUNOCASH_SEND_MINCONF}" 3600)"`,
+	} {
+		if !bytes.Contains(src, []byte(needle)) {
+			t.Fatalf("script missing post-funding minconf confirmation logic: %s", needle)
+		}
+	}
+}
+
 func TestE2EDevnetTestnetScriptContainsNoTabs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script tests are not supported on windows")

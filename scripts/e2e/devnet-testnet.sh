@@ -1287,6 +1287,13 @@ print(json.dumps([{"address":addr,"amount":float(amt)}]))
   scripts/junocash/testnet/mine.sh 1 >/dev/null
   prefund_height="$(wait_for_tx_confirmations "${txid_prefund}" 1 600)"
   echo "prefund_height=${prefund_height}" >&2
+  extra_conf_blocks="$((JUNOCASH_SEND_MINCONF - 1))"
+  if [[ "${extra_conf_blocks}" -gt 0 ]]; then
+    echo "mining ${extra_conf_blocks} additional blocks for minconf=${JUNOCASH_SEND_MINCONF}..." >&2
+    scripts/junocash/testnet/mine.sh "${extra_conf_blocks}" >/dev/null
+    prefund_height="$(wait_for_tx_confirmations "${txid_prefund}" "${JUNOCASH_SEND_MINCONF}" 3600)"
+    echo "prefund_height=${prefund_height} (minconf=${JUNOCASH_SEND_MINCONF})" >&2
+  fi
 elif [[ "${use_wallet_prefund}" == "true" ]]; then
   echo "prefunded wallet selected; skipping coinbase shielding" >&2
 else
@@ -1361,6 +1368,13 @@ print(to_zat(j.get("balance")), to_zat(j.get("immature_balance")))
     scripts/junocash/testnet/mine.sh 1 >/dev/null
     shield_height="$(wait_for_tx_confirmations "${txid_shield}" 1 600)"
     echo "shield_height=${shield_height}" >&2
+    extra_conf_blocks="$((JUNOCASH_SEND_MINCONF - 1))"
+    if [[ "${extra_conf_blocks}" -gt 0 ]]; then
+      echo "mining ${extra_conf_blocks} additional blocks for minconf=${JUNOCASH_SEND_MINCONF}..." >&2
+      scripts/junocash/testnet/mine.sh "${extra_conf_blocks}" >/dev/null
+      shield_height="$(wait_for_tx_confirmations "${txid_shield}" "${JUNOCASH_SEND_MINCONF}" 3600)"
+      echo "shield_height=${shield_height} (minconf=${JUNOCASH_SEND_MINCONF})" >&2
+    fi
   fi
 fi
 
