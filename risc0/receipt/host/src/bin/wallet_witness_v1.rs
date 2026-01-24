@@ -156,7 +156,7 @@ fn main() -> Result<()> {
             .context("extract note opening from tx")?;
 
     let (orchard_root, merkle_index, merkle_siblings) =
-        match merkle_path_from_wallet(&wallet_path, &db_dump, &selected_txid, selected_action) {
+        match merkle_path_from_wallet(&args, &wallet_path, &db_dump, &selected_txid, selected_action) {
             Ok(v) => v,
             Err(err) => {
                 eprintln!(
@@ -355,6 +355,7 @@ fn note_opening_from_tx(
 }
 
 fn merkle_path_from_wallet(
+    args: &Args,
     wallet_path: &Path,
     db_dump: &Path,
     txid: &TxId,
@@ -363,13 +364,28 @@ fn merkle_path_from_wallet(
     let record = wallet_record_bytes(wallet_path, db_dump, ORCHARD_NOTE_COMMITMENT_TREE_KEY)
         .context("extract orchard_note_commitment_tree record")?;
 
-    let (tree, positions) = parse_orchard_note_commitment_tree(&record)
+    let (last_checkpoint, mut tree, positions) = parse_orchard_note_commitment_tree(&record)
         .context("parse orchard note commitment tree record")?;
 
-    let position = positions
-        .get(&(txid_to_bytes_internal(txid), action_idx))
-        .copied()
-        .ok_or_else(|| anyhow!("note position not found in wallet tree for txid+action"))?;
+    let key = (txid_to_bytes_internal(txid), action_idx);
+    let position = match positions.get(&key).copied() {
+        Some(pos) => pos,
+        None => {
+            // The wallet witness cache is only persisted periodically (~10 minutes), so
+            // freshly-mined notes can be missing from `wallet_note_positions` even when the
+            // commitment tree itself is up-to-date. In that case, we can start from the wallet's
+            // persisted commitment tree and scan *just the recent blocks* beyond the last
+            // checkpoint to mark the target action, without a full-chain scan.
+            let Some(last_checkpoint) = last_checkpoint else {
+                bail!("note position not found in wallet tree for txid+action (no wallet checkpoint height available)");
+            };
+            let start_height = last_checkpoint
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("wallet checkpoint height overflow: {}", last_checkpoint))?;
+            mark_outpoint_in_tree_from_chain(args, &mut tree, start_height, txid, action_idx)
+                .context("mark outpoint in wallet tree by scanning recent chain range")?
+        }
+    };
 
     let merkle_index_u64: u64 = position.into();
     let merkle_index_u32: u32 = merkle_index_u64
@@ -397,6 +413,75 @@ fn merkle_path_from_wallet(
     }
 
     Ok((root.to_bytes(), merkle_index_u32, siblings))
+}
+
+fn mark_outpoint_in_tree_from_chain(
+    args: &Args,
+    tree: &mut bridgetree::BridgeTree<MerkleHashOrchard, u32, ORCHARD_MERKLE_DEPTH_U8>,
+    start_height: u32,
+    txid: &TxId,
+    action_idx: u32,
+) -> Result<incrementalmerkletree::Position> {
+    let tip_height: u32 = junocash_cli_string(args, &["getblockcount"])
+        .context("junocash-cli getblockcount")?
+        .trim()
+        .parse()
+        .context("parse getblockcount")?;
+
+    if start_height > tip_height {
+        bail!(
+            "wallet checkpoint is ahead of chain tip: start_height={} tip_height={}",
+            start_height,
+            tip_height
+        );
+    }
+
+    let mut marked_pos: Option<incrementalmerkletree::Position> = None;
+
+    for height in start_height..=tip_height {
+        let bh = junocash_cli_string(args, &["getblockhash", &height.to_string()])
+            .context("junocash-cli getblockhash")?
+            .trim()
+            .to_string();
+
+        let block_raw = junocash_cli_string(args, &["getblock", &bh, "2"])
+            .context("junocash-cli getblock")?;
+        let block: GetBlockRespV2 = serde_json::from_str(&block_raw).context("parse getblock JSON")?;
+
+        for tx in block.tx {
+            let cur_txid = txid_from_rpc_hex(&tx.txid).context("parse txid")?;
+            let tx_bytes = hex::decode(tx.hex.trim()).context("decode tx hex")?;
+
+            let parsed = Transaction::read(Cursor::new(tx_bytes), BranchId::Nu5)
+                .context("parse transaction bytes")?;
+            let data = parsed.into_data();
+            let Some(bundle) = data.orchard_bundle() else {
+                continue;
+            };
+
+            for (i, action) in bundle.actions().iter().enumerate() {
+                let leaf = MerkleHashOrchard::from_cmx(action.cmx());
+                if !tree.append(leaf) {
+                    bail!("orchard note commitment tree overflow");
+                }
+
+                if cur_txid == *txid && i as u32 == action_idx {
+                    if marked_pos.is_some() {
+                        bail!("duplicate (txid, action) match while scanning chain");
+                    }
+                    marked_pos = tree.mark();
+                }
+            }
+        }
+    }
+
+    marked_pos.ok_or_else(|| {
+        anyhow!(
+            "target orchard action not found when scanning chain from height {}..{}",
+            start_height,
+            tip_height
+        )
+    })
 }
 
 fn merkle_path_from_chain(
@@ -712,6 +797,8 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    const TEST_ORCHARD_TX_HEX: &str = include_str!("fixtures/orchard_tx_nu5.hex");
+
     fn mk_temp_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -807,11 +894,113 @@ exit 0
         drop(ctx);
         let _ = fs::remove_dir_all(&root);
     }
+
+    #[test]
+    fn merkle_path_from_wallet_marks_outpoint_by_scanning_recent_chain_range() {
+        let root = mk_temp_dir("juno-walletwitness-incremental");
+        fs::create_dir_all(&root).unwrap();
+
+        let wallet = root.join("wallet.dat");
+        fs::write(&wallet, b"wallet").unwrap();
+
+        // Fake db_dump that returns a minimal Orchard note commitment tree record with:
+        // - last_checkpoint=Some(1)
+        // - empty note_positions map
+        // This forces `merkle_path_from_wallet` to extend the tree from height 2..tip.
+        let db_dump = root.join("db_dump");
+        let orchard_key_hex = "1c6f7263686172645f6e6f74655f636f6d6d69746d656e745f74726565";
+        let orchard_val_hex = "e2620100010101000000030000000200000000000000000000000000000100000000000000000000000000640000000000000000";
+        write_executable(
+            &db_dump,
+            &format!(
+                r#"#!/bin/sh
+set -e
+cat <<'EOF'
+VERSION=3
+format=bytevalue
+database=main
+type=btree
+db_pagesize=4096
+HEADER=END
+{orchard_key_hex}
+{orchard_val_hex}
+DATA=END
+EOF
+"#
+            ),
+        );
+
+        // Fake junocash-cli that exposes a tiny chain with tip=2, and a single block containing
+        // one NU5 transaction with an Orchard bundle.
+        let tx_hex_path = root.join("tx.hex");
+        let tx_hex = TEST_ORCHARD_TX_HEX.lines().collect::<String>();
+        fs::write(&tx_hex_path, tx_hex).unwrap();
+
+        let target_txid_rpc = "00000000000000000000000000000000000000000000000000000000000000aa";
+        let blockhash = "00000000000000000000000000000000000000000000000000000000000000bb";
+        let tx_hex_path_str = tx_hex_path.display().to_string();
+
+        let junocash_cli = root.join("junocash-cli");
+        write_executable(
+            &junocash_cli,
+            &format!(
+                r#"#!/bin/sh
+set -eu
+cmd="${{1:-}}"
+shift || true
+case "$cmd" in
+  getblockcount)
+    echo 2
+    ;;
+  getblockhash)
+    if [ "${{1:-}}" != "2" ]; then
+      echo "unexpected getblockhash height: ${{1:-}}" >&2
+      exit 2
+    fi
+    echo "{blockhash}"
+    ;;
+  getblock)
+    if [ "${{1:-}}" != "{blockhash}" ] || [ "${{2:-}}" != "2" ]; then
+      echo "unexpected getblock args: $*" >&2
+      exit 2
+    fi
+    txhex="$(cat "{tx_hex_path_str}")"
+    printf '{{\"tx\":[{{\"txid\":\"{target_txid_rpc}\",\"hex\":\"%s\"}}]}}' "$txhex"
+    ;;
+  *)
+    echo "unexpected junocash-cli call: $cmd $*" >&2
+    exit 2
+    ;;
+esac
+"#
+            ),
+        );
+
+        let args = Args {
+            junocash_cli: junocash_cli.display().to_string(),
+            db_dump: Some(db_dump.clone()),
+            wallet: Some(wallet.clone()),
+            txid: None,
+            action: None,
+            unified_address: None,
+            deployment_id: None,
+            fill_id: None,
+            print_witness_hex: false,
+        };
+
+        let txid = txid_from_rpc_hex(target_txid_rpc).unwrap();
+        let (_root, merkle_index, _siblings) =
+            merkle_path_from_wallet(&args, &wallet, &db_dump, &txid, 0).unwrap();
+        assert_eq!(merkle_index, 0);
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }
 
 fn parse_orchard_note_commitment_tree(
     bytes: &[u8],
 ) -> Result<(
+    Option<u32>,
     bridgetree::BridgeTree<MerkleHashOrchard, u32, ORCHARD_MERKLE_DEPTH_U8>,
     BTreeMap<([u8; 32], u32), incrementalmerkletree::Position>,
 )> {
@@ -830,7 +1019,7 @@ fn parse_orchard_note_commitment_tree(
     }
 
     // last_checkpoint: Option<u32le> (block height)
-    let _last_checkpoint: Option<u32> =
+    let last_checkpoint: Option<u32> =
         Optional::read(&mut cursor, |r| r.read_u32::<LittleEndian>())
     .context("read last checkpoint")?;
 
@@ -860,7 +1049,7 @@ fn parse_orchard_note_commitment_tree(
     let positions: BTreeMap<([u8; 32], u32), incrementalmerkletree::Position> =
         positions_vec.into_iter().flatten().collect();
 
-    Ok((tree, positions))
+    Ok((last_checkpoint, tree, positions))
 }
 
 // ---- Unified viewing key decoding (ZIP 316 / Bech32m + F4Jumble) ----
