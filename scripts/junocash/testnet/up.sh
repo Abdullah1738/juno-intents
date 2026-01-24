@@ -104,6 +104,18 @@ if [[ "${TXINDEX}" == "1" ]]; then
   TXINDEX_FLAG=(-txindex=1)
 fi
 
+BOOTSTRAP_NODES_CSV="${JUNO_TESTNET_BOOTSTRAP_NODES:-199.247.15.208:18234}"
+BOOTSTRAP_FLAGS=()
+if [[ -n "${BOOTSTRAP_NODES_CSV}" ]]; then
+  IFS=',' read -r -a bootstrap_nodes <<<"${BOOTSTRAP_NODES_CSV}"
+  for node in "${bootstrap_nodes[@]}"; do
+    node="$(printf '%s' "${node}" | tr -d ' \t\r\n')"
+    if [[ -n "${node}" ]]; then
+      BOOTSTRAP_FLAGS+=(-addnode="${node}")
+    fi
+  done
+fi
+
 if [[ "${MODE}" == "public" ]]; then
   docker run -d \
     "${PLATFORM_FLAG[@]}" \
@@ -123,6 +135,7 @@ if [[ "${MODE}" == "public" ]]; then
       -listen=1 \
       -bind=0.0.0.0 \
       "${TXINDEX_FLAG[@]}" \
+      "${BOOTSTRAP_FLAGS[@]}" \
       "${PERF_FLAGS[@]}" \
       "${IBD_FLAGS[@]}" >/dev/null
 
