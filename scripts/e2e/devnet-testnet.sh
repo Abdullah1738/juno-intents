@@ -1583,7 +1583,10 @@ if [[ ! -f "${wallet_backup_host_a}" ]]; then
   echo "backupwallet did not create expected file: ${wallet_backup_host_a}" >&2
   exit 1
 fi
-WALLET_WITNESS_DAT_A="${wallet_backup_host_a}"
+wallet_dir="$(dirname "${WALLET_DAT}")"
+wallet_backup_inplace_a="${wallet_dir}/${wallet_backup_file_a}"
+cp -f "${wallet_backup_host_a}" "${wallet_backup_inplace_a}"
+WALLET_WITNESS_DAT_A="${wallet_backup_inplace_a}"
 WITNESS_A="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wallet_witness_v1 -- \
   --junocash-cli "${JUNOCASH_CLI}" \
   --wallet "${WALLET_WITNESS_DAT_A}" \
@@ -1799,7 +1802,10 @@ if [[ ! -f "${wallet_backup_host_b}" ]]; then
   echo "backupwallet did not create expected file: ${wallet_backup_host_b}" >&2
   exit 1
 fi
-WALLET_WITNESS_DAT_B="${wallet_backup_host_b}"
+wallet_dir="$(dirname "${WALLET_DAT}")"
+wallet_backup_inplace_b="${wallet_dir}/${wallet_backup_file_b}"
+cp -f "${wallet_backup_host_b}" "${wallet_backup_inplace_b}"
+WALLET_WITNESS_DAT_B="${wallet_backup_inplace_b}"
 WITNESS_B="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wallet_witness_v1 -- \
   --junocash-cli "${JUNOCASH_CLI}" \
   --wallet "${WALLET_WITNESS_DAT_B}" \
