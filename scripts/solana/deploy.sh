@@ -14,7 +14,7 @@ WORKDIR_OVERRIDE=""
 MINT_PUBKEY=""
 
 FEE_BPS="25"
-FEE_COLLECTOR_PUBKEY=""
+FEE_COLLECTOR_PUBKEY="7Qx1LJUMeCXr8ygfwdnEmGbYSsQPrgHrFU7VPuGXJeEH"
 
 VERIFIER_ROUTER_PROGRAM_ID=""
 VERIFIER_PROGRAM_ID=""
@@ -38,7 +38,6 @@ Usage:
     --cluster devnet|mainnet|localnet \
     --admin <pubkey> \
     --mint <pubkey> \
-    --fee-collector <pubkey> \
     --verifier-router-program <pubkey> \
     --verifier-program <pubkey> \
     --operator <pubkey> --operator <pubkey> \
@@ -47,7 +46,6 @@ Usage:
     [--deployment-id <hex32>] \
     [--workdir <path>] \
     [--rpc-url <url>] \
-    [--fee-bps <u16>] \
     [--threshold <u8>] [--conflict-threshold <u8>] [--finalization-delay-slots <u64>] \
     [--refund-to <pubkey>] \
     [--name <string>] \
@@ -90,10 +88,6 @@ while [[ $# -gt 0 ]]; do
       MINT_PUBKEY="${2:-}"; shift 2 ;;
     --refund-to)
       REFUND_PUBKEY="${2:-}"; shift 2 ;;
-    --fee-bps)
-      FEE_BPS="${2:-}"; shift 2 ;;
-    --fee-collector)
-      FEE_COLLECTOR_PUBKEY="${2:-}"; shift 2 ;;
     --verifier-router-program)
       VERIFIER_ROUTER_PROGRAM_ID="${2:-}"; shift 2 ;;
     --verifier-program)
@@ -145,10 +139,6 @@ if [[ -z "${MINT_PUBKEY}" ]]; then
 fi
 if [[ -z "${REFUND_PUBKEY}" ]]; then
   REFUND_PUBKEY="${ADMIN_PUBKEY}"
-fi
-if [[ -z "${FEE_COLLECTOR_PUBKEY}" ]]; then
-  echo "--fee-collector is required" >&2
-  exit 2
 fi
 if [[ -z "${VERIFIER_ROUTER_PROGRAM_ID}" ]]; then
   echo "--verifier-router-program is required" >&2
@@ -439,8 +429,6 @@ RISC0_VERIFIER_ENTRY_PDA="$(cd "${ROOT}" && go run ./cmd/juno-intents risc0-pda 
   --iep-program-id "${IEP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --mint "${MINT_PUBKEY}" \
-  --fee-bps "${FEE_BPS}" \
-  --fee-collector "${FEE_COLLECTOR_PUBKEY}" \
   --checkpoint-registry-program "${CRP_PROGRAM_ID}" \
   --receipt-verifier-program "${RV_PROGRAM_ID}" \
   --verifier-router-program "${VERIFIER_ROUTER_PROGRAM_ID}" \

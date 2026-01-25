@@ -168,8 +168,6 @@ func cmdInitIEP(argv []string) error {
 		iepProgramStr string
 		deploymentHex string
 		mintStr       string
-		feeBps        uint
-		feeCollector  string
 		crpProgramStr string
 		verifierStr   string
 
@@ -185,8 +183,6 @@ func cmdInitIEP(argv []string) error {
 	fs.StringVar(&iepProgramStr, "iep-program-id", "", "IEP program id (base58)")
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
 	fs.StringVar(&mintStr, "mint", "", "SPL token mint pubkey (base58)")
-	fs.UintVar(&feeBps, "fee-bps", 0, "Protocol fee bps (u16)")
-	fs.StringVar(&feeCollector, "fee-collector", "", "Fee collector pubkey (base58)")
 	fs.StringVar(&crpProgramStr, "checkpoint-registry-program", "", "CRP program id (base58)")
 	fs.StringVar(&verifierStr, "receipt-verifier-program", "", "Receipt verifier program id (base58)")
 	fs.StringVar(&verifierRouterProgramStr, "verifier-router-program", "", "RISC0 verifier router program id (base58)")
@@ -199,14 +195,11 @@ func cmdInitIEP(argv []string) error {
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
-	if iepProgramStr == "" || deploymentHex == "" || mintStr == "" || feeCollector == "" || crpProgramStr == "" || verifierStr == "" {
+	if iepProgramStr == "" || deploymentHex == "" || mintStr == "" || crpProgramStr == "" || verifierStr == "" {
 		return errors.New("missing required args (see --help)")
 	}
 	if verifierRouterProgramStr == "" || routerStr == "" || verifierEntryStr == "" || verifierProgramStr == "" {
 		return errors.New("missing required args (see --help)")
-	}
-	if feeBps > 65_535 {
-		return errors.New("--fee-bps must fit in u16")
 	}
 
 	iepProgram, err := solana.ParsePubkey(iepProgramStr)
@@ -221,10 +214,8 @@ func cmdInitIEP(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("parse --mint: %w", err)
 	}
-	feeCollectorPK, err := solana.ParsePubkey(feeCollector)
-	if err != nil {
-		return fmt.Errorf("parse --fee-collector: %w", err)
-	}
+	const feeBps = 25
+	feeCollectorPK := mustParsePubkeyBase58("7Qx1LJUMeCXr8ygfwdnEmGbYSsQPrgHrFU7VPuGXJeEH")
 	crpProgram, err := solana.ParsePubkey(crpProgramStr)
 	if err != nil {
 		return fmt.Errorf("parse --checkpoint-registry-program: %w", err)
@@ -270,7 +261,7 @@ func cmdInitIEP(argv []string) error {
 		},
 		Data: encodeIepInitialize(
 			[32]byte(deploymentID),
-			uint16(feeBps),
+			feeBps,
 			feeCollectorPK,
 			crpProgram,
 			verifierProgram,

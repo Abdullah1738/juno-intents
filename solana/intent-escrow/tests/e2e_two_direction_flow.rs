@@ -19,6 +19,7 @@ use juno_intents_intent_escrow::{
     config_pda as iep_config_pda, fill_pda as iep_fill_pda, intent_pda as iep_intent_pda,
     intent_vault_pda as iep_intent_vault_pda, spent_receipt_pda as iep_spent_pda,
     vault_pda as iep_vault_pda, IepFillV2, IepInstruction, IepIntentV3,
+    DEV_FEE_BPS, DEV_FEE_COLLECTOR,
 };
 use juno_intents_operator_registry::{
     config_pda as orp_config_pda, operator_pda as orp_operator_pda, OrpInstruction,
@@ -331,7 +332,7 @@ async fn two_direction_bridge_flow_with_solver_binding_and_checkpoints() {
     let solver1 = Keypair::new();
     let solver2 = Keypair::new();
     let user = Keypair::new();
-    let fee_owner = Keypair::new();
+    let fee_collector = DEV_FEE_COLLECTOR;
     let solver1_ta = Keypair::new();
     let solver2_ta = Keypair::new();
     let user_ta = Keypair::new();
@@ -374,7 +375,7 @@ async fn two_direction_bridge_flow_with_solver_binding_and_checkpoints() {
         &payer.pubkey(),
         &fee_ta.pubkey(),
         &mint.pubkey(),
-        &fee_owner.pubkey(),
+        &fee_collector,
         10_000_000_000,
     ));
     ixs.push(mint_to_ix(
@@ -571,8 +572,8 @@ async fn two_direction_bridge_flow_with_solver_binding_and_checkpoints() {
         ],
         IepInstruction::Initialize {
             deployment_id: DEPLOYMENT_ID,
-            fee_bps: 25, // 0.25%
-            fee_collector: fee_owner.pubkey(),
+            fee_bps: DEV_FEE_BPS, // 0.25%
+            fee_collector,
             checkpoint_registry_program: crp_program_id,
             receipt_verifier_program: receipt_verifier_program_id,
             verifier_router_program: verifier_router_program_id,

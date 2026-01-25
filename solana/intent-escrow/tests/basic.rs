@@ -18,6 +18,7 @@ use juno_intents_intent_escrow::{
     config_pda as iep_config_pda, fill_pda as iep_fill_pda, intent_pda as iep_intent_pda,
     intent_vault_pda as iep_intent_vault_pda, spent_receipt_pda as iep_spent_pda,
     vault_pda as iep_vault_pda, IepFillV2, IepInstruction, IepIntentV2,
+    DEV_FEE_BPS, DEV_FEE_COLLECTOR,
 };
 
 fn iep_ix(
@@ -216,7 +217,7 @@ async fn settle_transfers_net_and_fee_and_marks_spent() {
     let mint = Keypair::new();
     let solver = Keypair::new();
     let recipient_owner = Keypair::new();
-    let fee_owner = Keypair::new();
+    let fee_collector = DEV_FEE_COLLECTOR;
     let solver_ta = Keypair::new();
     let recipient_ta = Keypair::new();
     let fee_ta = Keypair::new();
@@ -252,7 +253,7 @@ async fn settle_transfers_net_and_fee_and_marks_spent() {
         &payer.pubkey(),
         &fee_ta.pubkey(),
         &mint.pubkey(),
-        &fee_owner.pubkey(),
+        &fee_collector,
         10_000_000_000,
     ));
     ixs.push(mint_to_ix(
@@ -367,8 +368,8 @@ async fn settle_transfers_net_and_fee_and_marks_spent() {
         ],
         IepInstruction::Initialize {
             deployment_id,
-            fee_bps: 25, // 0.25%
-            fee_collector: fee_owner.pubkey(),
+            fee_bps: DEV_FEE_BPS, // 0.25%
+            fee_collector,
             checkpoint_registry_program: crp_program_id,
             receipt_verifier_program: receipt_verifier_program_id,
             verifier_router_program,
@@ -599,7 +600,7 @@ async fn settle_direction_b_transfers_to_solver_and_fee() {
     // Create mint + token accounts.
     let mint = Keypair::new();
     let solver = Keypair::new();
-    let fee_owner = Keypair::new();
+    let fee_collector = DEV_FEE_COLLECTOR;
     let creator_ta = Keypair::new();
     let solver_ta = Keypair::new();
     let fee_ta = Keypair::new();
@@ -635,7 +636,7 @@ async fn settle_direction_b_transfers_to_solver_and_fee() {
         &payer.pubkey(),
         &fee_ta.pubkey(),
         &mint.pubkey(),
-        &fee_owner.pubkey(),
+        &fee_collector,
         10_000_000_000,
     ));
     ixs.push(mint_to_ix(
@@ -754,8 +755,8 @@ async fn settle_direction_b_transfers_to_solver_and_fee() {
         ],
         IepInstruction::Initialize {
             deployment_id,
-            fee_bps: 25,
-            fee_collector: fee_owner.pubkey(),
+            fee_bps: DEV_FEE_BPS,
+            fee_collector,
             checkpoint_registry_program: crp_program_id,
             receipt_verifier_program: receipt_verifier_program_id,
             verifier_router_program,

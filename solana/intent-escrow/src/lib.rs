@@ -46,6 +46,14 @@ const SPENT_RECEIPT_LEN_V1: usize = 1 + 32 + 32;
 
 const FEE_BPS_DENOMINATOR: u64 = 10_000;
 
+pub const DEV_FEE_BPS: u16 = 25;
+pub const DEV_FEE_COLLECTOR_BYTES: [u8; 32] = [
+    0x5f, 0x48, 0xac, 0xe3, 0xe8, 0x98, 0x60, 0xba, 0x7a, 0xf8, 0x1d, 0xbb, 0x38, 0xb7,
+    0x9c, 0x4a, 0x40, 0xf1, 0xb7, 0xc3, 0x70, 0x9f, 0x60, 0x81, 0xe9, 0x26, 0x9f, 0x98,
+    0x79, 0xcc, 0xa2, 0x1e,
+];
+pub const DEV_FEE_COLLECTOR: Pubkey = Pubkey::new_from_array(DEV_FEE_COLLECTOR_BYTES);
+
 const RECEIPT_BUNDLE_VERSION_V1: u16 = 1;
 const ZKVM_PROOF_SYSTEM_RISC0_GROTH16: u8 = 1;
 const RECEIPT_JOURNAL_LEN_V1: usize = 170;
@@ -343,6 +351,7 @@ pub enum IepError {
     CheckpointNotFinalized = 27,
     TokenAccountInvalid = 28,
     InsufficientFunds = 29,
+    InvalidFeeCollector = 30,
 }
 
 impl From<IepError> for ProgramError {
@@ -467,8 +476,11 @@ fn process_initialize(
         return Err(ProgramError::MissingRequiredSignature);
     }
 
-    if fee_bps as u64 > FEE_BPS_DENOMINATOR {
+    if fee_bps != DEV_FEE_BPS || fee_bps as u64 > FEE_BPS_DENOMINATOR {
         return Err(IepError::InvalidFeeBps.into());
+    }
+    if fee_collector != DEV_FEE_COLLECTOR {
+        return Err(IepError::InvalidFeeCollector.into());
     }
 
     let (expected_config, bump) = config_pda(program_id, &deployment_id);
@@ -515,8 +527,8 @@ fn process_initialize(
         version: CONFIG_VERSION_V3,
         deployment_id,
         mint: *mint_ai.key,
-        fee_bps,
-        fee_collector,
+        fee_bps: DEV_FEE_BPS,
+        fee_collector: DEV_FEE_COLLECTOR,
         checkpoint_registry_program,
         receipt_verifier_program,
         verifier_router_program,

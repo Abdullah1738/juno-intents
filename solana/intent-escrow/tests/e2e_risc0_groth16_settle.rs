@@ -26,6 +26,7 @@ use juno_intents_intent_escrow::{
     config_pda as iep_config_pda, fill_pda as iep_fill_pda, intent_pda as iep_intent_pda,
     intent_vault_pda as iep_intent_vault_pda, spent_receipt_pda as iep_spent_pda,
     vault_pda as iep_vault_pda, IepFillV2, IepInstruction, IepIntentV2,
+    DEV_FEE_BPS, DEV_FEE_COLLECTOR,
 };
 
 const IEP_PROGRAM_ID_BYTES: [u8; 32] = [0xA1u8; 32];
@@ -455,7 +456,7 @@ async fn settles_real_risc0_groth16_bundle_v1() {
     let mint = Keypair::new();
     let solver = Keypair::new();
     let recipient_owner = Keypair::new();
-    let fee_owner = Keypair::new();
+    let fee_collector = DEV_FEE_COLLECTOR;
     let solver_ta = Keypair::new();
     let recipient_ta = Keypair::new();
     let fee_ta = Keypair::new();
@@ -491,7 +492,7 @@ async fn settles_real_risc0_groth16_bundle_v1() {
         &payer.pubkey(),
         &fee_ta.pubkey(),
         &mint.pubkey(),
-        &fee_owner.pubkey(),
+        &fee_collector,
         10_000_000_000,
     ));
     ixs.push(mint_to_ix(
@@ -707,8 +708,8 @@ async fn settles_real_risc0_groth16_bundle_v1() {
         ],
         IepInstruction::Initialize {
             deployment_id: journal.deployment_id,
-            fee_bps: 25, // 0.25%
-            fee_collector: fee_owner.pubkey(),
+            fee_bps: DEV_FEE_BPS, // 0.25%
+            fee_collector,
             checkpoint_registry_program: crp_program_id,
             receipt_verifier_program: receipt_verifier_program_id,
             verifier_router_program: risc0_verifier_router::ID,
