@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -16,7 +17,10 @@ import (
 	"time"
 
 	"github.com/Abdullah1738/juno-intents/offchain/helius"
+	"github.com/Abdullah1738/juno-intents/offchain/iep"
+	"github.com/Abdullah1738/juno-intents/offchain/solana"
 	"github.com/Abdullah1738/juno-intents/offchain/solvernet"
+	"github.com/Abdullah1738/juno-intents/offchain/solanarpc"
 	"github.com/Abdullah1738/juno-intents/protocol"
 )
 
@@ -38,6 +42,8 @@ func run(argv []string) error {
 		return cmdAnnounce(argv[1:])
 	case "serve":
 		return cmdServe(argv[1:])
+	case "run":
+		return cmdRun(argv[1:])
 	case "rfq":
 		return cmdRFQ(argv[1:])
 	default:
@@ -50,7 +56,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  solvernet announce --deployment-id <hex32> --quote-url <url> [--keypair <path>]")
-	fmt.Fprintln(w, "  solvernet serve --listen :8080 --deployment-id <hex32> --quote-url <url> --price-zat-per-token-unit <u64> --orchard-receiver-bytes-hex <hex43> [--spread-bps <u16>] [--keypair <path>]")
+	fmt.Fprintln(w, "  solvernet serve --listen :8080 --deployment-id <hex32> --quote-url <url> --mint <base58> --price-zat-per-token-unit <u64> --orchard-receiver-bytes-hex <hex43> [--spread-bps <u16>] [--keypair <path>]")
+	fmt.Fprintln(w, "  solvernet run --listen :8080 --deployment-id <hex32> --quote-url <url> --iep-program-id <base58> --solver-token-account <base58> --mint <base58> --price-zat-per-token-unit <u64> --orchard-receiver-bytes-hex <hex43> [--spread-bps <u16>] [--poll-interval 2s] [--airdrop-sol <n>] [--keypair <path>]")
 	fmt.Fprintln(w, "  solvernet rfq --deployment-id <hex32> --fill-id <hex32> --direction A|B --mint <base58> --net-amount <u64> --solana-recipient <base58> --intent-expiry-slot <u64> [--receiver-tag <hex32>] --announcement-url <url> [--announcement-url <url>...]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Environment:")
@@ -106,6 +113,7 @@ func cmdServe(argv []string) error {
 		listenAddr      string
 		deploymentHex   string
 		quoteURL        string
+		mintStr         string
 		keypairPath     string
 		priceZatPerUnit uint64
 		spreadBps       uint
@@ -123,6 +131,7 @@ func cmdServe(argv []string) error {
 	fs.StringVar(&listenAddr, "listen", ":8080", "Listen address")
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
 	fs.StringVar(&quoteURL, "quote-url", "", "Public quote URL (must match the server externally reachable URL)")
+	fs.StringVar(&mintStr, "mint", "", "SPL token mint pubkey (base58)")
 	fs.StringVar(&keypairPath, "keypair", solvernet.DefaultSolanaKeypairPath(), "Solana keypair path (Solana CLI JSON format)")
 	fs.Uint64Var(&priceZatPerUnit, "price-zat-per-token-unit", 0, "Fixed price: zatoshis per Solana token base unit")
 	fs.UintVar(&spreadBps, "spread-bps", 0, "Spread in bps applied to the required JunoCash amount")
@@ -139,8 +148,8 @@ func cmdServe(argv []string) error {
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
-	if deploymentHex == "" || quoteURL == "" || priceZatPerUnit == 0 || orchardReceiverHex == "" {
-		return errors.New("--deployment-id, --quote-url, --price-zat-per-token-unit, and --orchard-receiver-bytes-hex are required")
+	if deploymentHex == "" || quoteURL == "" || mintStr == "" || priceZatPerUnit == 0 || orchardReceiverHex == "" {
+		return errors.New("--deployment-id, --quote-url, --mint, --price-zat-per-token-unit, and --orchard-receiver-bytes-hex are required")
 	}
 	if spreadBps > 10_000 {
 		return errors.New("--spread-bps must be <= 10000")
@@ -149,6 +158,11 @@ func cmdServe(argv []string) error {
 	deploymentID, err := protocol.ParseDeploymentIDHex(deploymentHex)
 	if err != nil {
 		return fmt.Errorf("parse deployment id: %w", err)
+	}
+
+	mint, err := solana.ParsePubkey(mintStr)
+	if err != nil {
+		return fmt.Errorf("parse --mint: %w", err)
 	}
 
 	priv, pub, err := solvernet.LoadSolanaKeypair(keypairPath)
@@ -184,6 +198,7 @@ func cmdServe(argv []string) error {
 		SolverPubkey: solverPub,
 		QuoteURL:     quoteURL,
 		PrivKey:      priv,
+		Mint:         protocol.SolanaPubkey(mint),
 		OrchardReceiverBytes: orchardReceiverBytes,
 		Strategy: solvernet.FixedPriceStrategy{
 			ZatoshiPerTokenUnit: priceZatPerUnit,
@@ -215,6 +230,265 @@ func cmdServe(argv []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "listening on %s\n", listenAddr)
 	return s.ListenAndServe()
+}
+
+func cmdRun(argv []string) error {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	var (
+		listenAddr         string
+		deploymentHex      string
+		quoteURL           string
+		mintStr            string
+		iepProgramStr      string
+		solverTokenAccountStr string
+		keypairPath        string
+		priceZatPerUnit    uint64
+		spreadBps          uint
+		orchardReceiverHex string
+		pollInterval       time.Duration
+		airdropSol         uint
+	)
+
+	fs.StringVar(&listenAddr, "listen", ":8080", "Listen address")
+	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
+	fs.StringVar(&quoteURL, "quote-url", "", "Public quote URL (must match the server externally reachable URL)")
+	fs.StringVar(&iepProgramStr, "iep-program-id", "", "IEP program id (base58)")
+	fs.StringVar(&solverTokenAccountStr, "solver-token-account", "", "Solver wJUNO token account (base58)")
+	fs.StringVar(&mintStr, "mint", "", "SPL token mint pubkey (base58)")
+	fs.StringVar(&keypairPath, "keypair", solvernet.DefaultSolanaKeypairPath(), "Solana keypair path (Solana CLI JSON format)")
+	fs.Uint64Var(&priceZatPerUnit, "price-zat-per-token-unit", 0, "Fixed price: zatoshis per Solana token base unit")
+	fs.UintVar(&spreadBps, "spread-bps", 0, "Spread in bps applied to the required JunoCash amount")
+	fs.StringVar(&orchardReceiverHex, "orchard-receiver-bytes-hex", "", "Orchard receiver bytes for DirectionA settlement (43-byte hex)")
+	fs.DurationVar(&pollInterval, "poll-interval", 2*time.Second, "Poll interval for scanning for bound intents")
+	fs.UintVar(&airdropSol, "airdrop-sol", 0, "Request this many SOL before starting (devnet/localnet only)")
+
+	if err := fs.Parse(argv); err != nil {
+		return err
+	}
+	if deploymentHex == "" || quoteURL == "" || iepProgramStr == "" || solverTokenAccountStr == "" || mintStr == "" || priceZatPerUnit == 0 || orchardReceiverHex == "" {
+		return errors.New("--deployment-id, --quote-url, --iep-program-id, --solver-token-account, --mint, --price-zat-per-token-unit, and --orchard-receiver-bytes-hex are required")
+	}
+	if spreadBps > 10_000 {
+		return errors.New("--spread-bps must be <= 10000")
+	}
+
+	deploymentID, err := protocol.ParseDeploymentIDHex(deploymentHex)
+	if err != nil {
+		return fmt.Errorf("parse deployment id: %w", err)
+	}
+	iepProgram, err := solana.ParsePubkey(iepProgramStr)
+	if err != nil {
+		return fmt.Errorf("parse --iep-program-id: %w", err)
+	}
+	mint, err := solana.ParsePubkey(mintStr)
+	if err != nil {
+		return fmt.Errorf("parse --mint: %w", err)
+	}
+	solverTokenAccount, err := solana.ParsePubkey(solverTokenAccountStr)
+	if err != nil {
+		return fmt.Errorf("parse --solver-token-account: %w", err)
+	}
+
+	priv, pub, err := solvernet.LoadSolanaKeypair(keypairPath)
+	if err != nil {
+		return fmt.Errorf("load keypair: %w", err)
+	}
+	solverPub := protocol.SolanaPubkey(pub)
+
+	orchardReceiverBytes, err := hexBytes(orchardReceiverHex, protocol.OrchardReceiverBytesLen)
+	if err != nil {
+		return fmt.Errorf("parse --orchard-receiver-bytes-hex: %w", err)
+	}
+
+	hc, err := helius.ClientFromEnv()
+	if err != nil && !errors.Is(err, helius.ErrMissingAPIKey) {
+		return fmt.Errorf("helius: %w", err)
+	}
+	if errors.Is(err, helius.ErrMissingAPIKey) {
+		hc = nil
+	}
+
+	solver := &solvernet.Solver{
+		DeploymentID: deploymentID,
+		SolverPubkey: solverPub,
+		QuoteURL:     quoteURL,
+		PrivKey:      priv,
+		Mint:         protocol.SolanaPubkey(mint),
+		OrchardReceiverBytes: orchardReceiverBytes,
+		Strategy: solvernet.FixedPriceStrategy{
+			ZatoshiPerTokenUnit: priceZatPerUnit,
+			SpreadBps:           uint16(spreadBps),
+		},
+		Helius: hc,
+	}
+
+	handler, err := solver.Handler()
+	if err != nil {
+		return err
+	}
+
+	rpc, err := solanarpc.ClientFromEnv()
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	if airdropSol != 0 {
+		lamports := uint64(airdropSol) * 1_000_000_000
+		sig, err := rpc.RequestAirdrop(ctx, solana.Pubkey(pub).Base58(), lamports)
+		if err != nil {
+			return fmt.Errorf("request airdrop: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "airdrop sig=%s\n", sig)
+		time.Sleep(5 * time.Second)
+	}
+	go runAutoFillLoop(ctx, rpc, iepProgram, deploymentID, solana.Pubkey(pub), priv, mint, solverTokenAccount, pollInterval)
+
+	s := &http.Server{
+		Addr:              listenAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	fmt.Fprintf(os.Stderr, "listening on %s\n", listenAddr)
+	return s.ListenAndServe()
+}
+
+func runAutoFillLoop(
+	ctx context.Context,
+	rpc *solanarpc.Client,
+	iepProgram solana.Pubkey,
+	deploymentID protocol.DeploymentID,
+	solverPubkey solana.Pubkey,
+	solverPriv ed25519.PrivateKey,
+	mint solana.Pubkey,
+	solverTokenAccount solana.Pubkey,
+	interval time.Duration,
+) {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	splTokenProgramID := mustParsePubkey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+
+	signers := map[solana.Pubkey]ed25519.PrivateKey{
+		solverPubkey: solverPriv,
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		accounts, err := rpc.ProgramAccountsByDataSizeBase64(ctx, iepProgram.Base58(), iep.IntentV3Len)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "autofill: getProgramAccounts: %v\n", err)
+			continue
+		}
+
+		for _, pa := range accounts {
+			intentPK, err := solana.ParsePubkey(pa.Pubkey)
+			if err != nil {
+				continue
+			}
+
+			intent, err := iep.ParseIntentV3(pa.Data)
+			if err != nil {
+				continue
+			}
+			if intent.Status != 0 {
+				continue
+			}
+			if protocol.DeploymentID(intent.DeploymentID) != deploymentID {
+				continue
+			}
+			if intent.Mint != mint {
+				continue
+			}
+			if intent.Solver != solverPubkey {
+				continue
+			}
+			if intent.Direction != 1 && intent.Direction != 2 {
+				continue
+			}
+
+			cfgPDA, _, err := solana.FindProgramAddress([][]byte{[]byte("config"), deploymentID[:]}, iepProgram)
+			if err != nil {
+				continue
+			}
+			fillPDA, _, err := solana.FindProgramAddress([][]byte{[]byte("fill"), intentPK[:]}, iepProgram)
+			if err != nil {
+				continue
+			}
+			vaultPDA, _, err := solana.FindProgramAddress([][]byte{[]byte("vault"), fillPDA[:]}, iepProgram)
+			if err != nil {
+				continue
+			}
+
+			vault := vaultPDA
+			if intent.Direction == 2 {
+				vault = intent.Vault
+			}
+
+			ix := solana.Instruction{
+				ProgramID: iepProgram,
+				Accounts: []solana.AccountMeta{
+					{Pubkey: solverPubkey, IsSigner: true, IsWritable: true},
+					{Pubkey: cfgPDA, IsSigner: false, IsWritable: false},
+					{Pubkey: intentPK, IsSigner: false, IsWritable: true},
+					{Pubkey: fillPDA, IsSigner: false, IsWritable: true},
+					{Pubkey: vault, IsSigner: false, IsWritable: true},
+					{Pubkey: solverTokenAccount, IsSigner: false, IsWritable: true},
+					{Pubkey: solverTokenAccount, IsSigner: false, IsWritable: false},
+					{Pubkey: mint, IsSigner: false, IsWritable: false},
+					{Pubkey: splTokenProgramID, IsSigner: false, IsWritable: false},
+					{Pubkey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
+				},
+				Data: iep.EncodeFillIntent(intent.ReceiverTag, intent.JunocashAmountRequired),
+			}
+
+			bhCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			bh, err := rpc.LatestBlockhash(bhCtx)
+			cancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "autofill: blockhash: %v\n", err)
+				continue
+			}
+
+			tx, err := solana.BuildAndSignLegacyTransaction(
+				bh,
+				solverPubkey,
+				signers,
+				[]solana.Instruction{ix},
+			)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "autofill: build tx: %v\n", err)
+				continue
+			}
+
+			sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			sig, err := rpc.SendTransaction(sendCtx, tx, false)
+			cancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "autofill: send tx: %v\n", err)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "autofill: filled intent=%s sig=%s\n", intentPK.Base58(), sig)
+		}
+	}
+}
+
+func mustParsePubkey(s string) solana.Pubkey {
+	pk, err := solana.ParsePubkey(s)
+	if err != nil {
+		panic(err)
+	}
+	return pk
 }
 
 func cmdRFQ(argv []string) error {

@@ -224,6 +224,35 @@ func (c *Client) Slot(ctx context.Context) (uint64, error) {
 	return resp, nil
 }
 
+func (c *Client) BalanceLamports(ctx context.Context, pubkey string) (uint64, error) {
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return 0, errors.New("pubkey required")
+	}
+	var resp struct {
+		Value uint64 `json:"value"`
+	}
+	if err := c.rpcCall(ctx, "getBalance", []any{pubkey, map[string]any{"commitment": "processed"}}, &resp); err != nil {
+		return 0, err
+	}
+	return resp.Value, nil
+}
+
+func (c *Client) RequestAirdrop(ctx context.Context, pubkey string, lamports uint64) (string, error) {
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return "", errors.New("pubkey required")
+	}
+	if lamports == 0 {
+		return "", errors.New("lamports required")
+	}
+	var sig string
+	if err := c.rpcCall(ctx, "requestAirdrop", []any{pubkey, lamports}, &sig); err != nil {
+		return "", err
+	}
+	return sig, nil
+}
+
 type ProgramAccount struct {
 	Pubkey string
 	Data   []byte

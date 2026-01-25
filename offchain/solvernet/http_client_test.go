@@ -24,6 +24,7 @@ func TestHTTP_AnnouncementAndQuote(t *testing.T) {
 		SolverPubkey: protocol.SolanaPubkey(pub32),
 		QuoteURL:     "http://placeholder.invalid/v1/quote",
 		PrivKey:      priv,
+		Mint:         protocol.SolanaPubkey([32]byte{0x22}),
 		OrchardReceiverBytes: bytes.Repeat([]byte{0xAB}, protocol.OrchardReceiverBytesLen),
 		Strategy: FixedPriceStrategy{
 			ZatoshiPerTokenUnit: 2,

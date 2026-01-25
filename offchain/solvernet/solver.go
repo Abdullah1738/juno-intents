@@ -22,6 +22,9 @@ type Solver struct {
 	QuoteURL     string
 	PrivKey      ed25519.PrivateKey
 
+	// Mint is the only SPL token mint supported by this solver (wJUNO).
+	Mint protocol.SolanaPubkey
+
 	// OrchardReceiverBytes is the solver's Orchard receiver (43 bytes) used to derive
 	// per-fill receiver tags for DirectionA quotes.
 	OrchardReceiverBytes []byte
@@ -51,8 +54,14 @@ func (s *Solver) Quote(ctx context.Context, req protocol.QuoteRequest) (SignedQu
 	if req.DeploymentID != s.DeploymentID {
 		return SignedQuoteResponseJSON{}, errors.New("deployment mismatch")
 	}
+	if s.Mint == (protocol.SolanaPubkey{}) {
+		return SignedQuoteResponseJSON{}, errors.New("solver mint not configured")
+	}
 	if err := req.Validate(); err != nil {
 		return SignedQuoteResponseJSON{}, err
+	}
+	if req.Mint != s.Mint {
+		return SignedQuoteResponseJSON{}, errors.New("mint mismatch")
 	}
 
 	quoteID := protocol.DeriveQuoteID(s.DeploymentID, s.SolverPubkey, req.RFQNonce, req.FillID)

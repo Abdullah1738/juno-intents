@@ -25,6 +25,7 @@ func newTestSolverServer(t *testing.T, deployment protocol.DeploymentID, seed by
 		SolverPubkey: protocol.SolanaPubkey(pub32),
 		QuoteURL:     "",
 		PrivKey:      priv,
+		Mint:         protocol.SolanaPubkey([32]byte{0x33}),
 		OrchardReceiverBytes: bytes.Repeat([]byte{seed}, protocol.OrchardReceiverBytesLen),
 		Strategy: FixedPriceStrategy{
 			ZatoshiPerTokenUnit: 100,

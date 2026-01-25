@@ -33,6 +33,73 @@ func TestClient_Slot(t *testing.T) {
 	}
 }
 
+func TestClient_BalanceLamports(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+			Params []any  `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Method != "getBalance" {
+			t.Fatalf("method=%q", req.Method)
+		}
+		if len(req.Params) != 2 {
+			t.Fatalf("params len=%d", len(req.Params))
+		}
+		if req.Params[0].(string) != "Pubkey111111111111111111111111111111111111" {
+			t.Fatalf("pubkey=%v", req.Params[0])
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{"value":123}}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, nil)
+	got, err := c.BalanceLamports(context.Background(), "Pubkey111111111111111111111111111111111111")
+	if err != nil {
+		t.Fatalf("BalanceLamports: %v", err)
+	}
+	if got != 123 {
+		t.Fatalf("balance=%d, want 123", got)
+	}
+}
+
+func TestClient_RequestAirdrop(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+			Params []any  `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Method != "requestAirdrop" {
+			t.Fatalf("method=%q", req.Method)
+		}
+		if len(req.Params) != 2 {
+			t.Fatalf("params len=%d", len(req.Params))
+		}
+		if req.Params[0].(string) != "Pubkey111111111111111111111111111111111111" {
+			t.Fatalf("pubkey=%v", req.Params[0])
+		}
+		if req.Params[1].(float64) != float64(1_000_000_000) {
+			t.Fatalf("lamports=%v", req.Params[1])
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":"sig111"}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, nil)
+	got, err := c.RequestAirdrop(context.Background(), "Pubkey111111111111111111111111111111111111", 1_000_000_000)
+	if err != nil {
+		t.Fatalf("RequestAirdrop: %v", err)
+	}
+	if got != "sig111" {
+		t.Fatalf("sig=%q, want sig111", got)
+	}
+}
+
 func TestClient_ProgramAccountsByDataSizeBase64(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
