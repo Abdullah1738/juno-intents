@@ -291,6 +291,7 @@ solana_version_num=solana_version[1:] if solana_version.startswith("v") else sol
 
 cmds=[
   "set -eu",
+  'export HOME="${HOME:-/root}"',
   "export DEBIAN_FRONTEND=noninteractive",
   "sudo apt-get update",
   "sudo apt-get install -y --no-install-recommends git ca-certificates curl jq unzip protobuf-compiler",
@@ -299,6 +300,7 @@ cmds=[
   "docker --version",
   "docker ps >/dev/null",
   "nvidia-smi",
+  "if ! command -v nvcc >/dev/null; then sudo apt-get install -y --no-install-recommends cuda-toolkit-12-9 || sudo apt-get install -y --no-install-recommends cuda-toolkit || sudo apt-get install -y --no-install-recommends nvidia-cuda-toolkit || true; fi",
   "nvcc --version || true",
   f"if ! command -v go >/dev/null || ! go version | grep -q 'go{go_version}'; then curl -sSfL https://go.dev/dl/go{go_version}.linux-amd64.tar.gz -o /tmp/go.tgz && sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz; fi",
   'export PATH=\"/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH\"',
@@ -381,6 +383,7 @@ cpu=os.environ["ENCLAVE_CPU_COUNT"]
 
 cmds=[
   "set -eu",
+  'export HOME="${HOME:-/root}"',
   'export PATH=\"/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH\"',
   "cd /tmp/juno-intents",
   # Configure enclave allocator (best-effort; exact service name differs by distro).
