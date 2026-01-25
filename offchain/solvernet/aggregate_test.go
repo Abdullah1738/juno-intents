@@ -25,6 +25,7 @@ func newTestSolverServer(t *testing.T, deployment protocol.DeploymentID, seed by
 		SolverPubkey: protocol.SolanaPubkey(pub32),
 		QuoteURL:     "",
 		PrivKey:      priv,
+		OrchardReceiverBytes: bytes.Repeat([]byte{seed}, protocol.OrchardReceiverBytesLen),
 		Strategy: FixedPriceStrategy{
 			ZatoshiPerTokenUnit: 100,
 			SpreadBps:           spreadBps,
@@ -52,6 +53,7 @@ func TestCollectQuotes_BestQuote_DirectionA(t *testing.T) {
 	req := protocol.QuoteRequest{
 		DeploymentID:      deployment,
 		RFQNonce:          [32]byte{0x22},
+		FillID:            protocol.FillID([32]byte{0x55}),
 		Direction:         protocol.DirectionA,
 		Mint:              protocol.SolanaPubkey([32]byte{0x33}),
 		NetAmount:         10,
@@ -90,6 +92,8 @@ func TestCollectQuotes_BestQuote_DirectionB(t *testing.T) {
 	req := protocol.QuoteRequest{
 		DeploymentID:      deployment,
 		RFQNonce:          [32]byte{0x22},
+		FillID:            protocol.FillID([32]byte{0x55}),
+		ReceiverTag:       protocol.ReceiverTag([32]byte{0x66}),
 		Direction:         protocol.DirectionB,
 		Mint:              protocol.SolanaPubkey([32]byte{0x33}),
 		NetAmount:         10,
@@ -114,4 +118,3 @@ func TestCollectQuotes_BestQuote_DirectionB(t *testing.T) {
 		t.Fatalf("best quote amount not largest: best=%d other=%d", got.Best.Quote.JunocashAmountRequired, got.Quotes[1].Quote.JunocashAmountRequired)
 	}
 }
-

@@ -53,7 +53,9 @@ func TestSignedQuoteResponseJSON_Verify(t *testing.T) {
 	rfqNonce[0] = 9
 	deployment := protocol.DeploymentID([32]byte{0x22})
 	solver := protocol.SolanaPubkey(pub32)
-	quoteID := protocol.DeriveQuoteID(deployment, solver, rfqNonce)
+	fillID := protocol.FillID([32]byte{0x44})
+	receiverTag := protocol.ReceiverTag([32]byte{0x55})
+	quoteID := protocol.DeriveQuoteID(deployment, solver, rfqNonce, fillID)
 
 	q := protocol.QuoteResponse{
 		DeploymentID:          deployment,
@@ -63,6 +65,8 @@ func TestSignedQuoteResponseJSON_Verify(t *testing.T) {
 		Mint:                  protocol.SolanaPubkey([32]byte{0x33}),
 		NetAmount:             123,
 		JunocashAmountRequired: 456,
+		FillID:                fillID,
+		ReceiverTag:           receiverTag,
 		FillExpirySlot:        789,
 	}
 
@@ -84,4 +88,3 @@ func TestSignedQuoteResponseJSON_Verify(t *testing.T) {
 		t.Fatalf("expected verification failure after mutation")
 	}
 }
-

@@ -33,6 +33,14 @@ type QuoteRequest struct {
 	DeploymentID DeploymentID
 	RFQNonce     [32]byte
 
+	FillID FillID
+
+	// ReceiverTag is the committed Orchard receiver tag for this fill.
+	//
+	// - DirectionA: may be zero in the request; solver returns its computed tag.
+	// - DirectionB: must be set by the requester (derived from the user's receiver bytes + fill_id).
+	ReceiverTag ReceiverTag
+
 	Direction        Direction
 	Mint             SolanaPubkey
 	NetAmount        uint64
@@ -43,6 +51,12 @@ type QuoteRequest struct {
 func (r QuoteRequest) Validate() error {
 	if r.Direction != DirectionA && r.Direction != DirectionB {
 		return errInvalidDirection
+	}
+	if r.FillID == (FillID{}) {
+		return errors.New("fill id required")
+	}
+	if r.Direction == DirectionB && r.ReceiverTag == (ReceiverTag{}) {
+		return errors.New("receiver tag required for direction B")
 	}
 	return nil
 }
@@ -106,6 +120,12 @@ type QuoteResponse struct {
 	// JunocashAmountRequired is the Orchard payment required on JunoCash in zatoshis.
 	JunocashAmountRequired Zatoshi
 
+	// FillID is the fill PDA this quote is bound to.
+	FillID FillID
+
+	// ReceiverTag is the Orchard receiver tag that must be proven for settlement.
+	ReceiverTag ReceiverTag
+
 	// FillExpirySlot is the latest slot the fill can be settled before refunds are allowed.
 	FillExpirySlot uint64
 }
@@ -124,8 +144,10 @@ func (q QuoteResponse) SigningBytes() ([]byte, error) {
 	//   mint (32) ||
 	//   net_amount_u64_le ||
 	//   junocash_amount_u64_le ||
+	//   fill_id (32) ||
+	//   receiver_tag (32) ||
 	//   fill_expiry_slot_u64_le
-	b := make([]byte, 0, len(prefixBytes(purposeQuoteResponseSigning))+32+32+32+1+32+8+8+8)
+	b := make([]byte, 0, len(prefixBytes(purposeQuoteResponseSigning))+32+32+32+1+32+8+8+32+32+8)
 	b = append(b, prefixBytes(purposeQuoteResponseSigning)...)
 	b = append(b, q.DeploymentID[:]...)
 	b = append(b, q.SolverPubkey[:]...)
@@ -138,19 +160,24 @@ func (q QuoteResponse) SigningBytes() ([]byte, error) {
 	b = append(b, tmp[:]...)
 	binary.LittleEndian.PutUint64(tmp[:], uint64(q.JunocashAmountRequired))
 	b = append(b, tmp[:]...)
+
+	b = append(b, q.FillID[:]...)
+	b = append(b, q.ReceiverTag[:]...)
+
 	binary.LittleEndian.PutUint64(tmp[:], q.FillExpirySlot)
 	b = append(b, tmp[:]...)
 	return b, nil
 }
 
-func DeriveQuoteID(deploymentID DeploymentID, solverPubkey SolanaPubkey, rfqNonce [32]byte) QuoteID {
-	// Quote IDs are deterministic from (deployment, solver, nonce) so an aggregator
+func DeriveQuoteID(deploymentID DeploymentID, solverPubkey SolanaPubkey, rfqNonce [32]byte, fillID FillID) QuoteID {
+	// Quote IDs are deterministic from (deployment, solver, nonce, fill_id) so an aggregator
 	// can safely de-duplicate responses without parsing signed payloads.
 	h := sha256.New()
 	h.Write(prefixBytes(purposeQuoteID))
 	h.Write(deploymentID[:])
 	h.Write(solverPubkey[:])
 	h.Write(rfqNonce[:])
+	h.Write(fillID[:])
 	sum := h.Sum(nil)
 
 	var out QuoteID

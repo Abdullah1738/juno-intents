@@ -22,6 +22,10 @@ type Solver struct {
 	QuoteURL     string
 	PrivKey      ed25519.PrivateKey
 
+	// OrchardReceiverBytes is the solver's Orchard receiver (43 bytes) used to derive
+	// per-fill receiver tags for DirectionA quotes.
+	OrchardReceiverBytes []byte
+
 	Strategy FixedPriceStrategy
 
 	Helius *helius.Client
@@ -51,11 +55,20 @@ func (s *Solver) Quote(ctx context.Context, req protocol.QuoteRequest) (SignedQu
 		return SignedQuoteResponseJSON{}, err
 	}
 
-	quoteID := protocol.DeriveQuoteID(s.DeploymentID, s.SolverPubkey, req.RFQNonce)
+	quoteID := protocol.DeriveQuoteID(s.DeploymentID, s.SolverPubkey, req.RFQNonce, req.FillID)
 
 	required, err := s.Strategy.QuoteZatoshi(req.NetAmount, req.Direction)
 	if err != nil {
 		return SignedQuoteResponseJSON{}, err
+	}
+
+	receiverTag := req.ReceiverTag
+	if req.Direction == protocol.DirectionA {
+		rt, err := protocol.ReceiverTagForReceiverBytes(s.DeploymentID, req.FillID, s.OrchardReceiverBytes)
+		if err != nil {
+			return SignedQuoteResponseJSON{}, err
+		}
+		receiverTag = rt
 	}
 
 	q := protocol.QuoteResponse{
@@ -66,6 +79,8 @@ func (s *Solver) Quote(ctx context.Context, req protocol.QuoteRequest) (SignedQu
 		Mint:                   req.Mint,
 		NetAmount:              req.NetAmount,
 		JunocashAmountRequired: protocol.Zatoshi(required),
+		FillID:                 req.FillID,
+		ReceiverTag:            receiverTag,
 		FillExpirySlot:         req.IntentExpirySlot,
 	}
 

@@ -62,6 +62,12 @@ func CollectQuotes(ctx context.Context, client *Client, announcementURLs []strin
 		if q.Direction != req.Direction || q.Mint != req.Mint || q.NetAmount != req.NetAmount {
 			continue
 		}
+		if q.FillID != req.FillID {
+			continue
+		}
+		if req.ReceiverTag != (protocol.ReceiverTag{}) && q.ReceiverTag != req.ReceiverTag {
+			continue
+		}
 
 		quotes = append(quotes, CollectedQuote{
 			AnnouncementURL: announcementURL,
@@ -92,4 +98,3 @@ func CollectQuotes(ctx context.Context, client *Client, announcementURLs []strin
 
 	return QuoteSelection{Best: quotes[0], Quotes: quotes}, nil
 }
-

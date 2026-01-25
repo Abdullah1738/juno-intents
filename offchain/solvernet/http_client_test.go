@@ -1,6 +1,7 @@
 package solvernet
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
@@ -23,6 +24,7 @@ func TestHTTP_AnnouncementAndQuote(t *testing.T) {
 		SolverPubkey: protocol.SolanaPubkey(pub32),
 		QuoteURL:     "http://placeholder.invalid/v1/quote",
 		PrivKey:      priv,
+		OrchardReceiverBytes: bytes.Repeat([]byte{0xAB}, protocol.OrchardReceiverBytesLen),
 		Strategy: FixedPriceStrategy{
 			ZatoshiPerTokenUnit: 2,
 			SpreadBps:           0,
@@ -55,10 +57,13 @@ func TestHTTP_AnnouncementAndQuote(t *testing.T) {
 
 	var rfq [32]byte
 	rfq[0] = 7
+	fillID := [32]byte{0x44}
 
 	req := QuoteRequestJSON{
 		DeploymentID:     ann.DeploymentID.Hex(),
 		RFQNonce:         hex.EncodeToString(rfq[:]),
+		FillID:           hex.EncodeToString(fillID[:]),
+		ReceiverTag:      hex.EncodeToString(make([]byte, 32)),
 		Direction:        uint8(protocol.DirectionA),
 		Mint:             encodeBase58_32([32]byte{0x22}),
 		NetAmount:        "100",
@@ -77,4 +82,3 @@ func TestHTTP_AnnouncementAndQuote(t *testing.T) {
 		t.Fatalf("unexpected required amount: got=%d want=200", q.JunocashAmountRequired)
 	}
 }
-

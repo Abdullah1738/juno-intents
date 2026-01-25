@@ -12,6 +12,8 @@ import (
 type QuoteRequestJSON struct {
 	DeploymentID      string `json:"deployment_id"`
 	RFQNonce          string `json:"rfq_nonce"`
+	FillID            string `json:"fill_id"`
+	ReceiverTag       string `json:"receiver_tag"`
 	Direction         uint8  `json:"direction"`
 	Mint              string `json:"mint"`
 	NetAmount         string `json:"net_amount"`
@@ -25,6 +27,14 @@ func (r QuoteRequestJSON) ToProtocol() (protocol.QuoteRequest, error) {
 		return protocol.QuoteRequest{}, err
 	}
 	rfq, err := parseHex32(r.RFQNonce)
+	if err != nil {
+		return protocol.QuoteRequest{}, err
+	}
+	fillID, err := parseHex32(r.FillID)
+	if err != nil {
+		return protocol.QuoteRequest{}, err
+	}
+	receiverTag, err := parseHex32(r.ReceiverTag)
 	if err != nil {
 		return protocol.QuoteRequest{}, err
 	}
@@ -48,6 +58,8 @@ func (r QuoteRequestJSON) ToProtocol() (protocol.QuoteRequest, error) {
 	out := protocol.QuoteRequest{
 		DeploymentID:      protocol.DeploymentID(deployment),
 		RFQNonce:          rfq,
+		FillID:            protocol.FillID(fillID),
+		ReceiverTag:       protocol.ReceiverTag(receiverTag),
 		Direction:         protocol.Direction(r.Direction),
 		Mint:              protocol.SolanaPubkey(mint),
 		NetAmount:         netAmount,
@@ -64,6 +76,8 @@ func QuoteRequestJSONFromProtocol(r protocol.QuoteRequest) QuoteRequestJSON {
 	return QuoteRequestJSON{
 		DeploymentID:     encodeHex32([32]byte(r.DeploymentID)),
 		RFQNonce:         encodeHex32(r.RFQNonce),
+		FillID:           encodeHex32([32]byte(r.FillID)),
+		ReceiverTag:      encodeHex32([32]byte(r.ReceiverTag)),
 		Direction:        uint8(r.Direction),
 		Mint:             encodeBase58_32([32]byte(r.Mint)),
 		NetAmount:        formatU64String(r.NetAmount),
@@ -80,6 +94,8 @@ type QuoteResponseJSON struct {
 	Mint                    string `json:"mint"`
 	NetAmount               string `json:"net_amount"`
 	JunocashAmountRequired  string `json:"junocash_amount_required"`
+	FillID                  string `json:"fill_id"`
+	ReceiverTag             string `json:"receiver_tag"`
 	FillExpirySlot          string `json:"fill_expiry_slot"`
 }
 
@@ -92,6 +108,8 @@ func QuoteResponseJSONFromProtocol(q protocol.QuoteResponse) QuoteResponseJSON {
 		Mint:                   encodeBase58_32([32]byte(q.Mint)),
 		NetAmount:              formatU64String(q.NetAmount),
 		JunocashAmountRequired: formatU64String(uint64(q.JunocashAmountRequired)),
+		FillID:                 encodeHex32([32]byte(q.FillID)),
+		ReceiverTag:            encodeHex32([32]byte(q.ReceiverTag)),
 		FillExpirySlot:         formatU64String(q.FillExpirySlot),
 	}
 }
@@ -121,6 +139,14 @@ func (j QuoteResponseJSON) ToProtocol() (protocol.QuoteResponse, error) {
 	if err != nil {
 		return protocol.QuoteResponse{}, err
 	}
+	fillID, err := parseHex32(j.FillID)
+	if err != nil {
+		return protocol.QuoteResponse{}, err
+	}
+	receiverTag, err := parseHex32(j.ReceiverTag)
+	if err != nil {
+		return protocol.QuoteResponse{}, err
+	}
 	expiry, err := parseU64String(j.FillExpirySlot)
 	if err != nil {
 		return protocol.QuoteResponse{}, err
@@ -134,6 +160,8 @@ func (j QuoteResponseJSON) ToProtocol() (protocol.QuoteResponse, error) {
 		Mint:                  protocol.SolanaPubkey(mint),
 		NetAmount:             netAmount,
 		JunocashAmountRequired: protocol.Zatoshi(junoAmt),
+		FillID:                protocol.FillID(fillID),
+		ReceiverTag:           protocol.ReceiverTag(receiverTag),
 		FillExpirySlot:        expiry,
 	}, nil
 }

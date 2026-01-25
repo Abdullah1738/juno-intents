@@ -50,6 +50,16 @@ func TestQuoteResponse_SigningBytes_Golden(t *testing.T) {
 		mint[i] = byte(0x40 + i)
 	}
 
+	var fillID FillID
+	for i := 0; i < 32; i++ {
+		fillID[i] = byte(0x50 + i)
+	}
+
+	var receiverTag ReceiverTag
+	for i := 0; i < 32; i++ {
+		receiverTag[i] = byte(0x60 + i)
+	}
+
 	q := QuoteResponse{
 		DeploymentID:           deploymentID,
 		SolverPubkey:           solverPubkey,
@@ -58,6 +68,8 @@ func TestQuoteResponse_SigningBytes_Golden(t *testing.T) {
 		Mint:                   mint,
 		NetAmount:              1_000_000,
 		JunocashAmountRequired: 12345,
+		FillID:                 fillID,
+		ReceiverTag:            receiverTag,
 		FillExpirySlot:         999,
 	}
 
@@ -67,7 +79,7 @@ func TestQuoteResponse_SigningBytes_Golden(t *testing.T) {
 	}
 
 	got := hex.EncodeToString(b)
-	want := "4a554e4f5f494e54454e54530071756f74655f726573706f6e7365000100101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f01404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f40420f00000000003930000000000000e703000000000000"
+	want := "4a554e4f5f494e54454e54530071756f74655f726573706f6e7365000100101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f01404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f40420f00000000003930000000000000505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7fe703000000000000"
 	if got != want {
 		t.Fatalf("got %s want %s", got, want)
 	}
@@ -89,8 +101,13 @@ func TestDeriveQuoteID_Golden(t *testing.T) {
 		nonce[i] = byte(i)
 	}
 
-	quoteID := DeriveQuoteID(deploymentID, solverPubkey, nonce)
-	if got, want := quoteID.Hex(), "895dfe2b7bf1f317fe7935ee95a5ef51719b81bf16c23f0faf698f0453fe04b7"; got != want {
+	var fillID FillID
+	for i := 0; i < 32; i++ {
+		fillID[i] = byte(0x55 + i)
+	}
+
+	quoteID := DeriveQuoteID(deploymentID, solverPubkey, nonce, fillID)
+	if got, want := quoteID.Hex(), "d2d12ded7129a7a189b0315072be9e485e7d7ca60dd8721de67ad3b64c52e322"; got != want {
 		t.Fatalf("got %s want %s", got, want)
 	}
 }

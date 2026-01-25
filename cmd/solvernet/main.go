@@ -50,8 +50,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  solvernet announce --deployment-id <hex32> --quote-url <url> [--keypair <path>]")
-	fmt.Fprintln(w, "  solvernet serve --listen :8080 --deployment-id <hex32> --quote-url <url> --price-zat-per-token-unit <u64> [--spread-bps <u16>] [--keypair <path>]")
-	fmt.Fprintln(w, "  solvernet rfq --deployment-id <hex32> --direction A|B --mint <base58> --net-amount <u64> --solana-recipient <base58> --intent-expiry-slot <u64> --announcement-url <url> [--announcement-url <url>...]")
+	fmt.Fprintln(w, "  solvernet serve --listen :8080 --deployment-id <hex32> --quote-url <url> --price-zat-per-token-unit <u64> --orchard-receiver-bytes-hex <hex43> [--spread-bps <u16>] [--keypair <path>]")
+	fmt.Fprintln(w, "  solvernet rfq --deployment-id <hex32> --fill-id <hex32> --direction A|B --mint <base58> --net-amount <u64> --solana-recipient <base58> --intent-expiry-slot <u64> [--receiver-tag <hex32>] --announcement-url <url> [--announcement-url <url>...]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Environment:")
 	fmt.Fprintln(w, "  HELIUS_API_KEY / HELIUS_CLUSTER or HELIUS_RPC_URL (optional; enables fee hints)")
@@ -109,6 +109,7 @@ func cmdServe(argv []string) error {
 		keypairPath     string
 		priceZatPerUnit uint64
 		spreadBps       uint
+		orchardReceiverHex string
 
 		fillAccountKeysCSV   string
 		settleAccountKeysCSV string
@@ -125,6 +126,7 @@ func cmdServe(argv []string) error {
 	fs.StringVar(&keypairPath, "keypair", solvernet.DefaultSolanaKeypairPath(), "Solana keypair path (Solana CLI JSON format)")
 	fs.Uint64Var(&priceZatPerUnit, "price-zat-per-token-unit", 0, "Fixed price: zatoshis per Solana token base unit")
 	fs.UintVar(&spreadBps, "spread-bps", 0, "Spread in bps applied to the required JunoCash amount")
+	fs.StringVar(&orchardReceiverHex, "orchard-receiver-bytes-hex", "", "Orchard receiver bytes for DirectionA settlement (43-byte hex)")
 
 	fs.StringVar(&fillAccountKeysCSV, "fill-account-keys", "", "CSV of account keys for Fill tx priority fee estimation (base58 pubkeys)")
 	fs.StringVar(&settleAccountKeysCSV, "settle-account-keys", "", "CSV of account keys for Settle tx priority fee estimation (base58 pubkeys)")
@@ -137,8 +139,8 @@ func cmdServe(argv []string) error {
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
-	if deploymentHex == "" || quoteURL == "" || priceZatPerUnit == 0 {
-		return errors.New("--deployment-id, --quote-url, and --price-zat-per-token-unit are required")
+	if deploymentHex == "" || quoteURL == "" || priceZatPerUnit == 0 || orchardReceiverHex == "" {
+		return errors.New("--deployment-id, --quote-url, --price-zat-per-token-unit, and --orchard-receiver-bytes-hex are required")
 	}
 	if spreadBps > 10_000 {
 		return errors.New("--spread-bps must be <= 10000")
@@ -155,6 +157,11 @@ func cmdServe(argv []string) error {
 	}
 
 	solverPub := protocol.SolanaPubkey(pub)
+
+	orchardReceiverBytes, err := hexBytes(orchardReceiverHex, protocol.OrchardReceiverBytesLen)
+	if err != nil {
+		return fmt.Errorf("parse --orchard-receiver-bytes-hex: %w", err)
+	}
 
 	hc, err := helius.ClientFromEnv()
 	if err != nil && !errors.Is(err, helius.ErrMissingAPIKey) {
@@ -177,6 +184,7 @@ func cmdServe(argv []string) error {
 		SolverPubkey: solverPub,
 		QuoteURL:     quoteURL,
 		PrivKey:      priv,
+		OrchardReceiverBytes: orchardReceiverBytes,
 		Strategy: solvernet.FixedPriceStrategy{
 			ZatoshiPerTokenUnit: priceZatPerUnit,
 			SpreadBps:           uint16(spreadBps),
@@ -215,26 +223,30 @@ func cmdRFQ(argv []string) error {
 
 	var (
 		deploymentHex    string
+		fillIDHex        string
 		direction        string
 		mint             string
 		netAmount        string
 		solanaRecipient  string
 		intentExpirySlot string
+		receiverTagHex   string
 		announcementURLs multiString
 		rfqNonceHex      string
 	)
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
+	fs.StringVar(&fillIDHex, "fill-id", "", "FillID (32-byte hex)")
 	fs.StringVar(&direction, "direction", "A", "Direction: A (JunoCash->Solana) or B (Solana->JunoCash)")
 	fs.StringVar(&mint, "mint", "", "SPL token mint pubkey (base58)")
 	fs.StringVar(&netAmount, "net-amount", "", "Net amount (u64)")
 	fs.StringVar(&solanaRecipient, "solana-recipient", "", "Recipient pubkey (base58)")
 	fs.StringVar(&intentExpirySlot, "intent-expiry-slot", "", "Intent expiry slot (u64)")
+	fs.StringVar(&receiverTagHex, "receiver-tag", "", "ReceiverTag (32-byte hex; required for direction B)")
 	fs.Var(&announcementURLs, "announcement-url", "Announcement URL (repeatable)")
 	fs.StringVar(&rfqNonceHex, "rfq-nonce", "", "RFQ nonce hex32 (optional; random if omitted)")
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
-	if deploymentHex == "" || mint == "" || netAmount == "" || solanaRecipient == "" || intentExpirySlot == "" || len(announcementURLs) == 0 {
+	if deploymentHex == "" || fillIDHex == "" || mint == "" || netAmount == "" || solanaRecipient == "" || intentExpirySlot == "" || len(announcementURLs) == 0 {
 		return errors.New("missing required args (see --help)")
 	}
 
@@ -266,9 +278,28 @@ func cmdRFQ(argv []string) error {
 		}
 	}
 
+	fillIDBytes, err := hex32(fillIDHex)
+	if err != nil {
+		return fmt.Errorf("parse fill id: %w", err)
+	}
+
+	var receiverTag protocol.ReceiverTag
+	if receiverTagHex != "" {
+		b, err := hex32(receiverTagHex)
+		if err != nil {
+			return fmt.Errorf("parse receiver tag: %w", err)
+		}
+		receiverTag = protocol.ReceiverTag(b)
+	}
+	if dir == protocol.DirectionB && receiverTag == (protocol.ReceiverTag{}) {
+		return errors.New("--receiver-tag is required for direction B")
+	}
+
 	reqJSON := solvernet.QuoteRequestJSON{
 		DeploymentID:     deploymentID.Hex(),
 		RFQNonce:         hex.EncodeToString(rfqNonce[:]),
+		FillID:           hex.EncodeToString(fillIDBytes[:]),
+		ReceiverTag:      receiverTag.Hex(),
 		Direction:        uint8(dir),
 		Mint:             mint,
 		NetAmount:        netAmount,
@@ -364,4 +395,17 @@ func hex32(s string) ([32]byte, error) {
 	}
 	copy(out[:], b)
 	return out, nil
+}
+
+func hexBytes(s string, n int) ([]byte, error) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "0x")
+	if len(s) != n*2 {
+		return nil, fmt.Errorf("expected %d-byte hex", n)
+	}
+	b, err := hex.DecodeString(s)
+	if err != nil || len(b) != n {
+		return nil, fmt.Errorf("expected %d-byte hex", n)
+	}
+	return b, nil
 }
