@@ -13,5 +13,4 @@ Non-custodial intents bridge between JunoCash (Orchard-only) and Solana.
 ## Testing
 
 - Unit tests: `make test`
-- E2E (Solana devnet + local JunoCash testnet): `scripts/e2e/devnet-testnet.sh --deployment <name>`
-- E2E (TEE + CRP v2): run the `e2e-devnet` GitHub Action with `crp_mode=v2` and `deployment=devnet-tee-testnet-base`
+- Solana program-tests (local): `make test-solana`
