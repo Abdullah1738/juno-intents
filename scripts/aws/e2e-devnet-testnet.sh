@@ -345,7 +345,7 @@ cmds=[
   # Install nitro-cli/vsock-proxy (Ubuntu images don't ship official packages).
   "if ! command -v nitro-cli >/dev/null; then sudo apt-get install -y -qq --no-install-recommends gcc make clang llvm-dev libclang-dev linux-modules-extra-aws; fi",
   "if ! command -v nitro-cli >/dev/null; then rm -rf /tmp/aws-nitro-enclaves-cli && git clone --depth 1 https://github.com/aws/aws-nitro-enclaves-cli.git /tmp/aws-nitro-enclaves-cli; fi",
-  "if ! command -v nitro-cli >/dev/null; then cd /tmp/aws-nitro-enclaves-cli && (make nitro-cli && make vsock-proxy && sudo make install NITRO_CLI_INSTALL_DIR=/usr/local) >/tmp/nitro-cli-build.log 2>&1 && cd /tmp; fi",
+  "if ! command -v nitro-cli >/dev/null; then cd /tmp/aws-nitro-enclaves-cli && ( (make nitro-cli && make vsock-proxy && sudo make install NITRO_CLI_INSTALL_DIR=/usr/local) >/tmp/nitro-cli-build.log 2>&1 ) & pid=$!; while kill -0 \"$pid\" 2>/dev/null; do echo \"[keepalive] building nitro-cli $(date -u)\" >&2; sleep 30; done; wait \"$pid\"; cd /tmp; fi",
   "if [ -f /tmp/nitro-cli-build.log ]; then tail -n 60 /tmp/nitro-cli-build.log >&2 || true; fi",
   "if [ -f /usr/local/etc/profile.d/nitro-cli-env.sh ]; then . /usr/local/etc/profile.d/nitro-cli-env.sh; fi",
   "nitro-cli --version || true",
@@ -359,7 +359,7 @@ cmds=[
   f"if ! command -v rzup >/dev/null || ! rzup --version | grep -q '{rzup_version}'; then cargo install rzup --version {rzup_version} --locked --force; fi",
   f"rzup install rust {risc0_rust_toolchain}",
   f"rzup install risc0-groth16 {risc0_groth16_version}",
-  "scripts/enclave/build-eif.sh >/tmp/build-eif.log 2>&1",
+  "(scripts/enclave/build-eif.sh >/tmp/build-eif.log 2>&1) & pid=$!; while kill -0 \"$pid\" 2>/dev/null; do echo \"[keepalive] building EIF $(date -u)\" >&2; sleep 30; done; wait \"$pid\"",
   "pcr0=\"$(sed -nE 's/^pcr0=([0-9a-fA-F]{96}).*/\\\\1/p' /tmp/build-eif.log | head -n 1 | tr 'A-F' 'a-f' || true)\"",
   "if [ -z \"${pcr0}\" ]; then echo 'failed to extract pcr0 from /tmp/build-eif.log' >&2; tail -n 200 /tmp/build-eif.log >&2 || true; exit 1; fi",
   "echo \"pcr0=${pcr0}\"",
