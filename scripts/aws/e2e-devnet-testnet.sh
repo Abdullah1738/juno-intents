@@ -346,6 +346,7 @@ cmds=[
   "if ! command -v nitro-cli >/dev/null; then sudo apt-get install -y --no-install-recommends gcc make clang llvm-dev libclang-dev linux-modules-extra-aws; fi",
   "if ! command -v nitro-cli >/dev/null; then rm -rf /tmp/aws-nitro-enclaves-cli && git clone https://github.com/aws/aws-nitro-enclaves-cli.git /tmp/aws-nitro-enclaves-cli; fi",
   "if ! command -v nitro-cli >/dev/null; then cd /tmp/aws-nitro-enclaves-cli && make nitro-cli && make vsock-proxy && sudo make install NITRO_CLI_INSTALL_DIR=/usr/local && cd /tmp; fi",
+  "if [ -f /usr/local/etc/profile.d/nitro-cli-env.sh ]; then . /usr/local/etc/profile.d/nitro-cli-env.sh; fi",
   "nitro-cli --version || true",
   "if ! command -v nitro-cli >/dev/null; then echo 'missing nitro-cli (build/install failed)' >&2; exit 1; fi",
   "VSOCK_PROXY=\"$(command -v vsock-proxy || command -v nitro-enclaves-vsock-proxy || true)\"",
@@ -416,6 +417,7 @@ cmds=[
   "set -eu",
   'export HOME="${HOME:-/root}"',
   'export PATH=\"/usr/local/cuda/bin:/usr/local/cuda-12.9/bin:/usr/local/go/bin:$HOME/.cargo/bin:/opt/solana/solana-release/bin:$PATH\"',
+  "if [ -f /usr/local/etc/profile.d/nitro-cli-env.sh ]; then . /usr/local/etc/profile.d/nitro-cli-env.sh; fi",
   "cd /tmp/juno-intents",
   # Configure enclave allocator (best-effort; exact service name differs by distro).
   "sudo mkdir -p /etc/nitro_enclaves",
