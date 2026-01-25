@@ -303,14 +303,14 @@ cmds=[
   "if ! command -v nvcc >/dev/null; then sudo apt-get install -y --no-install-recommends cuda-toolkit-12-9 || sudo apt-get install -y --no-install-recommends cuda-toolkit || sudo apt-get install -y --no-install-recommends nvidia-cuda-toolkit || true; fi",
   "nvcc --version || true",
   f"if ! command -v go >/dev/null || ! go version | grep -q 'go{go_version}'; then curl -sSfL https://go.dev/dl/go{go_version}.linux-amd64.tar.gz -o /tmp/go.tgz && sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz; fi",
-  'export PATH=\"/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH\"',
+  'export PATH=\"/usr/local/cuda/bin:/usr/local/cuda-12.9/bin:/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH\"',
   "go version",
   "if ! command -v cargo >/dev/null; then curl -sSf https://sh.rustup.rs | sh -s -- -y; fi",
-  'export PATH=\"$HOME/.cargo/bin:/usr/local/go/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH\"',
+  'export PATH=\"/usr/local/cuda/bin:/usr/local/cuda-12.9/bin:$HOME/.cargo/bin:/usr/local/go/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH\"',
   f"rustup toolchain install {rust_toolchain} || true",
   f"rustup default {rust_toolchain} || true",
   f"rustup toolchain install {risc0_rust_toolchain} || true",
-  f"if ! command -v solana >/dev/null || ! solana --version | grep -q '{solana_version_num}'; then curl -sSfL https://release.solana.com/{solana_version}/install | sh; fi",
+  f"if ! command -v solana >/dev/null || ! solana --version | grep -q '{solana_version_num}'; then i=0; while [ $i -lt 5 ]; do i=$((i+1)); curl --retry 5 --retry-all-errors -sSfL https://release.solana.com/{solana_version}/install | sh && break; sleep $((i*5)); done; fi",
   "solana --version",
   "spl-token --version || true",
   # Install nitro-cli/vsock-proxy if missing (best-effort).
@@ -384,7 +384,7 @@ cpu=os.environ["ENCLAVE_CPU_COUNT"]
 cmds=[
   "set -eu",
   'export HOME="${HOME:-/root}"',
-  'export PATH=\"/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH\"',
+  'export PATH=\"/usr/local/cuda/bin:/usr/local/cuda-12.9/bin:/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH\"',
   "cd /tmp/juno-intents",
   # Configure enclave allocator (best-effort; exact service name differs by distro).
   "sudo mkdir -p /etc/nitro_enclaves",
