@@ -277,7 +277,7 @@ export REGION INSTANCE_ID
 echo "SSM phase 1: install deps + build EIF + capture pcr0..." >&2
 export REPO REF GO_VERSION RUST_TOOLCHAIN RISC0_RUST_TOOLCHAIN RZUP_VERSION RISC0_GROTH16_VERSION SOLANA_VERSION
 PHASE1_CMDS="$(
-  python3 - <<PY
+  python3 - <<'PY'
 import json,os
 repo=os.environ.get("REPO","")
 ref=os.environ.get("REF","")
@@ -365,7 +365,7 @@ sleep 5
 echo "SSM phase 2: run 2 enclaves + init keys + run e2e..." >&2
 export BASE_DEPLOYMENT DEPLOYMENTS_FILE KMS_KEY_ID KMS_VSOCK_PORT ENCLAVE_PORT ENCLAVE_CID1 ENCLAVE_CID2 ENCLAVE_MEM_MIB ENCLAVE_CPU_COUNT
 PHASE2_CMDS="$(
-  python3 - <<PY
+  python3 - <<'PY'
 import json,os
 region=os.environ["REGION"]
 base=os.environ["BASE_DEPLOYMENT"]
