@@ -758,6 +758,8 @@ jobs:
         if: ${{ env.JUNO_E2E_CRP_MODE != 'v2' }}
         env:
           RUST_LOG: info
+          JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF: ${{ secrets.JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF }}
+          JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64: ${{ secrets.JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64 }}
         run: |
           set -euo pipefail
           ./scripts/e2e/devnet-testnet.sh \
