@@ -566,6 +566,7 @@ async fn two_direction_bridge_flow_with_solver_binding_and_checkpoints() {
         vec![
             AccountMeta::new(payer.pubkey(), true),
             AccountMeta::new(iep_config, false),
+            AccountMeta::new_readonly(mint.pubkey(), false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
         IepInstruction::Initialize {
@@ -927,4 +928,3 @@ async fn two_direction_bridge_flow_with_solver_binding_and_checkpoints() {
     assert!(banks_client.get_account(spent_a).await.unwrap().is_some());
     assert!(banks_client.get_account(spent_b).await.unwrap().is_some());
 }
-

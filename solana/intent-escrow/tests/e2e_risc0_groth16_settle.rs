@@ -702,6 +702,7 @@ async fn settles_real_risc0_groth16_bundle_v1() {
         vec![
             AccountMeta::new(payer.pubkey(), true),
             AccountMeta::new(iep_config, false),
+            AccountMeta::new_readonly(mint.pubkey(), false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
         IepInstruction::Initialize {

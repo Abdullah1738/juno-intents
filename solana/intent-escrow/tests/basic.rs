@@ -362,6 +362,7 @@ async fn settle_transfers_net_and_fee_and_marks_spent() {
         vec![
             AccountMeta::new(payer.pubkey(), true),
             AccountMeta::new(iep_config, false),
+            AccountMeta::new_readonly(mint.pubkey(), false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
         IepInstruction::Initialize {
@@ -748,6 +749,7 @@ async fn settle_direction_b_transfers_to_solver_and_fee() {
         vec![
             AccountMeta::new(payer.pubkey(), true),
             AccountMeta::new(iep_config, false),
+            AccountMeta::new_readonly(mint.pubkey(), false),
             AccountMeta::new_readonly(system_program::ID, false),
         ],
         IepInstruction::Initialize {

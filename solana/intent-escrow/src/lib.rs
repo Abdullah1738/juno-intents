@@ -32,13 +32,13 @@ const PROTOCOL_DOMAIN: &[u8] = b"JUNO_INTENTS";
 const PROTOCOL_VERSION_U16_LE: [u8; 2] = 1u16.to_le_bytes();
 const PURPOSE_IEP_SPENT_RECEIPT_ID: &[u8] = b"iep_spent_receipt_id";
 
-const CONFIG_VERSION_V2: u8 = 2;
+const CONFIG_VERSION_V3: u8 = 3;
 const INTENT_VERSION_V2: u8 = 2;
 const INTENT_VERSION_V3: u8 = 3;
 const FILL_VERSION_V2: u8 = 2;
 const SPENT_RECEIPT_VERSION_V1: u8 = 1;
 
-const CONFIG_LEN_V2: usize = 1 + 32 + 2 + 32 + 32 + 32 + 32 + 32 + 32 + 32;
+const CONFIG_LEN_V3: usize = 1 + 32 + 32 + 2 + 32 + 32 + 32 + 32 + 32 + 32 + 32;
 const INTENT_LEN_V2: usize = 1 + 1 + 1 + 32 + 32 + 32 + 32 + 8 + 2 + 8 + 8 + 32 + 32;
 const INTENT_LEN_V3: usize = INTENT_LEN_V2 + 32 + 32 + 8;
 const FILL_LEN_V2: usize = 1 + 1 + 32 + 32 + 32 + 8 + 32 + 32;
@@ -109,9 +109,10 @@ pub enum IepInstruction {
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq, Eq)]
-pub struct IepConfigV2 {
+pub struct IepConfigV3 {
     pub version: u8,
     pub deployment_id: [u8; 32],
+    pub mint: Pubkey,
     pub fee_bps: u16,
     pub fee_collector: Pubkey,
     pub checkpoint_registry_program: Pubkey,
@@ -451,10 +452,12 @@ fn process_initialize(
     // Accounts:
     // 0. payer (signer, writable)
     // 1. config (PDA, writable)
-    // 2. system_program
+    // 2. mint (readonly)
+    // 3. system_program
     let mut iter = accounts.iter();
     let payer = next_account_info(&mut iter)?;
     let config_ai = next_account_info(&mut iter)?;
+    let mint_ai = next_account_info(&mut iter)?;
     let system_program = next_account_info(&mut iter)?;
 
     if *system_program.key != solana_program::system_program::ID {
@@ -491,22 +494,27 @@ fn process_initialize(
     }
 
     let rent = Rent::get()?;
-    let lamports = rent.minimum_balance(CONFIG_LEN_V2);
+    if mint_ai.owner != &spl_token::ID || mint_ai.data_len() != spl_token::state::Mint::LEN {
+        return Err(IepError::InvalidAccountData.into());
+    }
+
+    let lamports = rent.minimum_balance(CONFIG_LEN_V3);
     invoke_signed(
         &system_instruction::create_account(
             payer.key,
             config_ai.key,
             lamports,
-            CONFIG_LEN_V2 as u64,
+            CONFIG_LEN_V3 as u64,
             program_id,
         ),
         &[payer.clone(), config_ai.clone(), system_program.clone()],
         &[&[CONFIG_SEED, deployment_id.as_ref(), &[bump]]],
     )?;
 
-    let cfg = IepConfigV2 {
-        version: CONFIG_VERSION_V2,
+    let cfg = IepConfigV3 {
+        version: CONFIG_VERSION_V3,
         deployment_id,
+        mint: *mint_ai.key,
         fee_bps,
         fee_collector,
         checkpoint_registry_program,
@@ -577,14 +585,17 @@ fn process_create_intent(
         return Err(IepError::InvalidAccountData.into());
     }
 
-    let cfg = IepConfigV2::try_from_slice(&config_ai.data.borrow())
+    let cfg = IepConfigV3::try_from_slice(&config_ai.data.borrow())
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if cfg.version != CONFIG_VERSION_V2 {
+    if cfg.version != CONFIG_VERSION_V3 {
         return Err(IepError::InvalidAccountData.into());
     }
     let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
     if expected_config != *config_ai.key {
         return Err(IepError::InvalidConfigPda.into());
+    }
+    if cfg.mint != mint {
+        return Err(IepError::InvalidAccountData.into());
     }
 
     let (expected_intent, bump) = intent_pda(program_id, &cfg.deployment_id, &intent_nonce);
@@ -774,14 +785,17 @@ fn process_create_intent_v3(
         return Err(IepError::InvalidAccountData.into());
     }
 
-    let cfg = IepConfigV2::try_from_slice(&config_ai.data.borrow())
+    let cfg = IepConfigV3::try_from_slice(&config_ai.data.borrow())
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if cfg.version != CONFIG_VERSION_V2 {
+    if cfg.version != CONFIG_VERSION_V3 {
         return Err(IepError::InvalidAccountData.into());
     }
     let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
     if expected_config != *config_ai.key {
         return Err(IepError::InvalidConfigPda.into());
+    }
+    if cfg.mint != mint {
+        return Err(IepError::InvalidAccountData.into());
     }
 
     let (expected_intent, bump) = intent_pda(program_id, &cfg.deployment_id, &intent_nonce);
@@ -1129,9 +1143,9 @@ fn process_fill_intent(
         return Err(IepError::AlreadyInitialized.into());
     }
 
-    let cfg = IepConfigV2::try_from_slice(&config_ai.data.borrow())
+    let cfg = IepConfigV3::try_from_slice(&config_ai.data.borrow())
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if cfg.version != CONFIG_VERSION_V2 {
+    if cfg.version != CONFIG_VERSION_V3 {
         return Err(IepError::InvalidAccountData.into());
     }
     let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
@@ -1147,6 +1161,9 @@ fn process_fill_intent(
         return Err(IepError::IntentNotOpen.into());
     }
     if *mint_ai.key != *intent.mint() {
+        return Err(IepError::InvalidAccountData.into());
+    }
+    if *mint_ai.key != cfg.mint {
         return Err(IepError::InvalidAccountData.into());
     }
     if intent.direction() != DIRECTION_A && intent.direction() != DIRECTION_B {
@@ -1353,9 +1370,9 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
         return Err(IepError::InvalidFillOwner.into());
     }
 
-    let cfg = IepConfigV2::try_from_slice(&config_ai.data.borrow())
+    let cfg = IepConfigV3::try_from_slice(&config_ai.data.borrow())
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if cfg.version != CONFIG_VERSION_V2 {
+    if cfg.version != CONFIG_VERSION_V3 {
         return Err(IepError::InvalidAccountData.into());
     }
     let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
@@ -1379,6 +1396,9 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
     }
     if cfg.verifier_program != *verifier_program.key {
         return Err(ProgramError::IncorrectProgramId);
+    }
+    if cfg.mint != *mint_ai.key {
+        return Err(IepError::InvalidAccountData.into());
     }
 
     let mut intent = IepIntentState::load(&intent_ai.data.borrow())?;

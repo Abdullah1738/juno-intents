@@ -167,6 +167,7 @@ func cmdInitIEP(argv []string) error {
 	var (
 		iepProgramStr string
 		deploymentHex string
+		mintStr       string
 		feeBps        uint
 		feeCollector  string
 		crpProgramStr string
@@ -183,6 +184,7 @@ func cmdInitIEP(argv []string) error {
 
 	fs.StringVar(&iepProgramStr, "iep-program-id", "", "IEP program id (base58)")
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
+	fs.StringVar(&mintStr, "mint", "", "SPL token mint pubkey (base58)")
 	fs.UintVar(&feeBps, "fee-bps", 0, "Protocol fee bps (u16)")
 	fs.StringVar(&feeCollector, "fee-collector", "", "Fee collector pubkey (base58)")
 	fs.StringVar(&crpProgramStr, "checkpoint-registry-program", "", "CRP program id (base58)")
@@ -197,7 +199,7 @@ func cmdInitIEP(argv []string) error {
 	if err := fs.Parse(argv); err != nil {
 		return err
 	}
-	if iepProgramStr == "" || deploymentHex == "" || feeCollector == "" || crpProgramStr == "" || verifierStr == "" {
+	if iepProgramStr == "" || deploymentHex == "" || mintStr == "" || feeCollector == "" || crpProgramStr == "" || verifierStr == "" {
 		return errors.New("missing required args (see --help)")
 	}
 	if verifierRouterProgramStr == "" || routerStr == "" || verifierEntryStr == "" || verifierProgramStr == "" {
@@ -214,6 +216,10 @@ func cmdInitIEP(argv []string) error {
 	deploymentID, err := protocol.ParseDeploymentIDHex(strings.TrimPrefix(strings.TrimSpace(deploymentHex), "0x"))
 	if err != nil {
 		return fmt.Errorf("parse --deployment-id: %w", err)
+	}
+	mint, err := solana.ParsePubkey(mintStr)
+	if err != nil {
+		return fmt.Errorf("parse --mint: %w", err)
 	}
 	feeCollectorPK, err := solana.ParsePubkey(feeCollector)
 	if err != nil {
@@ -259,6 +265,7 @@ func cmdInitIEP(argv []string) error {
 		Accounts: []solana.AccountMeta{
 			{Pubkey: solana.Pubkey(payerPub), IsSigner: true, IsWritable: true},
 			{Pubkey: cfgPDA, IsSigner: false, IsWritable: true},
+			{Pubkey: mint, IsSigner: false, IsWritable: false},
 			{Pubkey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
 		},
 		Data: encodeIepInitialize(

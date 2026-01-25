@@ -11,6 +11,8 @@ DEPLOYMENT_ID_HEX=""
 NAME=""
 WORKDIR_OVERRIDE=""
 
+MINT_PUBKEY=""
+
 FEE_BPS="25"
 FEE_COLLECTOR_PUBKEY=""
 
@@ -35,6 +37,7 @@ Usage:
   scripts/solana/deploy.sh \
     --cluster devnet|mainnet|localnet \
     --admin <pubkey> \
+    --mint <pubkey> \
     --fee-collector <pubkey> \
     --verifier-router-program <pubkey> \
     --verifier-program <pubkey> \
@@ -83,6 +86,8 @@ while [[ $# -gt 0 ]]; do
       NAME="${2:-}"; shift 2 ;;
     --admin)
       ADMIN_PUBKEY="${2:-}"; shift 2 ;;
+    --mint)
+      MINT_PUBKEY="${2:-}"; shift 2 ;;
     --refund-to)
       REFUND_PUBKEY="${2:-}"; shift 2 ;;
     --fee-bps)
@@ -132,6 +137,10 @@ if [[ -z "${RPC_URL}" ]]; then
 fi
 if [[ -z "${ADMIN_PUBKEY}" ]]; then
   echo "--admin is required" >&2
+  exit 2
+fi
+if [[ -z "${MINT_PUBKEY}" ]]; then
+  echo "--mint is required" >&2
   exit 2
 fi
 if [[ -z "${REFUND_PUBKEY}" ]]; then
@@ -429,6 +438,7 @@ RISC0_VERIFIER_ENTRY_PDA="$(cd "${ROOT}" && go run ./cmd/juno-intents risc0-pda 
 (cd "${ROOT}" && SOLANA_RPC_URL="${RPC_URL}" go run ./cmd/juno-intents init-iep \
   --iep-program-id "${IEP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
+  --mint "${MINT_PUBKEY}" \
   --fee-bps "${FEE_BPS}" \
   --fee-collector "${FEE_COLLECTOR_PUBKEY}" \
   --checkpoint-registry-program "${CRP_PROGRAM_ID}" \
@@ -459,6 +469,7 @@ export DEPLOY_RECORD_ORP_PROGRAM_ID="${ORP_PROGRAM_ID}"
 export DEPLOY_RECORD_RV_PROGRAM_ID="${RV_PROGRAM_ID}"
 export DEPLOY_RECORD_CRP_CONFIG="${CRP_CONFIG_PDA}"
 export DEPLOY_RECORD_IEP_CONFIG="${IEP_CONFIG_PDA}"
+export DEPLOY_RECORD_MINT="${MINT_PUBKEY}"
 export DEPLOY_RECORD_FEE_BPS="${FEE_BPS}"
 export DEPLOY_RECORD_FEE_COLLECTOR="${FEE_COLLECTOR_PUBKEY}"
 export DEPLOY_RECORD_VERIFIER_ROUTER_PROGRAM_ID="${VERIFIER_ROUTER_PROGRAM_ID}"
@@ -491,6 +502,7 @@ entry = {
     "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
     "deployment_id": os.environ["DEPLOY_RECORD_DEPLOYMENT_ID"],
+    "mint": os.environ["DEPLOY_RECORD_MINT"],
     "junocash_chain": os.environ.get("DEPLOY_RECORD_JUNOCASH_CHAIN") or None,
     "junocash_genesis_hash": os.environ.get("DEPLOY_RECORD_JUNOCASH_GENESIS_HASH") or None,
     "admin": os.environ["DEPLOY_RECORD_ADMIN"],

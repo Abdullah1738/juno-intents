@@ -22,6 +22,7 @@ type Deployment struct {
 	RPCURL  string `json:"rpc_url,omitempty"`
 
 	DeploymentID string `json:"deployment_id"`
+	Mint         string `json:"mint,omitempty"`
 
 	JunocashChain       string `json:"junocash_chain,omitempty"`
 	JunocashGenesisHash string `json:"junocash_genesis_hash,omitempty"` // hex32 (no 0x prefix required)
