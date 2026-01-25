@@ -977,17 +977,20 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
 
     // Avoid deserializing the full CRP config (it contains a 32-pubkey operator array) to stay under SBF stack limits.
     let crp_cfg_data = crp_config_ai.data.borrow();
-    if crp_cfg_data.len() != crp::CONFIG_LEN_V1 {
-        return Err(IepError::CheckpointInvalid.into());
-    }
-    if crp_cfg_data[0] != 1 {
+    let crp_version = crp_cfg_data.get(0).copied().unwrap_or(0);
+    let crp_expected_len = match crp_version {
+        1 => crp::CONFIG_LEN_V1,
+        2 => crp::CONFIG_LEN_V2,
+        _ => return Err(IepError::CheckpointInvalid.into()),
+    };
+    if crp_cfg_data.len() != crp_expected_len {
         return Err(IepError::CheckpointInvalid.into());
     }
     if &crp_cfg_data[1..33] != cfg.deployment_id.as_ref() {
         return Err(IepError::CheckpointInvalid.into());
     }
     // paused: last byte (borsh bool). Any non-zero value is treated as paused/invalid.
-    if crp_cfg_data[crp::CONFIG_LEN_V1 - 1] != 0 {
+    if crp_cfg_data[crp_expected_len - 1] != 0 {
         return Err(IepError::CheckpointInvalid.into());
     }
     let cp = crp::CrpCheckpointV1::try_from_slice(&checkpoint_ai.data.borrow())
