@@ -44,6 +44,9 @@ func cmdIepCreateIntent(argv []string) error {
 		solanaRecipientStr string
 		netAmountStr       string
 		expirySlotStr      string
+		solverStr          string
+		receiverTagHex     string
+		junocashAmountStr  string
 
 		creatorPath               string
 		creatorSourceTokenAccount string
@@ -64,6 +67,9 @@ func cmdIepCreateIntent(argv []string) error {
 	fs.StringVar(&solanaRecipientStr, "solana-recipient", "", "Recipient pubkey (base58)")
 	fs.StringVar(&netAmountStr, "net-amount", "", "Net amount (u64)")
 	fs.StringVar(&expirySlotStr, "expiry-slot", "", "Expiry slot (u64)")
+	fs.StringVar(&solverStr, "solver", "", "Committed solver pubkey (base58)")
+	fs.StringVar(&receiverTagHex, "receiver-tag", "", "Committed receiver tag (32-byte hex)")
+	fs.StringVar(&junocashAmountStr, "junocash-amount", "", "Committed JunoCash amount required (u64, zatoshis)")
 
 	fs.StringVar(&creatorPath, "creator-keypair", solvernet.DefaultSolanaKeypairPath(), "Creator Solana keypair path (Solana CLI JSON format)")
 	fs.StringVar(&creatorSourceTokenAccount, "creator-source-token-account", "", "Creator source token account (base58; required for direction B)")
@@ -84,8 +90,8 @@ func cmdIepCreateIntent(argv []string) error {
 	if strings.TrimSpace(iepProgramStr) == "" || strings.TrimSpace(deploymentHex) == "" {
 		return errors.New("--iep-program-id and --deployment-id are required")
 	}
-	if strings.TrimSpace(mintStr) == "" || strings.TrimSpace(solanaRecipientStr) == "" || strings.TrimSpace(netAmountStr) == "" || strings.TrimSpace(expirySlotStr) == "" {
-		return errors.New("--mint, --solana-recipient, --net-amount, and --expiry-slot are required")
+	if strings.TrimSpace(mintStr) == "" || strings.TrimSpace(solanaRecipientStr) == "" || strings.TrimSpace(netAmountStr) == "" || strings.TrimSpace(expirySlotStr) == "" || strings.TrimSpace(solverStr) == "" || strings.TrimSpace(receiverTagHex) == "" || strings.TrimSpace(junocashAmountStr) == "" {
+		return errors.New("--mint, --solana-recipient, --net-amount, --expiry-slot, --solver, --receiver-tag, and --junocash-amount are required")
 	}
 
 	intentNonce, err := parseOrRandomHex32(intentNonceHex)
@@ -117,6 +123,10 @@ func cmdIepCreateIntent(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("parse --solana-recipient: %w", err)
 	}
+	solverPK, err := solana.ParsePubkey(solverStr)
+	if err != nil {
+		return fmt.Errorf("parse --solver: %w", err)
+	}
 	netAmount, err := strconv.ParseUint(netAmountStr, 10, 64)
 	if err != nil {
 		return fmt.Errorf("parse --net-amount: %w", err)
@@ -124,6 +134,14 @@ func cmdIepCreateIntent(argv []string) error {
 	expirySlot, err := strconv.ParseUint(expirySlotStr, 10, 64)
 	if err != nil {
 		return fmt.Errorf("parse --expiry-slot: %w", err)
+	}
+	receiverTag, err := parseHex32(receiverTagHex)
+	if err != nil {
+		return fmt.Errorf("parse --receiver-tag: %w", err)
+	}
+	junocashAmountRequired, err := strconv.ParseUint(junocashAmountStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse --junocash-amount: %w", err)
 	}
 
 	creatorPriv, creatorPub, err := solvernet.LoadSolanaKeypair(creatorPath)
@@ -174,7 +192,7 @@ func cmdIepCreateIntent(argv []string) error {
 			{Pubkey: splTokenProgramID, IsSigner: false, IsWritable: false},
 			{Pubkey: solana.SystemProgramID, IsSigner: false, IsWritable: false},
 		},
-		Data: encodeIepCreateIntent(intentNonce, direction, mint, solanaRecipient, netAmount, expirySlot),
+		Data: encodeIepCreateIntentV3(intentNonce, direction, mint, solanaRecipient, netAmount, expirySlot, solverPK, receiverTag, junocashAmountRequired),
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -265,8 +283,8 @@ func cmdIepFill(argv []string) error {
 	fs.StringVar(&iepProgramStr, "iep-program-id", "", "IEP program id (base58)")
 	fs.StringVar(&deploymentHex, "deployment-id", "", "DeploymentID (32-byte hex)")
 	fs.StringVar(&intentStr, "intent", "", "Intent PDA pubkey (base58)")
-	fs.StringVar(&receiverTagHex, "receiver-tag", "", "Receiver tag (32-byte hex)")
-	fs.StringVar(&junocashAmountStr, "junocash-amount", "", "Required JunoCash amount (u64)")
+	fs.StringVar(&receiverTagHex, "receiver-tag", "", "Receiver tag (32-byte hex; required for v2 intents)")
+	fs.StringVar(&junocashAmountStr, "junocash-amount", "", "Required JunoCash amount (u64; required for v2 intents)")
 	fs.StringVar(&mintStr, "mint", "", "SPL token mint pubkey (base58)")
 
 	fs.StringVar(&solverPath, "solver-keypair", solvernet.DefaultSolanaKeypairPath(), "Solver Solana keypair path (Solana CLI JSON format)")
@@ -289,8 +307,8 @@ func cmdIepFill(argv []string) error {
 	if strings.TrimSpace(iepProgramStr) == "" || strings.TrimSpace(deploymentHex) == "" {
 		return errors.New("--iep-program-id and --deployment-id are required")
 	}
-	if strings.TrimSpace(intentStr) == "" || strings.TrimSpace(receiverTagHex) == "" || strings.TrimSpace(junocashAmountStr) == "" || strings.TrimSpace(mintStr) == "" {
-		return errors.New("--intent, --receiver-tag, --junocash-amount, and --mint are required")
+	if strings.TrimSpace(intentStr) == "" || strings.TrimSpace(mintStr) == "" {
+		return errors.New("--intent and --mint are required")
 	}
 
 	iepProgram, err := solana.ParsePubkey(iepProgramStr)
@@ -305,17 +323,26 @@ func cmdIepFill(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("parse --intent: %w", err)
 	}
-	receiverTag, err := parseHex32(receiverTagHex)
-	if err != nil {
-		return fmt.Errorf("parse --receiver-tag: %w", err)
-	}
-	junocashAmount, err := strconv.ParseUint(junocashAmountStr, 10, 64)
-	if err != nil {
-		return fmt.Errorf("parse --junocash-amount: %w", err)
-	}
 	mint, err := solana.ParsePubkey(mintStr)
 	if err != nil {
 		return fmt.Errorf("parse --mint: %w", err)
+	}
+
+	var receiverTag [32]byte
+	if strings.TrimSpace(receiverTagHex) != "" {
+		tag, err := parseHex32(receiverTagHex)
+		if err != nil {
+			return fmt.Errorf("parse --receiver-tag: %w", err)
+		}
+		receiverTag = tag
+	}
+	var junocashAmount uint64
+	if strings.TrimSpace(junocashAmountStr) != "" {
+		amt, err := strconv.ParseUint(junocashAmountStr, 10, 64)
+		if err != nil {
+			return fmt.Errorf("parse --junocash-amount: %w", err)
+		}
+		junocashAmount = amt
 	}
 
 	cfgPDA, _, err := solana.FindProgramAddress([][]byte{[]byte("config"), deploymentID[:]}, solana.Pubkey(iepProgram))
@@ -360,9 +387,14 @@ func cmdIepFill(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("fetch intent account: %w", err)
 	}
-	intentState, err := parseIepIntentV2(intentData)
+	intentState, err := parseIepIntentHeader(intentData)
 	if err != nil {
 		return fmt.Errorf("parse intent account: %w", err)
+	}
+	if intentState.Version == 2 {
+		if receiverTag == ([32]byte{}) || junocashAmount == 0 {
+			return errors.New("--receiver-tag and --junocash-amount are required for v2 intents")
+		}
 	}
 
 	if intentState.Direction == 1 && strings.TrimSpace(solverSourceTokenAccount) == "" {
@@ -630,7 +662,7 @@ func cmdIepSettle(argv []string) error {
 	if err != nil {
 		return fmt.Errorf("fetch intent account: %w", err)
 	}
-	intentState, err := parseIepIntentV2(intentData)
+	intentState, err := parseIepIntentHeader(intentData)
 	if err != nil {
 		return fmt.Errorf("parse intent account: %w", err)
 	}
@@ -923,10 +955,42 @@ func encodeIepCreateIntent(
 	return out
 }
 
+func encodeIepCreateIntentV3(
+	intentNonce [32]byte,
+	direction uint8,
+	mint solana.Pubkey,
+	solanaRecipient solana.Pubkey,
+	netAmount uint64,
+	expirySlot uint64,
+	solver solana.Pubkey,
+	receiverTag [32]byte,
+	junocashAmountRequired uint64,
+) []byte {
+	// Borsh enum variant index (u8) for CreateIntentV3 is 2.
+	out := make([]byte, 0, 1+32+1+32+32+8+8+32+32+8)
+	out = append(out, 2)
+	out = append(out, intentNonce[:]...)
+	out = append(out, direction)
+	out = append(out, mint[:]...)
+	out = append(out, solanaRecipient[:]...)
+
+	var tmp8 [8]byte
+	binary.LittleEndian.PutUint64(tmp8[:], netAmount)
+	out = append(out, tmp8[:]...)
+	binary.LittleEndian.PutUint64(tmp8[:], expirySlot)
+	out = append(out, tmp8[:]...)
+
+	out = append(out, solver[:]...)
+	out = append(out, receiverTag[:]...)
+	binary.LittleEndian.PutUint64(tmp8[:], junocashAmountRequired)
+	out = append(out, tmp8[:]...)
+	return out
+}
+
 func encodeIepFillIntent(receiverTag [32]byte, junocashAmountRequired uint64) []byte {
-	// Borsh enum variant index (u8) for FillIntent is 3.
+	// Borsh enum variant index (u8) for FillIntent is 4.
 	out := make([]byte, 0, 1+32+8)
-	out = append(out, 3)
+	out = append(out, 4)
 	out = append(out, receiverTag[:]...)
 	var tmp8 [8]byte
 	binary.LittleEndian.PutUint64(tmp8[:], junocashAmountRequired)
@@ -935,9 +999,9 @@ func encodeIepFillIntent(receiverTag [32]byte, junocashAmountRequired uint64) []
 }
 
 func encodeIepSettle(bundle []byte) []byte {
-	// Borsh enum variant index (u8) for Settle is 4.
+	// Borsh enum variant index (u8) for Settle is 5.
 	out := make([]byte, 0, 1+4+len(bundle))
-	out = append(out, 4)
+	out = append(out, 5)
 	var tmp4 [4]byte
 	binary.LittleEndian.PutUint32(tmp4[:], uint32(len(bundle)))
 	out = append(out, tmp4[:]...)
@@ -945,12 +1009,13 @@ func encodeIepSettle(bundle []byte) []byte {
 	return out
 }
 
-type iepIntentV2 struct {
+type iepIntentHeader struct {
+	Version   uint8
 	Direction uint8
 	Vault     solana.Pubkey
 }
 
-func parseIepIntentV2(data []byte) (iepIntentV2, error) {
+func parseIepIntentHeader(data []byte) (iepIntentHeader, error) {
 	// Layout must match solana/intent-escrow IepIntentV2:
 	//   version u8
 	//   status u8
@@ -967,12 +1032,13 @@ func parseIepIntentV2(data []byte) (iepIntentV2, error) {
 	//   vault Pubkey
 	const minLen = 1 + 1 + 1 + 32 + 32 + 32 + 32 + 8 + 2 + 8 + 8 + 32 + 32
 	if len(data) < minLen {
-		return iepIntentV2{}, errors.New("intent account too short")
+		return iepIntentHeader{}, errors.New("intent account too short")
 	}
+	version := data[0]
 	// direction at offset 2
 	dir := data[2]
 	// vault is last 32 bytes
 	var vault solana.Pubkey
 	copy(vault[:], data[minLen-32:minLen])
-	return iepIntentV2{Direction: dir, Vault: vault}, nil
+	return iepIntentHeader{Version: version, Direction: dir, Vault: vault}, nil
 }
