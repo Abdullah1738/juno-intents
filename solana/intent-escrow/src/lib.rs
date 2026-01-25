@@ -34,11 +34,13 @@ const PURPOSE_IEP_SPENT_RECEIPT_ID: &[u8] = b"iep_spent_receipt_id";
 
 const CONFIG_VERSION_V2: u8 = 2;
 const INTENT_VERSION_V2: u8 = 2;
+const INTENT_VERSION_V3: u8 = 3;
 const FILL_VERSION_V2: u8 = 2;
 const SPENT_RECEIPT_VERSION_V1: u8 = 1;
 
 const CONFIG_LEN_V2: usize = 1 + 32 + 2 + 32 + 32 + 32 + 32 + 32 + 32 + 32;
 const INTENT_LEN_V2: usize = 1 + 1 + 1 + 32 + 32 + 32 + 32 + 8 + 2 + 8 + 8 + 32 + 32;
+const INTENT_LEN_V3: usize = INTENT_LEN_V2 + 32 + 32 + 8;
 const FILL_LEN_V2: usize = 1 + 1 + 32 + 32 + 32 + 8 + 32 + 32;
 const SPENT_RECEIPT_LEN_V1: usize = 1 + 32 + 32;
 
@@ -84,6 +86,17 @@ pub enum IepInstruction {
         net_amount: u64,
         expiry_slot: u64,
     },
+    CreateIntentV3 {
+        intent_nonce: [u8; 32],
+        direction: u8,
+        mint: Pubkey,
+        solana_recipient: Pubkey,
+        net_amount: u64,
+        expiry_slot: u64,
+        solver: Pubkey,
+        receiver_tag: [u8; 32],
+        junocash_amount_required: u64,
+    },
     CancelIntent,
     FillIntent {
         receiver_tag: [u8; 32],
@@ -124,6 +137,159 @@ pub struct IepIntentV2 {
     pub expiry_slot: u64,
     pub intent_nonce: [u8; 32],
     pub vault: Pubkey,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq, Eq)]
+pub struct IepIntentV3 {
+    pub version: u8,
+    pub status: u8,
+    pub direction: u8,
+    pub deployment_id: [u8; 32],
+    pub creator: Pubkey,
+    pub mint: Pubkey,
+    pub solana_recipient: Pubkey,
+    pub net_amount: u64,
+    pub fee_bps: u16,
+    pub protocol_fee: u64,
+    pub expiry_slot: u64,
+    pub intent_nonce: [u8; 32],
+    pub vault: Pubkey,
+    pub solver: Pubkey,
+    pub receiver_tag: [u8; 32],
+    pub junocash_amount_required: u64,
+}
+
+enum IepIntentState {
+    V2(IepIntentV2),
+    V3(IepIntentV3),
+}
+
+impl IepIntentState {
+    fn load(data: &[u8]) -> Result<Self, ProgramError> {
+        let version = data.get(0).copied().unwrap_or(0);
+        match version {
+            INTENT_VERSION_V2 => IepIntentV2::try_from_slice(data)
+                .map(IepIntentState::V2)
+                .map_err(|_| ProgramError::from(IepError::InvalidAccountData)),
+            INTENT_VERSION_V3 => IepIntentV3::try_from_slice(data)
+                .map(IepIntentState::V3)
+                .map_err(|_| ProgramError::from(IepError::InvalidAccountData)),
+            _ => Err(IepError::InvalidAccountData.into()),
+        }
+    }
+
+    fn status(&self) -> u8 {
+        match self {
+            IepIntentState::V2(i) => i.status,
+            IepIntentState::V3(i) => i.status,
+        }
+    }
+
+    fn direction(&self) -> u8 {
+        match self {
+            IepIntentState::V2(i) => i.direction,
+            IepIntentState::V3(i) => i.direction,
+        }
+    }
+
+    fn deployment_id(&self) -> &[u8; 32] {
+        match self {
+            IepIntentState::V2(i) => &i.deployment_id,
+            IepIntentState::V3(i) => &i.deployment_id,
+        }
+    }
+
+    fn creator(&self) -> &Pubkey {
+        match self {
+            IepIntentState::V2(i) => &i.creator,
+            IepIntentState::V3(i) => &i.creator,
+        }
+    }
+
+    fn mint(&self) -> &Pubkey {
+        match self {
+            IepIntentState::V2(i) => &i.mint,
+            IepIntentState::V3(i) => &i.mint,
+        }
+    }
+
+    fn solana_recipient(&self) -> &Pubkey {
+        match self {
+            IepIntentState::V2(i) => &i.solana_recipient,
+            IepIntentState::V3(i) => &i.solana_recipient,
+        }
+    }
+
+    fn net_amount(&self) -> u64 {
+        match self {
+            IepIntentState::V2(i) => i.net_amount,
+            IepIntentState::V3(i) => i.net_amount,
+        }
+    }
+
+    fn protocol_fee(&self) -> u64 {
+        match self {
+            IepIntentState::V2(i) => i.protocol_fee,
+            IepIntentState::V3(i) => i.protocol_fee,
+        }
+    }
+
+    fn expiry_slot(&self) -> u64 {
+        match self {
+            IepIntentState::V2(i) => i.expiry_slot,
+            IepIntentState::V3(i) => i.expiry_slot,
+        }
+    }
+
+    fn intent_nonce(&self) -> &[u8; 32] {
+        match self {
+            IepIntentState::V2(i) => &i.intent_nonce,
+            IepIntentState::V3(i) => &i.intent_nonce,
+        }
+    }
+
+    fn vault(&self) -> &Pubkey {
+        match self {
+            IepIntentState::V2(i) => &i.vault,
+            IepIntentState::V3(i) => &i.vault,
+        }
+    }
+
+    fn solver(&self) -> Option<&Pubkey> {
+        match self {
+            IepIntentState::V2(_) => None,
+            IepIntentState::V3(i) => Some(&i.solver),
+        }
+    }
+
+    fn receiver_tag(&self) -> Option<&[u8; 32]> {
+        match self {
+            IepIntentState::V2(_) => None,
+            IepIntentState::V3(i) => Some(&i.receiver_tag),
+        }
+    }
+
+    fn junocash_amount_required(&self) -> Option<u64> {
+        match self {
+            IepIntentState::V2(_) => None,
+            IepIntentState::V3(i) => Some(i.junocash_amount_required),
+        }
+    }
+
+    fn set_status(&mut self, status: u8) {
+        match self {
+            IepIntentState::V2(i) => i.status = status,
+            IepIntentState::V3(i) => i.status = status,
+        }
+    }
+
+    fn serialize_into(&self, dst: &mut [u8]) -> Result<(), ProgramError> {
+        match self {
+            IepIntentState::V2(i) => i.serialize(&mut &mut dst[..]),
+            IepIntentState::V3(i) => i.serialize(&mut &mut dst[..]),
+        }
+        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
+    }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq, Eq)]
@@ -234,6 +400,29 @@ pub fn process_instruction(
             solana_recipient,
             net_amount,
             expiry_slot,
+        ),
+        IepInstruction::CreateIntentV3 {
+            intent_nonce,
+            direction,
+            mint,
+            solana_recipient,
+            net_amount,
+            expiry_slot,
+            solver,
+            receiver_tag,
+            junocash_amount_required,
+        } => process_create_intent_v3(
+            program_id,
+            accounts,
+            intent_nonce,
+            direction,
+            mint,
+            solana_recipient,
+            net_amount,
+            expiry_slot,
+            solver,
+            receiver_tag,
+            junocash_amount_required,
         ),
         IepInstruction::CancelIntent => process_cancel_intent(program_id, accounts),
         IepInstruction::FillIntent {
@@ -517,6 +706,206 @@ fn process_create_intent(
 }
 
 #[inline(never)]
+fn process_create_intent_v3(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    intent_nonce: [u8; 32],
+    direction: u8,
+    mint: Pubkey,
+    solana_recipient: Pubkey,
+    net_amount: u64,
+    expiry_slot: u64,
+    solver: Pubkey,
+    receiver_tag: [u8; 32],
+    junocash_amount_required: u64,
+) -> ProgramResult {
+    // Accounts:
+    // 0. creator (signer, writable payer)
+    // 1. config (PDA)
+    // 2. intent (PDA, writable)
+    // 3. vault (PDA token account, writable; required for direction B)
+    // 4. creator_source_token_account (writable; required for direction B)
+    // 5. mint (readonly)
+    // 6. token_program
+    // 7. system_program
+    let mut iter = accounts.iter();
+    let creator = next_account_info(&mut iter)?;
+    let config_ai = next_account_info(&mut iter)?;
+    let intent_ai = next_account_info(&mut iter)?;
+    let vault_ai = next_account_info(&mut iter)?;
+    let creator_source = next_account_info(&mut iter)?;
+    let mint_ai = next_account_info(&mut iter)?;
+    let token_program = next_account_info(&mut iter)?;
+    let system_program = next_account_info(&mut iter)?;
+
+    if *system_program.key != solana_program::system_program::ID {
+        return Err(IepError::InvalidSystemProgram.into());
+    }
+    if *token_program.key != spl_token::ID {
+        return Err(IepError::InvalidTokenProgram.into());
+    }
+    if !creator.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if config_ai.owner != program_id {
+        return Err(IepError::InvalidConfigOwner.into());
+    }
+    if !intent_ai.data_is_empty() || intent_ai.owner != &solana_program::system_program::ID {
+        return Err(IepError::AlreadyInitialized.into());
+    }
+    if *mint_ai.key != mint {
+        return Err(IepError::InvalidAccountData.into());
+    }
+    if direction != DIRECTION_A && direction != DIRECTION_B {
+        return Err(IepError::InvalidDirection.into());
+    }
+    if direction == DIRECTION_B && solana_recipient != *creator.key {
+        // In direction B, solana_recipient is not used for settlement transfers; enforce it
+        // equals the creator to keep the on-chain meaning stable.
+        return Err(IepError::InvalidAccountData.into());
+    }
+    if solver == Pubkey::default() {
+        return Err(IepError::InvalidAccountData.into());
+    }
+    if receiver_tag == [0u8; 32] {
+        return Err(IepError::InvalidAccountData.into());
+    }
+    if junocash_amount_required == 0 {
+        return Err(IepError::InvalidAccountData.into());
+    }
+
+    let cfg = IepConfigV2::try_from_slice(&config_ai.data.borrow())
+        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
+    if cfg.version != CONFIG_VERSION_V2 {
+        return Err(IepError::InvalidAccountData.into());
+    }
+    let (expected_config, _bump) = config_pda(program_id, &cfg.deployment_id);
+    if expected_config != *config_ai.key {
+        return Err(IepError::InvalidConfigPda.into());
+    }
+
+    let (expected_intent, bump) = intent_pda(program_id, &cfg.deployment_id, &intent_nonce);
+    if expected_intent != *intent_ai.key {
+        return Err(IepError::InvalidIntentPda.into());
+    }
+
+    let fee = protocol_fee_for_net_amount(net_amount, cfg.fee_bps)?;
+    let gross = net_amount
+        .checked_add(fee)
+        .ok_or(IepError::InvalidAccountData)?;
+
+    let mut vault = Pubkey::default();
+    if direction == DIRECTION_B {
+        let (expected_vault, _bump) = intent_vault_pda(program_id, intent_ai.key);
+        if expected_vault != *vault_ai.key {
+            return Err(IepError::InvalidVaultPda.into());
+        }
+        vault = *vault_ai.key;
+    }
+
+    let intent = IepIntentV3 {
+        version: INTENT_VERSION_V3,
+        status: INTENT_STATUS_OPEN,
+        direction,
+        deployment_id: cfg.deployment_id,
+        creator: *creator.key,
+        mint,
+        solana_recipient,
+        net_amount,
+        fee_bps: cfg.fee_bps,
+        protocol_fee: fee,
+        expiry_slot,
+        intent_nonce,
+        vault,
+        solver,
+        receiver_tag,
+        junocash_amount_required,
+    };
+
+    let rent = Rent::get()?;
+    let lamports = rent.minimum_balance(INTENT_LEN_V3);
+    invoke_signed(
+        &system_instruction::create_account(
+            creator.key,
+            intent_ai.key,
+            lamports,
+            INTENT_LEN_V3 as u64,
+            program_id,
+        ),
+        &[creator.clone(), intent_ai.clone(), system_program.clone()],
+        &[&[
+            INTENT_SEED,
+            cfg.deployment_id.as_ref(),
+            intent_nonce.as_ref(),
+            &[bump],
+        ]],
+    )?;
+
+    if direction == DIRECTION_B {
+        // Validate creator source token account.
+        let src_state = TokenAccount::unpack(&creator_source.data.borrow())
+            .map_err(|_| IepError::TokenAccountInvalid)?;
+        if src_state.mint != mint || src_state.owner != *creator.key {
+            return Err(IepError::TokenAccountInvalid.into());
+        }
+
+        // Create intent vault token account (PDA, owned by token program).
+        if !vault_ai.data_is_empty() || vault_ai.owner != &solana_program::system_program::ID {
+            return Err(IepError::AlreadyInitialized.into());
+        }
+        let (expected_vault, vault_bump) = intent_vault_pda(program_id, intent_ai.key);
+        if expected_vault != *vault_ai.key {
+            return Err(IepError::InvalidVaultPda.into());
+        }
+        let vault_lamports = rent.minimum_balance(TokenAccount::LEN);
+        invoke_signed(
+            &system_instruction::create_account(
+                creator.key,
+                vault_ai.key,
+                vault_lamports,
+                TokenAccount::LEN as u64,
+                token_program.key,
+            ),
+            &[creator.clone(), vault_ai.clone(), system_program.clone()],
+            &[&[INTENT_VAULT_SEED, intent_ai.key.as_ref(), &[vault_bump]]],
+        )?;
+        let init_vault_ix = token_ix::initialize_account3(
+            token_program.key,
+            vault_ai.key,
+            mint_ai.key,
+            intent_ai.key,
+        )?;
+        invoke(
+            &init_vault_ix,
+            &[vault_ai.clone(), mint_ai.clone(), token_program.clone()],
+        )?;
+
+        // Transfer gross amount into vault.
+        let transfer_ix = token_ix::transfer(
+            token_program.key,
+            creator_source.key,
+            vault_ai.key,
+            creator.key,
+            &[],
+            gross,
+        )?;
+        invoke(
+            &transfer_ix,
+            &[
+                creator_source.clone(),
+                vault_ai.clone(),
+                creator.clone(),
+                token_program.clone(),
+            ],
+        )?;
+    }
+
+    intent
+        .serialize(&mut &mut intent_ai.data.borrow_mut()[..])
+        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
+}
+
+#[inline(never)]
 fn process_cancel_intent(program_id: &Pubkey, accounts: &[AccountInfo]) -> ProgramResult {
     // Accounts:
     // 0. creator (signer)
@@ -535,82 +924,160 @@ fn process_cancel_intent(program_id: &Pubkey, accounts: &[AccountInfo]) -> Progr
         return Err(IepError::InvalidIntentOwner.into());
     }
 
-    let mut intent = IepIntentV2::try_from_slice(&intent_ai.data.borrow())
-        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if intent.version != INTENT_VERSION_V2 {
-        return Err(IepError::InvalidAccountData.into());
+    let version = intent_ai.data.borrow().get(0).copied().unwrap_or(0);
+    match version {
+        INTENT_VERSION_V2 => {
+            let mut intent = IepIntentV2::try_from_slice(&intent_ai.data.borrow())
+                .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
+            if intent.creator != *creator.key {
+                return Err(IepError::Unauthorized.into());
+            }
+            if intent.status != INTENT_STATUS_OPEN {
+                return Err(IepError::IntentNotOpen.into());
+            }
+
+            if intent.direction == DIRECTION_B {
+                let vault_ai = next_account_info(&mut iter)
+                    .map_err(|_| ProgramError::NotEnoughAccountKeys)?;
+                let creator_dest = next_account_info(&mut iter)
+                    .map_err(|_| ProgramError::NotEnoughAccountKeys)?;
+                let token_program = next_account_info(&mut iter)
+                    .map_err(|_| ProgramError::NotEnoughAccountKeys)?;
+
+                if *token_program.key != spl_token::ID {
+                    return Err(IepError::InvalidTokenProgram.into());
+                }
+                if intent.vault != *vault_ai.key {
+                    return Err(IepError::InvalidVaultPda.into());
+                }
+
+                // Token account sanity checks.
+                let vault_state = TokenAccount::unpack(&vault_ai.data.borrow())
+                    .map_err(|_| IepError::TokenAccountInvalid)?;
+                if vault_state.mint != intent.mint || vault_state.owner != *intent_ai.key {
+                    return Err(IepError::TokenAccountInvalid.into());
+                }
+                let dest_state = TokenAccount::unpack(&creator_dest.data.borrow())
+                    .map_err(|_| IepError::TokenAccountInvalid)?;
+                if dest_state.mint != intent.mint || dest_state.owner != *creator.key {
+                    return Err(IepError::TokenAccountInvalid.into());
+                }
+
+                let (intent_key, intent_bump) =
+                    intent_pda(program_id, &intent.deployment_id, &intent.intent_nonce);
+                if intent_key != *intent_ai.key {
+                    return Err(IepError::InvalidIntentPda.into());
+                }
+                let signer_seeds: &[&[u8]] = &[
+                    INTENT_SEED,
+                    intent.deployment_id.as_ref(),
+                    intent.intent_nonce.as_ref(),
+                    &[intent_bump],
+                ];
+
+                // Refund all vault funds to creator.
+                let ix_refund = token_ix::transfer(
+                    token_program.key,
+                    vault_ai.key,
+                    creator_dest.key,
+                    intent_ai.key,
+                    &[],
+                    vault_state.amount,
+                )?;
+                invoke_signed(
+                    &ix_refund,
+                    &[
+                        vault_ai.clone(),
+                        creator_dest.clone(),
+                        intent_ai.clone(),
+                        token_program.clone(),
+                    ],
+                    &[signer_seeds],
+                )?;
+            }
+
+            intent.status = INTENT_STATUS_CANCELED;
+            intent
+                .serialize(&mut &mut intent_ai.data.borrow_mut()[..])
+                .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
+        }
+        INTENT_VERSION_V3 => {
+            let mut intent = IepIntentV3::try_from_slice(&intent_ai.data.borrow())
+                .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
+            if intent.creator != *creator.key {
+                return Err(IepError::Unauthorized.into());
+            }
+            if intent.status != INTENT_STATUS_OPEN {
+                return Err(IepError::IntentNotOpen.into());
+            }
+
+            if intent.direction == DIRECTION_B {
+                let vault_ai = next_account_info(&mut iter)
+                    .map_err(|_| ProgramError::NotEnoughAccountKeys)?;
+                let creator_dest = next_account_info(&mut iter)
+                    .map_err(|_| ProgramError::NotEnoughAccountKeys)?;
+                let token_program = next_account_info(&mut iter)
+                    .map_err(|_| ProgramError::NotEnoughAccountKeys)?;
+
+                if *token_program.key != spl_token::ID {
+                    return Err(IepError::InvalidTokenProgram.into());
+                }
+                if intent.vault != *vault_ai.key {
+                    return Err(IepError::InvalidVaultPda.into());
+                }
+
+                // Token account sanity checks.
+                let vault_state = TokenAccount::unpack(&vault_ai.data.borrow())
+                    .map_err(|_| IepError::TokenAccountInvalid)?;
+                if vault_state.mint != intent.mint || vault_state.owner != *intent_ai.key {
+                    return Err(IepError::TokenAccountInvalid.into());
+                }
+                let dest_state = TokenAccount::unpack(&creator_dest.data.borrow())
+                    .map_err(|_| IepError::TokenAccountInvalid)?;
+                if dest_state.mint != intent.mint || dest_state.owner != *creator.key {
+                    return Err(IepError::TokenAccountInvalid.into());
+                }
+
+                let (intent_key, intent_bump) =
+                    intent_pda(program_id, &intent.deployment_id, &intent.intent_nonce);
+                if intent_key != *intent_ai.key {
+                    return Err(IepError::InvalidIntentPda.into());
+                }
+                let signer_seeds: &[&[u8]] = &[
+                    INTENT_SEED,
+                    intent.deployment_id.as_ref(),
+                    intent.intent_nonce.as_ref(),
+                    &[intent_bump],
+                ];
+
+                // Refund all vault funds to creator.
+                let ix_refund = token_ix::transfer(
+                    token_program.key,
+                    vault_ai.key,
+                    creator_dest.key,
+                    intent_ai.key,
+                    &[],
+                    vault_state.amount,
+                )?;
+                invoke_signed(
+                    &ix_refund,
+                    &[
+                        vault_ai.clone(),
+                        creator_dest.clone(),
+                        intent_ai.clone(),
+                        token_program.clone(),
+                    ],
+                    &[signer_seeds],
+                )?;
+            }
+
+            intent.status = INTENT_STATUS_CANCELED;
+            intent
+                .serialize(&mut &mut intent_ai.data.borrow_mut()[..])
+                .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
+        }
+        _ => Err(IepError::InvalidAccountData.into()),
     }
-    if intent.creator != *creator.key {
-        return Err(IepError::Unauthorized.into());
-    }
-    if intent.status != INTENT_STATUS_OPEN {
-        return Err(IepError::IntentNotOpen.into());
-    }
-
-    if intent.direction == DIRECTION_B {
-        let vault_ai =
-            next_account_info(&mut iter).map_err(|_| ProgramError::NotEnoughAccountKeys)?;
-        let creator_dest =
-            next_account_info(&mut iter).map_err(|_| ProgramError::NotEnoughAccountKeys)?;
-        let token_program =
-            next_account_info(&mut iter).map_err(|_| ProgramError::NotEnoughAccountKeys)?;
-
-        if *token_program.key != spl_token::ID {
-            return Err(IepError::InvalidTokenProgram.into());
-        }
-        if intent.vault != *vault_ai.key {
-            return Err(IepError::InvalidVaultPda.into());
-        }
-
-        // Token account sanity checks.
-        let vault_state = TokenAccount::unpack(&vault_ai.data.borrow())
-            .map_err(|_| IepError::TokenAccountInvalid)?;
-        if vault_state.mint != intent.mint || vault_state.owner != *intent_ai.key {
-            return Err(IepError::TokenAccountInvalid.into());
-        }
-        let dest_state = TokenAccount::unpack(&creator_dest.data.borrow())
-            .map_err(|_| IepError::TokenAccountInvalid)?;
-        if dest_state.mint != intent.mint || dest_state.owner != *creator.key {
-            return Err(IepError::TokenAccountInvalid.into());
-        }
-
-        let (intent_key, intent_bump) =
-            intent_pda(program_id, &intent.deployment_id, &intent.intent_nonce);
-        if intent_key != *intent_ai.key {
-            return Err(IepError::InvalidIntentPda.into());
-        }
-        let signer_seeds: &[&[u8]] = &[
-            INTENT_SEED,
-            intent.deployment_id.as_ref(),
-            intent.intent_nonce.as_ref(),
-            &[intent_bump],
-        ];
-
-        // Refund all vault funds to creator.
-        let ix_refund = token_ix::transfer(
-            token_program.key,
-            vault_ai.key,
-            creator_dest.key,
-            intent_ai.key,
-            &[],
-            vault_state.amount,
-        )?;
-        invoke_signed(
-            &ix_refund,
-            &[
-                vault_ai.clone(),
-                creator_dest.clone(),
-                intent_ai.clone(),
-                token_program.clone(),
-            ],
-            &[signer_seeds],
-        )?;
-    }
-
-    intent.status = INTENT_STATUS_CANCELED;
-    intent
-        .serialize(&mut &mut intent_ai.data.borrow_mut()[..])
-        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
 }
 
 #[inline(never)]
@@ -672,27 +1139,28 @@ fn process_fill_intent(
         return Err(IepError::InvalidConfigPda.into());
     }
 
-    let mut intent = IepIntentV2::try_from_slice(&intent_ai.data.borrow())
-        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if intent.version != INTENT_VERSION_V2 {
+    let mut intent = IepIntentState::load(&intent_ai.data.borrow())?;
+    if intent.deployment_id() != &cfg.deployment_id {
         return Err(IepError::InvalidAccountData.into());
     }
-    if intent.deployment_id != cfg.deployment_id {
-        return Err(IepError::InvalidAccountData.into());
-    }
-    if intent.status != INTENT_STATUS_OPEN {
+    if intent.status() != INTENT_STATUS_OPEN {
         return Err(IepError::IntentNotOpen.into());
     }
-    if *mint_ai.key != intent.mint {
+    if *mint_ai.key != *intent.mint() {
         return Err(IepError::InvalidAccountData.into());
     }
-    if intent.direction != DIRECTION_A && intent.direction != DIRECTION_B {
+    if intent.direction() != DIRECTION_A && intent.direction() != DIRECTION_B {
         return Err(IepError::InvalidDirection.into());
+    }
+    if let Some(expected_solver) = intent.solver() {
+        if *expected_solver != *solver.key {
+            return Err(IepError::Unauthorized.into());
+        }
     }
 
     // Do not allow filling an expired intent.
     let clock = Clock::get()?;
-    if clock.slot > intent.expiry_slot {
+    if clock.slot > intent.expiry_slot() {
         return Err(IepError::Expired.into());
     }
 
@@ -716,12 +1184,21 @@ fn process_fill_intent(
         &[&[FILL_SEED, intent_ai.key.as_ref(), &[bump]]],
     )?;
 
+    let receiver_tag = match intent.receiver_tag() {
+        Some(tag) => *tag,
+        None => receiver_tag,
+    };
+    let junocash_amount_required = match intent.junocash_amount_required() {
+        Some(amount) => amount,
+        None => junocash_amount_required,
+    };
+
     let gross = intent
-        .net_amount
-        .checked_add(intent.protocol_fee)
+        .net_amount()
+        .checked_add(intent.protocol_fee())
         .ok_or(IepError::InvalidAccountData)?;
 
-    let (vault, solver_destination_token_account) = if intent.direction == DIRECTION_A {
+    let (vault, solver_destination_token_account) = if intent.direction() == DIRECTION_A {
         // Initialize the vault token account at a PDA owned by the token program.
         let (expected_vault, vault_bump) = vault_pda(program_id, fill_ai.key);
         if expected_vault != *vault_ai.key {
@@ -775,12 +1252,12 @@ fn process_fill_intent(
         (*vault_ai.key, Pubkey::default())
     } else {
         // Direction B: the intent must already be funded.
-        if intent.vault == Pubkey::default() || intent.vault != *vault_ai.key {
+        if *intent.vault() == Pubkey::default() || *intent.vault() != *vault_ai.key {
             return Err(IepError::InvalidVaultPda.into());
         }
         let vault_state = TokenAccount::unpack(&vault_ai.data.borrow())
             .map_err(|_| IepError::TokenAccountInvalid)?;
-        if vault_state.mint != intent.mint || vault_state.owner != *intent_ai.key {
+        if vault_state.mint != *intent.mint() || vault_state.owner != *intent_ai.key {
             return Err(IepError::TokenAccountInvalid.into());
         }
         if vault_state.amount < gross {
@@ -788,7 +1265,7 @@ fn process_fill_intent(
         }
         let dest_state = TokenAccount::unpack(&solver_dest.data.borrow())
             .map_err(|_| IepError::TokenAccountInvalid)?;
-        if dest_state.mint != intent.mint || dest_state.owner != *solver.key {
+        if dest_state.mint != *intent.mint() || dest_state.owner != *solver.key {
             return Err(IepError::TokenAccountInvalid.into());
         }
         (*vault_ai.key, *solver_dest.key)
@@ -807,10 +1284,8 @@ fn process_fill_intent(
     fill.serialize(&mut &mut fill_ai.data.borrow_mut()[..])
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
 
-    intent.status = INTENT_STATUS_FILLED;
-    intent
-        .serialize(&mut &mut intent_ai.data.borrow_mut()[..])
-        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
+    intent.set_status(INTENT_STATUS_FILLED);
+    intent.serialize_into(&mut intent_ai.data.borrow_mut()[..])
 }
 
 #[inline(never)]
@@ -906,18 +1381,14 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    let intent = IepIntentV2::try_from_slice(&intent_ai.data.borrow())
-        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if intent.version != INTENT_VERSION_V2 {
+    let mut intent = IepIntentState::load(&intent_ai.data.borrow())?;
+    if intent.deployment_id() != &cfg.deployment_id {
         return Err(IepError::InvalidAccountData.into());
     }
-    if intent.deployment_id != cfg.deployment_id {
-        return Err(IepError::InvalidAccountData.into());
-    }
-    if intent.status != INTENT_STATUS_FILLED {
+    if intent.status() != INTENT_STATUS_FILLED {
         return Err(IepError::IntentNotFilled.into());
     }
-    if intent.direction != DIRECTION_A && intent.direction != DIRECTION_B {
+    if intent.direction() != DIRECTION_A && intent.direction() != DIRECTION_B {
         return Err(IepError::InvalidDirection.into());
     }
 
@@ -937,7 +1408,7 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
     }
 
     let clock = Clock::get()?;
-    if clock.slot > intent.expiry_slot {
+    if clock.slot > intent.expiry_slot() {
         return Err(IepError::Expired.into());
     }
 
@@ -1005,15 +1476,15 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
     if vault_state.mint != *mint_ai.key {
         return Err(IepError::TokenAccountInvalid.into());
     }
-    if intent.direction == DIRECTION_A {
+    if intent.direction() == DIRECTION_A {
         if vault_state.owner != *fill_ai.key {
             return Err(IepError::TokenAccountInvalid.into());
         }
     } else {
         // Direction B vault is owned by the intent PDA.
-        if intent.vault == Pubkey::default()
-            || intent.vault != *vault_ai.key
-            || fill.vault != intent.vault
+        if *intent.vault() == Pubkey::default()
+            || *intent.vault() != *vault_ai.key
+            || fill.vault != *intent.vault()
         {
             return Err(IepError::InvalidVaultPda.into());
         }
@@ -1029,8 +1500,8 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
     if recipient_state.mint != *mint_ai.key {
         return Err(IepError::TokenAccountInvalid.into());
     }
-    if intent.direction == DIRECTION_A {
-        if recipient_state.owner != intent.solana_recipient {
+    if intent.direction() == DIRECTION_A {
+        if recipient_state.owner != *intent.solana_recipient() {
             return Err(IepError::TokenAccountInvalid.into());
         }
     } else {
@@ -1050,8 +1521,8 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
     }
 
     let gross = intent
-        .net_amount
-        .checked_add(intent.protocol_fee)
+        .net_amount()
+        .checked_add(intent.protocol_fee())
         .ok_or(IepError::InvalidAccountData)?;
     if vault_state.amount < gross {
         return Err(IepError::InsufficientFunds.into());
@@ -1126,7 +1597,7 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
     let fill_signer_seeds: [&[u8]; 3] = [FILL_SEED, intent_ai.key.as_ref(), &fill_bump_seed];
 
     let (intent_key, intent_bump) =
-        intent_pda(program_id, &cfg.deployment_id, &intent.intent_nonce);
+        intent_pda(program_id, &cfg.deployment_id, intent.intent_nonce());
     if intent_key != *intent_ai.key {
         return Err(IepError::InvalidIntentPda.into());
     }
@@ -1134,11 +1605,11 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
     let intent_signer_seeds: [&[u8]; 4] = [
         INTENT_SEED,
         cfg.deployment_id.as_ref(),
-        intent.intent_nonce.as_ref(),
+        intent.intent_nonce().as_ref(),
         &intent_bump_seed,
     ];
 
-    let (authority_ai, signer_seeds): (&AccountInfo, &[&[u8]]) = if intent.direction == DIRECTION_A
+    let (authority_ai, signer_seeds): (&AccountInfo, &[&[u8]]) = if intent.direction() == DIRECTION_A
     {
         (fill_ai, &fill_signer_seeds)
     } else {
@@ -1151,7 +1622,7 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
         recipient_ta.key,
         authority_ai.key,
         &[],
-        intent.net_amount,
+        intent.net_amount(),
     )?;
     invoke_signed(
         &ix_net,
@@ -1163,14 +1634,14 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
         ],
         &[signer_seeds],
     )?;
-    if intent.protocol_fee != 0 {
+    if intent.protocol_fee() != 0 {
         let ix_fee = token_ix::transfer(
             token_program.key,
             vault_ai.key,
             fee_ta.key,
             authority_ai.key,
             &[],
-            intent.protocol_fee,
+            intent.protocol_fee(),
         )?;
         invoke_signed(
             &ix_fee,
@@ -1188,11 +1659,8 @@ fn process_settle(program_id: &Pubkey, accounts: &[AccountInfo], bundle: Vec<u8>
     fill.serialize(&mut &mut fill_ai.data.borrow_mut()[..])
         .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
 
-    let mut intent_mut = intent;
-    intent_mut.status = INTENT_STATUS_SETTLED;
-    intent_mut
-        .serialize(&mut &mut intent_ai.data.borrow_mut()[..])
-        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))
+    intent.set_status(INTENT_STATUS_SETTLED);
+    intent.serialize_into(&mut intent_ai.data.borrow_mut()[..])
 }
 
 #[inline(never)]
@@ -1225,15 +1693,11 @@ fn process_refund_fill(program_id: &Pubkey, accounts: &[AccountInfo]) -> Program
         return Err(IepError::InvalidFillOwner.into());
     }
 
-    let intent = IepIntentV2::try_from_slice(&intent_ai.data.borrow())
-        .map_err(|_| ProgramError::from(IepError::InvalidAccountData))?;
-    if intent.version != INTENT_VERSION_V2 {
-        return Err(IepError::InvalidAccountData.into());
-    }
-    if intent.status != INTENT_STATUS_FILLED {
+    let intent = IepIntentState::load(&intent_ai.data.borrow())?;
+    if intent.status() != INTENT_STATUS_FILLED {
         return Err(IepError::IntentNotFilled.into());
     }
-    if intent.direction != DIRECTION_A && intent.direction != DIRECTION_B {
+    if intent.direction() != DIRECTION_A && intent.direction() != DIRECTION_B {
         return Err(IepError::InvalidDirection.into());
     }
 
@@ -1253,19 +1717,19 @@ fn process_refund_fill(program_id: &Pubkey, accounts: &[AccountInfo]) -> Program
     }
 
     let clock = Clock::get()?;
-    if clock.slot <= intent.expiry_slot {
+    if clock.slot <= intent.expiry_slot() {
         return Err(IepError::NotExpired.into());
     }
 
     let vault_state =
         TokenAccount::unpack(&vault_ai.data.borrow()).map_err(|_| IepError::TokenAccountInvalid)?;
-    if vault_state.mint != intent.mint {
+    if vault_state.mint != *intent.mint() {
         return Err(IepError::TokenAccountInvalid.into());
     }
 
     let dest_state =
         TokenAccount::unpack(&dest_ta.data.borrow()).map_err(|_| IepError::TokenAccountInvalid)?;
-    if dest_state.mint != intent.mint {
+    if dest_state.mint != *intent.mint() {
         return Err(IepError::TokenAccountInvalid.into());
     }
 
@@ -1277,20 +1741,20 @@ fn process_refund_fill(program_id: &Pubkey, accounts: &[AccountInfo]) -> Program
     let fill_signer_seeds: [&[u8]; 3] = [FILL_SEED, intent_ai.key.as_ref(), &fill_bump_seed];
 
     let (intent_key, intent_bump) =
-        intent_pda(program_id, &intent.deployment_id, &intent.intent_nonce);
+        intent_pda(program_id, intent.deployment_id(), intent.intent_nonce());
     if intent_key != *intent_ai.key {
         return Err(IepError::InvalidIntentPda.into());
     }
     let intent_bump_seed = [intent_bump];
     let intent_signer_seeds: [&[u8]; 4] = [
         INTENT_SEED,
-        intent.deployment_id.as_ref(),
-        intent.intent_nonce.as_ref(),
+        intent.deployment_id().as_ref(),
+        intent.intent_nonce().as_ref(),
         &intent_bump_seed,
     ];
 
     let (refund_authority_ai, signer_seeds): (&AccountInfo, &[&[u8]]) =
-        if intent.direction == DIRECTION_A {
+        if intent.direction() == DIRECTION_A {
             if fill.solver != *signer.key {
                 return Err(IepError::Unauthorized.into());
             }
@@ -1302,18 +1766,18 @@ fn process_refund_fill(program_id: &Pubkey, accounts: &[AccountInfo]) -> Program
             }
             (fill_ai, &fill_signer_seeds)
         } else {
-            if intent.creator != *signer.key {
+            if *intent.creator() != *signer.key {
                 return Err(IepError::Unauthorized.into());
             }
-            if dest_state.owner != intent.creator {
+            if dest_state.owner != *intent.creator() {
                 return Err(IepError::TokenAccountInvalid.into());
             }
             if vault_state.owner != *intent_ai.key {
                 return Err(IepError::TokenAccountInvalid.into());
             }
-            if intent.vault == Pubkey::default()
-                || intent.vault != *vault_ai.key
-                || fill.vault != intent.vault
+            if *intent.vault() == Pubkey::default()
+                || *intent.vault() != *vault_ai.key
+                || fill.vault != *intent.vault()
             {
                 return Err(IepError::InvalidVaultPda.into());
             }
