@@ -290,7 +290,7 @@ solana_version=os.environ.get("SOLANA_VERSION","")
 solana_version_num=solana_version[1:] if solana_version.startswith("v") else solana_version
 
 cmds=[
-  "set -euo pipefail",
+  "set -eu",
   "export DEBIAN_FRONTEND=noninteractive",
   "sudo apt-get update",
   "sudo apt-get install -y --no-install-recommends git ca-certificates curl jq unzip protobuf-compiler docker.io",
@@ -315,7 +315,7 @@ cmds=[
   "nitro-cli --version || true",
   "if ! command -v nitro-cli >/dev/null; then echo 'missing nitro-cli after apt; install it on this AMI' >&2; exit 1; fi",
   "VSOCK_PROXY=\"$(command -v vsock-proxy || command -v nitro-enclaves-vsock-proxy || true)\"",
-  "if [[ -z \"${VSOCK_PROXY}\" ]]; then echo \"missing vsock-proxy\" >&2; exit 1; fi",
+  "if [ -z \"${VSOCK_PROXY}\" ]; then echo \"missing vsock-proxy\" >&2; exit 1; fi",
   "echo \"vsock-proxy=${VSOCK_PROXY}\"",
   "rm -rf /tmp/juno-intents && git clone https://github.com/" + repo + ".git /tmp/juno-intents",
   "cd /tmp/juno-intents",
@@ -325,7 +325,7 @@ cmds=[
   f"rzup install risc0-groth16 {risc0_groth16_version}",
   "scripts/enclave/build-eif.sh >/tmp/build-eif.log 2>&1",
   "pcr0=\"$(sed -nE 's/^pcr0=([0-9a-fA-F]{96}).*/\\\\1/p' /tmp/build-eif.log | head -n 1 | tr 'A-F' 'a-f' || true)\"",
-  "if [[ -z \"${pcr0}\" ]]; then echo 'failed to extract pcr0 from /tmp/build-eif.log' >&2; tail -n 200 /tmp/build-eif.log >&2 || true; exit 1; fi",
+  "if [ -z \"${pcr0}\" ]; then echo 'failed to extract pcr0 from /tmp/build-eif.log' >&2; tail -n 200 /tmp/build-eif.log >&2 || true; exit 1; fi",
   "echo \"pcr0=${pcr0}\"",
   "tail -n 60 /tmp/build-eif.log >&2 || true",
 ]
@@ -379,7 +379,7 @@ mem=os.environ["ENCLAVE_MEM_MIB"]
 cpu=os.environ["ENCLAVE_CPU_COUNT"]
 
 cmds=[
-  "set -euo pipefail",
+  "set -eu",
   'export PATH=\"/usr/local/go/bin:$HOME/.cargo/bin:$HOME/.local/share/solana/install/active_release/bin:$PATH\"',
   "cd /tmp/juno-intents",
   # Configure enclave allocator (best-effort; exact service name differs by distro).
@@ -388,7 +388,7 @@ cmds=[
   "sudo systemctl restart nitro-enclaves-allocator.service 2>/dev/null || sudo systemctl restart nitro-enclaves-allocator 2>/dev/null || true",
   "sudo systemctl restart nitro-enclaves.service 2>/dev/null || sudo systemctl restart nitro-enclaves 2>/dev/null || true",
   "VSOCK_PROXY=\"$(command -v vsock-proxy || command -v nitro-enclaves-vsock-proxy || true)\"",
-  "if [[ -z \"${VSOCK_PROXY}\" ]]; then echo \"missing vsock-proxy\" >&2; exit 1; fi",
+  "if [ -z \"${VSOCK_PROXY}\" ]; then echo \"missing vsock-proxy\" >&2; exit 1; fi",
   "echo \"vsock-proxy=${VSOCK_PROXY}\"",
   f"sudo nohup \"${{VSOCK_PROXY}}\" {kms_vsock_port} kms.{region}.amazonaws.com 443 >/var/log/vsock-proxy.log 2>&1 &",
   "sleep 1",
