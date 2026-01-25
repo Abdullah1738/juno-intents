@@ -258,15 +258,37 @@ PY
 
 wait_ssm() {
   local command_id="$1"
-  local max_attempts="${2:-720}"
-  local delay_secs="${3:-10}"
-  awsj ssm wait command-executed \
-    --command-id "${command_id}" \
-    --instance-id "${INSTANCE_ID}" \
-    --max-attempts "${max_attempts}" \
-    --delay "${delay_secs}" \
-    || true
-  awsj ssm get-command-invocation --command-id "${command_id}" --instance-id "${INSTANCE_ID}" --query 'Status' --output text
+  local timeout_secs="${2:-3600}"
+  local poll_secs="${3:-10}"
+  local elapsed=0
+
+  while true; do
+    status="$(
+      awsj ssm get-command-invocation \
+        --command-id "${command_id}" \
+        --instance-id "${INSTANCE_ID}" \
+        --query 'Status' \
+        --output text 2>/dev/null || true
+    )"
+    case "${status}" in
+      Success|Cancelled|Failed|TimedOut|Cancelling)
+        echo "${status}"
+        return 0
+        ;;
+      Pending|InProgress|Delayed|"")
+        ;;
+      *)
+        echo "${status}"
+        return 0
+        ;;
+    esac
+    if [[ "${elapsed}" -ge "${timeout_secs}" ]]; then
+      echo "${status:-InProgress}"
+      return 0
+    fi
+    sleep "${poll_secs}"
+    elapsed="$((elapsed + poll_secs))"
+  done
 }
 
 get_ssm_stdout() {
@@ -345,7 +367,7 @@ PY
 
 PHASE1_ID="$(send_ssm "${PHASE1_CMDS}")"
 echo "ssm phase1 command id: ${PHASE1_ID}" >&2
-phase1_status="$(wait_ssm "${PHASE1_ID}" 360 10)"
+phase1_status="$(wait_ssm "${PHASE1_ID}" 7200 10)"
 echo "ssm phase1 status: ${phase1_status}" >&2
 phase1_stdout="$(get_ssm_stdout "${PHASE1_ID}")"
 phase1_stderr="$(get_ssm_stderr "${PHASE1_ID}")"
@@ -423,7 +445,7 @@ PY
 
 PHASE2_ID="$(send_ssm "${PHASE2_CMDS}")"
 echo "ssm phase2 command id: ${PHASE2_ID}" >&2
-phase2_status="$(wait_ssm "${PHASE2_ID}" 3600 10)"
+phase2_status="$(wait_ssm "${PHASE2_ID}" 43200 10)"
 echo "ssm phase2 status: ${phase2_status}" >&2
 phase2_stdout="$(get_ssm_stdout "${PHASE2_ID}")"
 phase2_stderr="$(get_ssm_stderr "${PHASE2_ID}")"
