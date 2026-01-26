@@ -254,7 +254,7 @@ timeout_secs = int(os.environ.get("JUNO_E2E_SSM_TIMEOUT_SECS", "43200"))
 commands_json = sys.argv[1]
 cmds = json.loads(commands_json)
 
-payload = json.dumps({"commands": cmds})
+payload = json.dumps({"commands": cmds, "executionTimeout": [str(timeout_secs)]})
 out = subprocess.check_output(
     [
         "aws",
