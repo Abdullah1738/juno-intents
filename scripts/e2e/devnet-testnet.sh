@@ -678,6 +678,10 @@ PY
       exit 1
     fi
     echo "miner_taddr=${MINER_TADDR}" >&2
+    echo "restarting junocashd with mineraddress=${MINER_TADDR}..." >&2
+    export JUNO_TESTNET_MINERADDRESS="${MINER_TADDR}"
+    scripts/junocash/testnet/down.sh >/dev/null 2>&1 || true
+    scripts/junocash/testnet/up.sh >/dev/null
     scripts/junocash/testnet/mine.sh 110 >/dev/null
     shield_limit="${JUNO_E2E_JUNOCASH_SHIELD_LIMIT:-10}"
 
