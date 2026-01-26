@@ -118,9 +118,9 @@ fi
 
 if [[ "${MODE}" == "public" ]]; then
   docker run -d \
-    "${PLATFORM_FLAG[@]}" \
+    ${PLATFORM_FLAG[@]+"${PLATFORM_FLAG[@]}"} \
     --name "${NAME_A}" \
-    "${USER_FLAG[@]}" \
+    ${USER_FLAG[@]+"${USER_FLAG[@]}"} \
     -v "$(pwd)/${JUNOCASH_ROOT}:/opt/junocash:ro" \
     -v "${DATA_DIR_A_HOST}:/data" \
     "${IMAGE}" \
@@ -134,10 +134,10 @@ if [[ "${MODE}" == "public" ]]; then
       -rpcclienttimeout=120 \
       -listen=1 \
       -bind=0.0.0.0 \
-      "${TXINDEX_FLAG[@]}" \
-      "${BOOTSTRAP_FLAGS[@]}" \
-      "${PERF_FLAGS[@]}" \
-      "${IBD_FLAGS[@]}" >/dev/null
+      ${TXINDEX_FLAG[@]+"${TXINDEX_FLAG[@]}"} \
+      ${BOOTSTRAP_FLAGS[@]+"${BOOTSTRAP_FLAGS[@]}"} \
+      ${PERF_FLAGS[@]+"${PERF_FLAGS[@]}"} \
+      ${IBD_FLAGS[@]+"${IBD_FLAGS[@]}"} >/dev/null
 
   echo "waiting for testnet rpc..." >&2
   for _ in $(seq 1 60); do
@@ -163,10 +163,10 @@ if [[ "${MODE}" == "public" ]]; then
 fi
 
 docker run -d \
-  "${PLATFORM_FLAG[@]}" \
+  ${PLATFORM_FLAG[@]+"${PLATFORM_FLAG[@]}"} \
   --name "${NAME_B}" \
   --network "${NETWORK}" \
-  "${USER_FLAG[@]}" \
+  ${USER_FLAG[@]+"${USER_FLAG[@]}"} \
   -v "$(pwd)/${JUNOCASH_ROOT}:/opt/junocash:ro" \
   -v "${DATA_DIR_B_HOST}:/data" \
   "${IMAGE}" \
@@ -181,16 +181,16 @@ docker run -d \
     -dnsseed=0 \
     -listen=1 \
     -bind=0.0.0.0 \
-    "${TXINDEX_FLAG[@]}" \
-    "${PERF_FLAGS[@]}" \
-    "${IBD_FLAGS[@]}" \
+    ${TXINDEX_FLAG[@]+"${TXINDEX_FLAG[@]}"} \
+    ${PERF_FLAGS[@]+"${PERF_FLAGS[@]}"} \
+    ${IBD_FLAGS[@]+"${IBD_FLAGS[@]}"} \
     -connect="${NAME_A}:18234" >/dev/null
 
 docker run -d \
-  "${PLATFORM_FLAG[@]}" \
+  ${PLATFORM_FLAG[@]+"${PLATFORM_FLAG[@]}"} \
   --name "${NAME_A}" \
   --network "${NETWORK}" \
-  "${USER_FLAG[@]}" \
+  ${USER_FLAG[@]+"${USER_FLAG[@]}"} \
   -v "$(pwd)/${JUNOCASH_ROOT}:/opt/junocash:ro" \
   -v "${DATA_DIR_A_HOST}:/data" \
   "${IMAGE}" \
@@ -205,9 +205,9 @@ docker run -d \
     -dnsseed=0 \
     -listen=1 \
     -bind=0.0.0.0 \
-    "${TXINDEX_FLAG[@]}" \
-    "${PERF_FLAGS[@]}" \
-    "${IBD_FLAGS[@]}" \
+    ${TXINDEX_FLAG[@]+"${TXINDEX_FLAG[@]}"} \
+    ${PERF_FLAGS[@]+"${PERF_FLAGS[@]}"} \
+    ${IBD_FLAGS[@]+"${IBD_FLAGS[@]}"} \
     -connect="${NAME_B}:18234" >/dev/null
 
 echo "waiting for testnet rpc..." >&2
