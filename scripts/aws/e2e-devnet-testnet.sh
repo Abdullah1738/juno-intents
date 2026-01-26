@@ -7,9 +7,12 @@ PROFILE="juno"
 REGION="${JUNO_AWS_REGION:-us-east-1}"
 STACK_NAME="${JUNO_RUNS_ON_STACK_NAME:-runs-on}"
 
-# Default to the RunsOn GPU AMI observed in CI logs (us-east-1).
-# Override via JUNO_E2E_EC2_AMI_ID if you rotate images.
-AMI_ID="${JUNO_E2E_EC2_AMI_ID:-ami-06d69846519cd5d6f}"
+# Default to the AWS ECS optimized Amazon Linux 2 GPU AMI (SSM parameter), which supports
+# Nitro Enclaves without needing to build nitro-cli from source.
+# Override via JUNO_E2E_EC2_AMI_ID if you want a specific AMI.
+AMI_ID="${JUNO_E2E_EC2_AMI_ID:-}"
+AMI_SSM_PARAM="${JUNO_E2E_EC2_AMI_SSM_PARAM:-/aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id}"
+AMI_ID_FALLBACK="${JUNO_E2E_EC2_AMI_ID_FALLBACK:-ami-0ddc32c23af6ece31}"
 INSTANCE_TYPE="${JUNO_E2E_EC2_INSTANCE_TYPE:-g5.4xlarge}"
 
 REPO="${JUNO_E2E_GIT_REPO:-Abdullah1738/juno-intents}"
@@ -38,6 +41,10 @@ SOLANA_VERSION="${JUNO_SOLANA_VERSION:-v1.18.26}"
 
 KEEP_INSTANCE="${JUNO_E2E_KEEP_INSTANCE:-0}"
 
+SOLANA_FUNDER_KEYPAIR_B64="${JUNO_E2E_SOLANA_FUNDER_KEYPAIR_B64:-}"
+SOLANA_FUNDER_MIN_SOL="${JUNO_E2E_SOLANA_FUNDER_MIN_SOL:-6}"
+SOLANA_FUNDER_WAIT_TIMEOUT_SECS="${JUNO_E2E_SOLANA_FUNDER_WAIT_TIMEOUT_SECS:-3600}"
+
 usage() {
   cat <<'USAGE' >&2
 Usage:
@@ -48,7 +55,9 @@ Runs the real-network E2E (Solana devnet + JunoCash testnet) on an AWS GPU insta
 Environment:
   JUNO_AWS_REGION                (default: us-east-1)
   JUNO_RUNS_ON_STACK_NAME        (default: runs-on)
-  JUNO_E2E_EC2_AMI_ID            (default: ami-06d69846519cd5d6f)
+  JUNO_E2E_EC2_AMI_ID            (default: SSM /aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id; fallback: JUNO_E2E_EC2_AMI_ID_FALLBACK)
+  JUNO_E2E_EC2_AMI_SSM_PARAM     (default: /aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id)
+  JUNO_E2E_EC2_AMI_ID_FALLBACK   (default: ami-0ddc32c23af6ece31)
   JUNO_E2E_EC2_INSTANCE_TYPE     (default: g5.4xlarge)
   JUNO_E2E_GIT_REPO              (default: Abdullah1738/juno-intents)
   JUNO_E2E_GIT_REF               (default: current HEAD if available, else main)
@@ -73,6 +82,10 @@ Environment:
   JUNO_SOLANA_VERSION            (default: v1.18.26)
 
   JUNO_E2E_KEEP_INSTANCE         (default: 0; set to 1 to keep instance for debugging)
+  JUNO_E2E_SOLANA_FUNDER_KEYPAIR_B64 (optional; base64(keypair.json) used to fund devnet SOL without airdrops)
+  JUNO_E2E_SOLANA_FUNDER_MIN_SOL (default: 6; wait until funder has at least this many SOL)
+  JUNO_E2E_SOLANA_FUNDER_WAIT_TIMEOUT_SECS (default: 3600)
+  JUNO_E2E_SSM_TIMEOUT_SECS      (default: 43200; timeoutSeconds for SSM AWS-RunShellScript)
 
 Notes:
   - All AWS calls use: --profile juno
@@ -129,6 +142,17 @@ need_cmd() {
 need_cmd aws
 need_cmd python3
 need_cmd terraform
+
+if [[ -z "${AMI_ID}" ]]; then
+  AMI_ID="$(awsj ssm get-parameter --name "${AMI_SSM_PARAM}" --query 'Parameter.Value' --output text 2>/dev/null || true)"
+fi
+if [[ -z "${AMI_ID}" || "${AMI_ID}" == "None" ]]; then
+  AMI_ID="${AMI_ID_FALLBACK}"
+fi
+if [[ -z "${AMI_ID}" || "${AMI_ID}" == "None" ]]; then
+  echo "missing AMI id: set JUNO_E2E_EC2_AMI_ID (or ensure ${AMI_SSM_PARAM} is readable)" >&2
+  exit 1
+fi
 
 if [[ -z "${REF}" ]]; then
   if git -C "${ROOT}" rev-parse HEAD >/dev/null 2>&1; then
@@ -226,6 +250,7 @@ import sys
 
 region = os.environ["REGION"]
 instance_id = os.environ["INSTANCE_ID"]
+timeout_secs = int(os.environ.get("JUNO_E2E_SSM_TIMEOUT_SECS", "43200"))
 commands_json = sys.argv[1]
 cmds = json.loads(commands_json)
 
@@ -241,6 +266,8 @@ out = subprocess.check_output(
         "send-command",
         "--document-name",
         "AWS-RunShellScript",
+        "--timeout-seconds",
+        str(timeout_secs),
         "--targets",
         f"Key=InstanceIds,Values={instance_id}",
         "--parameters",
@@ -321,33 +348,31 @@ solana_version_num=solana_version[1:] if solana_version.startswith("v") else sol
 cmds=[
   "set -eu",
   'export HOME="${HOME:-/root}"',
-  "export DEBIAN_FRONTEND=noninteractive",
-  "sudo apt-get update -qq",
-  "sudo apt-get install -y -qq --no-install-recommends git ca-certificates curl jq unzip protobuf-compiler bzip2",
-  "if ! command -v docker >/dev/null; then sudo apt-get install -y -qq --no-install-recommends docker.io; fi",
-  "sudo systemctl start docker 2>/dev/null || sudo service docker start 2>/dev/null || true",
+  # Base deps (Amazon Linux 2)
+  "sudo yum -y install git ca-certificates curl jq unzip bzip2 python3 findutils which tar gzip || true",
+  "sudo yum -y install gcc gcc-c++ make pkgconfig openssl-devel perl || true",
+  "sudo yum -y install protobuf-compiler || sudo yum -y install protobuf || true",
+  "if ! command -v docker >/dev/null; then sudo amazon-linux-extras install -y docker || sudo yum -y install docker; fi",
+  "sudo systemctl enable docker >/dev/null 2>&1 || true",
+  "sudo systemctl start docker >/dev/null 2>&1 || true",
   "docker --version",
   "docker ps >/dev/null",
-  "nvidia-smi",
-  "if ! command -v nvcc >/dev/null; then sudo apt-get install -y -qq --no-install-recommends cuda-toolkit-12-9 || sudo apt-get install -y -qq --no-install-recommends cuda-toolkit || sudo apt-get install -y -qq --no-install-recommends nvidia-cuda-toolkit || true; fi",
-  "nvcc --version || true",
+  "nvidia-smi || true",
   f"if ! command -v go >/dev/null || ! go version | grep -q 'go{go_version}'; then curl -sSfL https://go.dev/dl/go{go_version}.linux-amd64.tar.gz -o /tmp/go.tgz && sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tgz; fi",
-  'export PATH=\"/usr/local/cuda/bin:/usr/local/cuda-12.9/bin:/usr/local/go/bin:$HOME/.cargo/bin:/opt/solana/solana-release/bin:$PATH\"',
+  'export PATH=\"/usr/local/go/bin:$HOME/.cargo/bin:/opt/solana/solana-release/bin:$PATH\"',
   "go version",
   "if ! command -v cargo >/dev/null; then curl -sSf https://sh.rustup.rs | sh -s -- -y; fi",
-  'export PATH=\"/usr/local/cuda/bin:/usr/local/cuda-12.9/bin:$HOME/.cargo/bin:/usr/local/go/bin:/opt/solana/solana-release/bin:$PATH\"',
+  'export PATH=\"$HOME/.cargo/bin:/usr/local/go/bin:/opt/solana/solana-release/bin:$PATH\"',
   f"rustup toolchain install {rust_toolchain} || true",
   f"rustup default {rust_toolchain} || true",
   f"rustup toolchain install {risc0_rust_toolchain} || true",
   f"if ! command -v solana >/dev/null || ! solana --version | grep -q '{solana_version_num}'; then sudo rm -rf /opt/solana && sudo mkdir -p /opt/solana && curl --retry 5 --retry-all-errors -sSfL https://github.com/solana-labs/solana/releases/download/{solana_version}/solana-release-x86_64-unknown-linux-gnu.tar.bz2 -o /tmp/solana-release.tar.bz2 && sudo tar -xjf /tmp/solana-release.tar.bz2 -C /opt/solana; fi",
   "solana --version",
   "spl-token --version || true",
-  # Install nitro-cli/vsock-proxy (Ubuntu images don't ship official packages).
-  "if ! command -v nitro-cli >/dev/null; then sudo apt-get install -y -qq --no-install-recommends gcc make clang llvm-dev libclang-dev linux-modules-extra-aws; fi",
-  "if ! command -v nitro-cli >/dev/null; then rm -rf /tmp/aws-nitro-enclaves-cli && git clone --depth 1 https://github.com/aws/aws-nitro-enclaves-cli.git /tmp/aws-nitro-enclaves-cli; fi",
-  "if ! command -v nitro-cli >/dev/null; then cd /tmp/aws-nitro-enclaves-cli && ( (make nitro-cli && make vsock-proxy && sudo make install NITRO_CLI_INSTALL_DIR=/usr/local) >/tmp/nitro-cli-build.log 2>&1 ) & pid=$!; while kill -0 \"$pid\" 2>/dev/null; do echo \"[keepalive] building nitro-cli $(date -u)\" >&2; sleep 30; done; wait \"$pid\"; cd /tmp; fi",
-  "if [ -f /tmp/nitro-cli-build.log ]; then tail -n 60 /tmp/nitro-cli-build.log >&2 || true; fi",
-  "if [ -f /usr/local/etc/profile.d/nitro-cli-env.sh ]; then . /usr/local/etc/profile.d/nitro-cli-env.sh; fi",
+  # Nitro Enclaves tooling (Amazon Linux 2 packages).
+  "if ! command -v nitro-cli >/dev/null; then sudo amazon-linux-extras install -y aws-nitro-enclaves-cli || sudo yum -y install aws-nitro-enclaves-cli; fi",
+  "sudo yum -y install aws-nitro-enclaves-cli-devel || true",
+  "if [ ! -f /usr/share/nitro_enclaves/blobs/cmdline ]; then echo 'missing nitro blobs: /usr/share/nitro_enclaves/blobs/cmdline' >&2; ls -la /usr/share/nitro_enclaves >&2 || true; ls -la /usr/share/nitro_enclaves/blobs >&2 || true; exit 1; fi",
   "nitro-cli --version || true",
   "if ! command -v nitro-cli >/dev/null; then echo 'missing nitro-cli (build/install failed)' >&2; exit 1; fi",
   "VSOCK_PROXY=\"$(command -v vsock-proxy || command -v nitro-enclaves-vsock-proxy || true)\"",
@@ -359,7 +384,7 @@ cmds=[
   f"if ! command -v rzup >/dev/null || ! rzup --version | grep -q '{rzup_version}'; then cargo install rzup --version {rzup_version} --locked --force; fi",
   f"rzup install rust {risc0_rust_toolchain}",
   f"rzup install risc0-groth16 {risc0_groth16_version}",
-  "(scripts/enclave/build-eif.sh >/tmp/build-eif.log 2>&1) & pid=$!; while kill -0 \"$pid\" 2>/dev/null; do echo \"[keepalive] building EIF $(date -u)\" >&2; sleep 30; done; wait \"$pid\"",
+  "(scripts/enclave/build-eif.sh >/tmp/build-eif.log 2>&1) & pid=$!; while kill -0 \"$pid\" 2>/dev/null; do echo \"[keepalive] building EIF $(date -u)\" >&2; sleep 30; done; if ! wait \"$pid\"; then echo 'build-eif failed' >&2; tail -n 200 /tmp/build-eif.log >&2 || true; exit 1; fi",
   "pcr0=\"$(sed -nE 's/^pcr0=([0-9a-fA-F]{96}).*/\\\\1/p' /tmp/build-eif.log | head -n 1 | tr 'A-F' 'a-f' || true)\"",
   "if [ -z \"${pcr0}\" ]; then echo 'failed to extract pcr0 from /tmp/build-eif.log' >&2; tail -n 200 /tmp/build-eif.log >&2 || true; exit 1; fi",
   "echo \"pcr0=${pcr0}\"",
@@ -384,7 +409,7 @@ fi
 pcr0="$(
   printf '%s\n%s\n' "${phase1_stdout}" "${phase1_stderr}" \
     | tr -d '\r' \
-    | sed -nE 's/^pcr0=([0-9a-fA-F]{96}).*/\\1/p' \
+    | sed -nE 's/^pcr0=([0-9a-fA-F]{96}).*/\1/p' \
     | head -n 1 \
     | tr 'A-F' 'a-f'
 )"
@@ -400,9 +425,11 @@ sleep 5
 
 echo "SSM phase 2: run 2 enclaves + init keys + run e2e..." >&2
 export BASE_DEPLOYMENT DEPLOYMENTS_FILE KMS_KEY_ID KMS_VSOCK_PORT ENCLAVE_PORT ENCLAVE_CID1 ENCLAVE_CID2 ENCLAVE_MEM_MIB ENCLAVE_CPU_COUNT
+export SOLANA_FUNDER_KEYPAIR_B64 SOLANA_FUNDER_MIN_SOL SOLANA_FUNDER_WAIT_TIMEOUT_SECS
 PHASE2_CMDS="$(
   python3 - <<'PY'
 import json,os
+from decimal import Decimal
 region=os.environ["REGION"]
 base=os.environ["BASE_DEPLOYMENT"]
 deployments=os.environ["DEPLOYMENTS_FILE"]
@@ -413,6 +440,20 @@ cid1=os.environ["ENCLAVE_CID1"]
 cid2=os.environ["ENCLAVE_CID2"]
 mem=os.environ["ENCLAVE_MEM_MIB"]
 cpu=os.environ["ENCLAVE_CPU_COUNT"]
+funder_b64=os.environ.get("SOLANA_FUNDER_KEYPAIR_B64","")
+funder_min_sol=os.environ.get("SOLANA_FUNDER_MIN_SOL","6")
+funder_wait_timeout=os.environ.get("SOLANA_FUNDER_WAIT_TIMEOUT_SECS","3600")
+
+decode_cmd = ":"
+if funder_b64.strip():
+  # base64(keypair.json) of a funded devnet account
+  decode_cmd = "printf '%s' '" + "".join(funder_b64.split()) + "' | tr -d ' \\t\\r\\n' | base64 -d > \"${FUNDER_KP}\""
+
+min_sol = Decimal(funder_min_sol or "6")
+min_lamports = int(min_sol * Decimal(1_000_000_000))
+wait_timeout_secs = int(funder_wait_timeout or "3600")
+poll_secs = 10
+attempts = max(1, wait_timeout_secs // poll_secs)
 
 cmds=[
   "set -eu",
@@ -420,11 +461,26 @@ cmds=[
   'export PATH=\"/usr/local/cuda/bin:/usr/local/cuda-12.9/bin:/usr/local/go/bin:$HOME/.cargo/bin:/opt/solana/solana-release/bin:$PATH\"',
   "if [ -f /usr/local/etc/profile.d/nitro-cli-env.sh ]; then . /usr/local/etc/profile.d/nitro-cli-env.sh; fi",
   "cd /tmp/juno-intents",
-  # Configure enclave allocator (best-effort; exact service name differs by distro).
-  "sudo mkdir -p /etc/nitro_enclaves",
-  f"printf '%s\\n' \"memory_mib: {int(mem)*2}\" \"cpu_count: {int(cpu)*2}\" | sudo tee /etc/nitro_enclaves/allocator.yaml >/dev/null",
-  "sudo systemctl restart nitro-enclaves-allocator.service 2>/dev/null || sudo systemctl restart nitro-enclaves-allocator 2>/dev/null || true",
-  "sudo systemctl restart nitro-enclaves.service 2>/dev/null || sudo systemctl restart nitro-enclaves 2>/dev/null || true",
+  "mkdir -p tmp",
+  "FUNDER_KP=./tmp/solana-funder.json",
+  decode_cmd,
+  "if [ ! -s \"${FUNDER_KP}\" ]; then solana-keygen new --no-bip39-passphrase --silent --force -o \"${FUNDER_KP}\"; fi",
+  "FUNDER_PUBKEY=\"$(solana-keygen pubkey \"${FUNDER_KP}\")\"",
+  "echo \"solana_funder_pubkey=${FUNDER_PUBKEY}\" >&2",
+  f"echo 'waiting for solana funder balance >= {min_sol} SOL (lamports={min_lamports})...' >&2",
+  f"bal=0; for i in $(seq 1 {attempts}); do bal=\"$(solana -u https://api.devnet.solana.com balance \"${{FUNDER_PUBKEY}}\" --lamports 2>/dev/null | python3 -c 'import re,sys; m=re.search(r\"(\\\\d+)\", sys.stdin.read()); print(m.group(1) if m else \"0\")')\"; if [ \"${{bal}}\" -ge {min_lamports} ]; then break; fi; if (( i % 6 == 0 )); then echo \"funder_balance_lamports=${{bal}}\" >&2; fi; sleep {poll_secs}; done; if [ \"${{bal}}\" -lt {min_lamports} ]; then echo \"solana funder not funded (pubkey=${{FUNDER_PUBKEY}})\" >&2; exit 1; fi",
+  # Configure enclave allocator (the CLI package on AL2 doesn't include `nitro-cli configure`).
+  f"sudo mkdir -p /etc/nitro_enclaves && "
+  f"printf '%s\\n' '---' \"memory_mib: {int(mem)*2}\" \"cpu_count: {int(cpu)*2}\" | sudo tee /etc/nitro_enclaves/allocator.yaml >/dev/null && "
+  f"sudo cat /etc/nitro_enclaves/allocator.yaml >&2 || true && "
+  f"if ! sudo systemctl restart nitro-enclaves-allocator.service; then "
+  f"  echo 'failed to restart nitro enclaves allocator' >&2; "
+  f"  sudo systemctl --no-pager -l status nitro-enclaves-allocator.service >&2 || true; "
+  f"  sudo journalctl -u nitro-enclaves-allocator.service -n 200 --no-pager >&2 || true; "
+  f"  exit 1; "
+  f"fi && "
+  f"((sudo systemctl restart nitro-enclaves.service 2>/dev/null || sudo systemctl restart nitro-enclaves 2>/dev/null) || true) && "
+  f"sleep 2",
   "VSOCK_PROXY=\"$(command -v vsock-proxy || command -v nitro-enclaves-vsock-proxy || true)\"",
   "if [ -z \"${VSOCK_PROXY}\" ]; then echo \"missing vsock-proxy\" >&2; exit 1; fi",
   "echo \"vsock-proxy=${VSOCK_PROXY}\"",
@@ -442,6 +498,7 @@ cmds=[
   f"./tmp/nitro-operator init-key --enclave-cid {cid2} --enclave-port {enclave_port} --region {region} --kms-key-id '{kms_key_id}' --kms-vsock-port {kms_vsock_port} --sealed-key-file ./tmp/nitro-operator-{cid2}.sealed.json",
   # Run E2E.
   f"export JUNO_E2E_NITRO_CID1={cid1} JUNO_E2E_NITRO_CID2={cid2} JUNO_E2E_NITRO_PORT={enclave_port}",
+  "export JUNO_E2E_SOLANA_FUNDER_KEYPAIR=./tmp/solana-funder.json",
   f"scripts/e2e/devnet-testnet.sh --base-deployment '{base}' --deployments-file '{deployments}'",
 ]
 print(json.dumps(cmds))
