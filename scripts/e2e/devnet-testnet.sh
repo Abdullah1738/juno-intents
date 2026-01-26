@@ -12,8 +12,8 @@ NET_AMOUNT_A="${JUNO_E2E_NET_AMOUNT_A:-1000}"
 NET_AMOUNT_B="${JUNO_E2E_NET_AMOUNT_B:-1000}"
 JUNOCASH_SEND_MINCONF="${JUNO_E2E_JUNOCASH_SEND_MINCONF:-10}"
 JUNOCASH_TESTNET_WALLET_DAT_GZ_B64="${JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64:-}"
-JUNOCASH_TESTNET_PREFUND_WIF="${JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF:-}"
 JUNOCASH_TESTNET_PREFUND_AMOUNT="${JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT:-5.0}"
+JUNOCASH_TESTNET_FUND_TIMEOUT_SECS="${JUNO_E2E_JUNOCASH_TESTNET_FUND_TIMEOUT_SECS:-3600}"
 JUNOCASH_TESTNET_MODE="${JUNO_E2E_JUNOCASH_TESTNET_MODE:-${JUNO_TESTNET_MODE:-public}}"
 
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
@@ -55,7 +55,7 @@ Required environment:
 
 JunoCash testnet funding (choose ONE):
   - JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64  base64(gzip(wallet.dat)) of a prefunded testnet wallet (recommended)
-  - JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF          prefunded transparent key to fund the user UA
+  - Or: run without a prefunded wallet; the script prints a fresh Orchard UA and waits for it to be funded (default: 5.0; override via JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT).
 
 Optional environment:
   - JUNO_E2E_JUNOCASH_TESTNET_MODE (default: public; set to pair for a 2-node private testnet)
@@ -413,6 +413,22 @@ print(f"{whole}.{frac:08d}")
 PY
 }
 
+juno_amount_to_zat() {
+  python3 - "$1" <<'PY'
+from decimal import Decimal, InvalidOperation
+import sys
+s=sys.argv[1].strip()
+try:
+  d=Decimal(s)
+except InvalidOperation:
+  raise SystemExit(1)
+if d < 0:
+  raise SystemExit(1)
+zat=int((d * Decimal(100000000)).to_integral_value(rounding="ROUND_FLOOR"))
+print(zat)
+PY
+}
+
 receiver_tag_for() {
   local deployment_hex="$1"
   local fill_id_hex="$2"
@@ -595,20 +611,25 @@ fi
 
 echo "creating JunoCash accounts + orchard UAs..." >&2
 if [[ -n "${JUNOCASH_TESTNET_WALLET_DAT_GZ_B64}" ]]; then
-  read -r USER_ACCOUNT USER_UA <<<"$(
+  if read -r USER_ACCOUNT USER_UA <<<"$(
     jcli z_listaccounts | python3 -c 'import json,sys
 items=json.load(sys.stdin)
 if not isinstance(items, list) or not items:
-  raise SystemExit("no accounts in wallet")
+  raise SystemExit(1)
 it=items[0] or {}
 acct=it.get("account")
 addrs=it.get("addresses") or []
 ua=((addrs[0] or {}).get("ua") or "").strip() if addrs else ""
 if acct is None or ua == "":
-  raise SystemExit("failed to parse z_listaccounts")
+  raise SystemExit(1)
 print(int(acct), ua)
 '
-  )"
+  )"; then
+    :
+  else
+    USER_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
+    USER_UA="$(jcli z_getaddressforaccount "${USER_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
+  fi
 else
   USER_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
   USER_UA="$(jcli z_getaddressforaccount "${USER_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
@@ -621,15 +642,9 @@ echo "user_ua=${USER_UA}" >&2
 echo "solver1_ua=${SOLVER1_UA}" >&2
 echo "solver2_ua=${SOLVER2_UA}" >&2
 
-if [[ -z "${JUNOCASH_TESTNET_WALLET_DAT_GZ_B64}" ]]; then
-  if [[ -n "${JUNOCASH_TESTNET_PREFUND_WIF}" ]]; then
-    echo "importing prefunded testnet key (importprivkey + rescan)..." >&2
-    jcli importprivkey "${JUNOCASH_TESTNET_PREFUND_WIF}" "e2e-testnet-prefund" true >/dev/null
-    wait_for_wallet_scan_complete "${JUNO_E2E_WALLET_SCAN_TIMEOUT_SECS:-3600}"
-
-    echo "funding user orchard UA from ANY_TADDR (amount=${JUNOCASH_TESTNET_PREFUND_AMOUNT})..." >&2
-    _prefund_amount_ok="$(
-      python3 -c 'from decimal import Decimal; import sys
+echo "checking JunoCash funding (orchard-only)..." >&2
+prefund_amount_ok="$(
+  python3 -c 'from decimal import Decimal; import sys
 s=sys.argv[1]
 try:
   d=Decimal(s)
@@ -639,118 +654,63 @@ if d<=0:
   raise SystemExit(1)
 print(str(d))
 ' "${JUNOCASH_TESTNET_PREFUND_AMOUNT}" 2>/dev/null || true
-    )"
-    if [[ -z "${_prefund_amount_ok}" ]]; then
-      echo "invalid JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT: ${JUNOCASH_TESTNET_PREFUND_AMOUNT}" >&2
-      exit 2
-    fi
-    recipients_prefund="$(python3 -c 'import json,sys
-addr=sys.argv[1]; amt=sys.argv[2]
-print(json.dumps([{"address":addr,"amount":float(amt)}]))
-' "${USER_UA}" "${_prefund_amount_ok}")"
-    opid_prefund="$(jcli z_sendmany "ANY_TADDR" "${recipients_prefund}" "${JUNOCASH_SEND_MINCONF}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
-    python3 - <<PY >/dev/null
-import json,subprocess,sys,time
-opid='${opid_prefund}'
-for _ in range(3600):
-  out=subprocess.check_output(['scripts/junocash/testnet/cli.sh','z_getoperationresult',f'[\"{opid}\"]']).decode()
-  try:
-    items=json.loads(out)
-  except Exception:
-    time.sleep(1); continue
-  if not items:
-    time.sleep(1); continue
-  it=items[0]
-  if it.get('status')=='success':
-    sys.exit(0)
-  if it.get('status')=='failed':
-    sys.exit(1)
-  time.sleep(1)
-sys.exit(1)
-PY
-    scripts/junocash/testnet/mine.sh "${JUNOCASH_SEND_MINCONF}" >/dev/null
-  else
-    echo "mining coinbase blocks + shielding to user orchard UA..." >&2
-    echo "getting transparent mining address (required for coinbase rewards)..." >&2
-    MINER_TADDR="$(jcli t_getminingaddress | tr -d '\" \r\n')"
-    if [[ -z "${MINER_TADDR}" ]]; then
-      echo "failed to create miner transparent address" >&2
-      exit 1
-    fi
-    echo "miner_taddr=${MINER_TADDR}" >&2
-    echo "restarting junocashd with mineraddress=${MINER_TADDR}..." >&2
-    export JUNO_TESTNET_MINERADDRESS="${MINER_TADDR}"
-    scripts/junocash/testnet/down.sh >/dev/null 2>&1 || true
-    scripts/junocash/testnet/up.sh >/dev/null
-    scripts/junocash/testnet/mine.sh 110 >/dev/null
-    shield_limit="${JUNO_E2E_JUNOCASH_SHIELD_LIMIT:-10}"
+)"
+if [[ -z "${prefund_amount_ok}" ]]; then
+  echo "invalid JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT: ${JUNOCASH_TESTNET_PREFUND_AMOUNT}" >&2
+  exit 2
+fi
 
-    opid_shield=""
-    mine_step="${JUNO_E2E_JUNOCASH_COINBASE_MINE_STEP:-50}"
-    mine_max_rounds="${JUNO_E2E_JUNOCASH_COINBASE_MINE_MAX_ROUNDS:-10}"
-    if ! [[ "${mine_step}" =~ ^[0-9]+$ ]] || [[ "${mine_step}" -le 0 ]]; then mine_step="50"; fi
-    if ! [[ "${mine_max_rounds}" =~ ^[0-9]+$ ]] || [[ "${mine_max_rounds}" -le 0 ]]; then mine_max_rounds="10"; fi
+prefund_min_zat="$(juno_amount_to_zat "${prefund_amount_ok}")"
 
-    for _round in $(seq 1 "${mine_max_rounds}"); do
-      shield_out="$(jcli z_shieldcoinbase "*" "${USER_UA}" null "${shield_limit}" 2>&1 || true)"
-      if [[ -n "${shield_out}" ]] && opid_candidate="$(python3 -c 'import json,sys
-import sys
-raw=sys.stdin.read()
-try:
-  j=json.loads(raw)
-except Exception:
-  raise SystemExit(1)
-opid=str(j.get(\"opid\") or \"\").strip()
-if not opid:
-  raise SystemExit(1)
-print(opid)
-' <<<"${shield_out}" 2>/dev/null || true)" && [[ -n "${opid_candidate}" ]]; then
-        opid_shield="${opid_candidate}"
-        break
-      fi
-
-      if printf '%s' "${shield_out}" | grep -qi 'insufficient funds'; then
-        echo "shielding coinbase: insufficient funds; mining ${mine_step} more blocks..." >&2
-        scripts/junocash/testnet/mine.sh "${mine_step}" >/dev/null
-        continue
-      fi
-
-      echo "z_shieldcoinbase failed; raw output:" >&2
-      printf '%s\n' "${shield_out}" >&2
-      exit 1
-    done
-    if [[ -z "${opid_shield}" ]]; then
-      echo "z_shieldcoinbase did not succeed after retries" >&2
-      exit 1
-    fi
-    txid_shield="$(
-      python3 - <<PY
-import json,subprocess,sys,time
-opid='${opid_shield}'
-for _ in range(3600):
-  out=subprocess.check_output(['scripts/junocash/testnet/cli.sh','z_getoperationresult',f'[\"{opid}\"]']).decode()
-  try:
-    items=json.loads(out)
-  except Exception:
-    time.sleep(1); continue
-  if not items:
-    time.sleep(1); continue
-  it=items[0]
-  if it.get('status')=='success':
-    print((it.get('result') or {}).get('txid','')); sys.exit(0)
-  if it.get('status')=='failed':
-    sys.exit(1)
-  time.sleep(1)
-print('')
-sys.exit(1)
-PY
-    )"
-    if [[ -z "${txid_shield}" ]]; then
-      echo "shielding op did not produce txid" >&2
-      exit 1
-    fi
-    scripts/junocash/testnet/mine.sh "${JUNOCASH_SEND_MINCONF}" >/dev/null
+balance_zat() {
+  local ua="$1"
+  local minconf="$2"
+  local raw
+  raw="$(jcli z_getbalance "${ua}" "${minconf}" 2>/dev/null || true)"
+  raw="$(printf '%s' "${raw}" | tr -d '\" \t\r\n')"
+  if [[ -z "${raw}" ]]; then
+    return 1
   fi
+  juno_amount_to_zat "${raw}" 2>/dev/null || return 1
+}
+
+current_any_zat="$(balance_zat "${USER_UA}" 0 2>/dev/null || true)"
+if [[ ! "${current_any_zat}" =~ ^[0-9]+$ ]]; then current_any_zat="0"; fi
+if [[ "${current_any_zat}" -lt "${prefund_min_zat}" ]]; then
+  echo "wallet needs funding: send >=${prefund_amount_ok} JunoCash testnet to:" >&2
+  echo "fund_user_ua=${USER_UA}" >&2
+  if ! [[ "${JUNOCASH_TESTNET_FUND_TIMEOUT_SECS}" =~ ^[0-9]+$ ]] || [[ "${JUNOCASH_TESTNET_FUND_TIMEOUT_SECS}" -le 0 ]]; then
+    JUNOCASH_TESTNET_FUND_TIMEOUT_SECS="3600"
+  fi
+  poll_secs=5
+  elapsed=0
+  progress_secs=30
+  while [[ "${elapsed}" -lt "${JUNOCASH_TESTNET_FUND_TIMEOUT_SECS}" ]]; do
+    wait_for_wallet_scan_complete 60 || true
+    current_any_zat="$(balance_zat "${USER_UA}" 0 2>/dev/null || true)"
+    if [[ "${current_any_zat}" =~ ^[0-9]+$ ]] && [[ "${current_any_zat}" -ge "${prefund_min_zat}" ]]; then
+      break
+    fi
+    if (( elapsed % progress_secs == 0 )); then
+      cur_str="0.0"
+      if [[ "${current_any_zat}" =~ ^[0-9]+$ ]]; then cur_str="$(zat_to_junocash_amount "${current_any_zat}")"; fi
+      echo "waiting for funds... balance=${cur_str} required=${prefund_amount_ok} elapsed=${elapsed}s" >&2
+    fi
+    sleep "${poll_secs}"
+    elapsed="$((elapsed + poll_secs))"
+  done
+  if [[ ! "${current_any_zat}" =~ ^[0-9]+$ ]] || [[ "${current_any_zat}" -lt "${prefund_min_zat}" ]]; then
+    echo "timed out waiting for JunoCash funds (timeout=${JUNOCASH_TESTNET_FUND_TIMEOUT_SECS}s)" >&2
+    exit 1
+  fi
+fi
+
+confirmed_zat="$(balance_zat "${USER_UA}" "${JUNOCASH_SEND_MINCONF}" 2>/dev/null || true)"
+if [[ ! "${confirmed_zat}" =~ ^[0-9]+$ ]]; then confirmed_zat="0"; fi
+if [[ "${confirmed_zat}" -lt "${prefund_min_zat}" ]]; then
+  echo "mining ${JUNOCASH_SEND_MINCONF} blocks to reach minconf=${JUNOCASH_SEND_MINCONF}..." >&2
+  scripts/junocash/testnet/mine.sh "${JUNOCASH_SEND_MINCONF}" >/dev/null
+  wait_for_wallet_scan_complete "${JUNO_E2E_WALLET_SCAN_TIMEOUT_SECS:-3600}"
 fi
 
 USER_ORCHARD_RECEIVER_HEX="$(orchard_receiver_bytes_hex "${USER_UA}")"
