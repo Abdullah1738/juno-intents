@@ -14,6 +14,7 @@ MAXCONNECTIONS="${JUNO_TESTNET_MAXCONNECTIONS:-}"
 DBCACHE_MB="${JUNO_TESTNET_DBCACHE_MB:-}"
 PAR="${JUNO_TESTNET_PAR:-}"
 TXINDEX="${JUNO_TESTNET_TXINDEX:-1}"
+MINERADDRESS="${JUNO_TESTNET_MINERADDRESS:-}"
 
 JUNOCASH_ROOT="$(scripts/junocash/fetch-linux64.sh)"
 
@@ -134,6 +135,7 @@ if [[ "${MODE}" == "public" ]]; then
       -rpcclienttimeout=120 \
       -listen=1 \
       -bind=0.0.0.0 \
+      ${MINERADDRESS:+-mineraddress="${MINERADDRESS}"} \
       ${TXINDEX_FLAG[@]+"${TXINDEX_FLAG[@]}"} \
       ${BOOTSTRAP_FLAGS[@]+"${BOOTSTRAP_FLAGS[@]}"} \
       ${PERF_FLAGS[@]+"${PERF_FLAGS[@]}"} \
@@ -181,6 +183,7 @@ docker run -d \
     -dnsseed=0 \
     -listen=1 \
     -bind=0.0.0.0 \
+    ${MINERADDRESS:+-mineraddress="${MINERADDRESS}"} \
     ${TXINDEX_FLAG[@]+"${TXINDEX_FLAG[@]}"} \
     ${PERF_FLAGS[@]+"${PERF_FLAGS[@]}"} \
     ${IBD_FLAGS[@]+"${IBD_FLAGS[@]}"} \
@@ -205,6 +208,7 @@ docker run -d \
     -dnsseed=0 \
     -listen=1 \
     -bind=0.0.0.0 \
+    ${MINERADDRESS:+-mineraddress="${MINERADDRESS}"} \
     ${TXINDEX_FLAG[@]+"${TXINDEX_FLAG[@]}"} \
     ${PERF_FLAGS[@]+"${PERF_FLAGS[@]}"} \
     ${IBD_FLAGS[@]+"${IBD_FLAGS[@]}"} \
