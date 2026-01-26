@@ -87,37 +87,26 @@ if ! [[ "${timeout}" =~ ^[0-9]+$ ]] || [[ "${timeout}" -le 0 ]]; then
   timeout="1800"
 fi
 
-txcount_start="$(
-  jcli getwalletinfo | python3 -c 'import json,sys
-j=json.load(sys.stdin)
-print(int(j.get("txcount") or 0))
-'
-)"
-if ! [[ "${txcount_start}" =~ ^[0-9]+$ ]]; then
-  echo "unexpected getwalletinfo txcount: ${txcount_start}" >&2
-  exit 1
-fi
-txcount_target="$((txcount_start + want))"
+target_height="$((start + want))"
 
 progress_secs="${JUNO_TESTNET_MINE_PROGRESS_SECS:-30}"
 if ! [[ "${progress_secs}" =~ ^[0-9]+$ ]] || [[ "${progress_secs}" -le 0 ]]; then
   progress_secs="30"
 fi
 
-echo "mining ${want} blocks (chain height starts at ${start})... threads=${threads} timeout=${timeout}s txcount_start=${txcount_start}" >&2
+echo "mining ${want} blocks (chain height starts at ${start}, target=${target_height})... threads=${threads} timeout=${timeout}s" >&2
 jcli setgenerate true "${threads}" >/dev/null
 
 last_height="${start}"
 for ((i=1; i<=timeout; i++)); do
   height="$(jcli getblockcount)"
-  txcount_now="$(
-    jcli getwalletinfo | python3 -c 'import json,sys
-j=json.load(sys.stdin)
-print(int(j.get("txcount") or 0))
-'
-  )"
-  mined_blocks="$((txcount_now - txcount_start))"
-  if [[ "${txcount_now}" -ge "${txcount_target}" ]]; then
+  if ! [[ "${height}" =~ ^[0-9]+$ ]]; then
+    echo "unexpected getblockcount response: ${height}" >&2
+    sleep 1
+    continue
+  fi
+  mined_blocks="$((height - start))"
+  if [[ "${height}" -ge "${target_height}" ]]; then
     jcli setgenerate false >/dev/null || true
     echo "mined_blocks=${mined_blocks} height=${height}" >&2
     exit 0
@@ -130,14 +119,10 @@ print(int(j.get("txcount") or 0))
 done
 
 final_height="$(jcli getblockcount 2>/dev/null || true)"
-final_txcount="$(jcli getwalletinfo 2>/dev/null | python3 -c 'import json,sys
-try:
-  j=json.load(sys.stdin)
-except Exception:
-  print(0); raise SystemExit(0)
-print(int(j.get("txcount") or 0))
-')"
-final_mined="$((final_txcount - txcount_start))"
+if ! [[ "${final_height}" =~ ^[0-9]+$ ]]; then
+  final_height="0"
+fi
+final_mined="$((final_height - start))"
 jcli setgenerate false >/dev/null || true
 echo "timed out waiting to mine ${want} blocks (mined_blocks=${final_mined} height=${final_height})" >&2
 exit 1
