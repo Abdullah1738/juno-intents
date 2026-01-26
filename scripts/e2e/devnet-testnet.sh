@@ -270,7 +270,14 @@ ensure_min_lamports() {
 
   local bal_lamports
   bal_lamports="$(solana_balance_lamports "${pubkey}")"
-  if [[ ! "${bal_lamports}" =~ ^[0-9]+$ ]]; then bal_lamports="0"; fi
+  if [[ -z "${bal_lamports}" ]]; then
+    echo "${label} balance lookup failed (pubkey=${pubkey}); set SOLANA_RPC_URL to a reliable RPC and retry" >&2
+    return 1
+  fi
+  if [[ ! "${bal_lamports}" =~ ^[0-9]+$ ]]; then
+    echo "${label} balance lookup returned non-numeric output: ${bal_lamports}" >&2
+    return 1
+  fi
 
   if [[ "${bal_lamports}" -ge "${min_lamports}" ]]; then
     return 0
@@ -294,13 +301,43 @@ ensure_min_lamports() {
 
 solana_balance_lamports() {
   local pubkey="$1"
-  local raw
+  local attempts="${JUNO_E2E_SOLANA_BALANCE_RETRIES:-10}"
+  local delay_secs="${JUNO_E2E_SOLANA_BALANCE_RETRY_DELAY_SECS:-1}"
+  local raw out
+
+  if ! [[ "${attempts}" =~ ^[0-9]+$ ]] || [[ "${attempts}" -le 0 ]]; then attempts="10"; fi
+  if ! [[ "${delay_secs}" =~ ^[0-9]+$ ]] || [[ "${delay_secs}" -le 0 ]]; then delay_secs="1"; fi
+
+  for _ in $(seq 1 "${attempts}"); do
+    raw="$(
+      curl -fsS -X POST -H 'Content-Type: application/json' \
+        --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getBalance\",\"params\":[\"${pubkey}\"]}" \
+        "${SOLANA_RPC_URL}" 2>/dev/null || true
+    )"
+    out="$(
+      python3 -c 'import json,sys
+try:
+  j=json.load(sys.stdin)
+except Exception:
+  raise SystemExit(0)
+v=((j.get("result") or {}).get("value"))
+if isinstance(v, int):
+  print(v)
+' <<<"${raw}" 2>/dev/null || true
+    )"
+    if [[ "${out}" =~ ^[0-9]+$ ]]; then
+      printf '%s\n' "${out}"
+      return 0
+    fi
+    sleep "${delay_secs}"
+  done
+
   raw="$(solana -u "${SOLANA_RPC_URL}" balance "${pubkey}" --lamports 2>/dev/null || true)"
   python3 -c 'import re,sys
 raw=sys.stdin.read()
 m=re.search(r"(\\d+)", raw)
 print(m.group(1) if m else "")
-' <<<"${raw}"
+' <<<"${raw}" 2>/dev/null || true
 }
 
 parse_spl_address() {
