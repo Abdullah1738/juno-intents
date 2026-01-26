@@ -671,8 +671,8 @@ PY
     scripts/junocash/testnet/mine.sh "${JUNOCASH_SEND_MINCONF}" >/dev/null
   else
     echo "mining coinbase blocks + shielding to user orchard UA..." >&2
-    echo "creating transparent miner address (required for coinbase rewards)..." >&2
-    MINER_TADDR="$(jcli getnewaddress | tr -d '\" \r\n')"
+    echo "getting transparent mining address (required for coinbase rewards)..." >&2
+    MINER_TADDR="$(jcli t_getminingaddress | tr -d '\" \r\n')"
     if [[ -z "${MINER_TADDR}" ]]; then
       echo "failed to create miner transparent address" >&2
       exit 1
