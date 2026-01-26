@@ -14,7 +14,7 @@ JUNOCASH_SEND_MINCONF="${JUNO_E2E_JUNOCASH_SEND_MINCONF:-10}"
 JUNOCASH_TESTNET_WALLET_DAT_GZ_B64="${JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64:-}"
 JUNOCASH_TESTNET_PREFUND_WIF="${JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF:-}"
 JUNOCASH_TESTNET_PREFUND_AMOUNT="${JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT:-5.0}"
-JUNOCASH_TESTNET_MODE="${JUNO_E2E_JUNOCASH_TESTNET_MODE:-${JUNO_TESTNET_MODE:-pair}}"
+JUNOCASH_TESTNET_MODE="${JUNO_E2E_JUNOCASH_TESTNET_MODE:-${JUNO_TESTNET_MODE:-public}}"
 
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
@@ -58,7 +58,7 @@ JunoCash testnet funding (choose ONE):
   - JUNO_E2E_JUNOCASH_TESTNET_TADDR_WIF          prefunded transparent key to fund the user UA
 
 Optional environment:
-  - JUNO_E2E_JUNOCASH_TESTNET_MODE (default: pair; set to public to sync against public testnet)
+  - JUNO_E2E_JUNOCASH_TESTNET_MODE (default: public; set to pair for a 2-node private testnet)
   - JUNO_E2E_NET_AMOUNT_A / JUNO_E2E_NET_AMOUNT_B (default: 1000)
   - JUNO_E2E_PRIORITY_LEVEL (default: Medium)
   - JUNO_E2E_SOLANA_FUNDER_KEYPAIR (funded devnet keypair used to fund solver/creator when airdrops are rate-limited)
