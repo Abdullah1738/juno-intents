@@ -680,7 +680,45 @@ PY
     echo "miner_taddr=${MINER_TADDR}" >&2
     scripts/junocash/testnet/mine.sh 110 >/dev/null
     shield_limit="${JUNO_E2E_JUNOCASH_SHIELD_LIMIT:-10}"
-    opid_shield="$(jcli z_shieldcoinbase "*" "${USER_UA}" null "${shield_limit}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
+
+    opid_shield=""
+    mine_step="${JUNO_E2E_JUNOCASH_COINBASE_MINE_STEP:-50}"
+    mine_max_rounds="${JUNO_E2E_JUNOCASH_COINBASE_MINE_MAX_ROUNDS:-10}"
+    if ! [[ "${mine_step}" =~ ^[0-9]+$ ]] || [[ "${mine_step}" -le 0 ]]; then mine_step="50"; fi
+    if ! [[ "${mine_max_rounds}" =~ ^[0-9]+$ ]] || [[ "${mine_max_rounds}" -le 0 ]]; then mine_max_rounds="10"; fi
+
+    for _round in $(seq 1 "${mine_max_rounds}"); do
+      shield_out="$(jcli z_shieldcoinbase "*" "${USER_UA}" null "${shield_limit}" 2>&1 || true)"
+      if [[ -n "${shield_out}" ]] && opid_candidate="$(python3 -c 'import json,sys
+import sys
+raw=sys.stdin.read()
+try:
+  j=json.loads(raw)
+except Exception:
+  raise SystemExit(1)
+opid=str(j.get(\"opid\") or \"\").strip()
+if not opid:
+  raise SystemExit(1)
+print(opid)
+' <<<"${shield_out}" 2>/dev/null || true)" && [[ -n "${opid_candidate}" ]]; then
+        opid_shield="${opid_candidate}"
+        break
+      fi
+
+      if printf '%s' "${shield_out}" | grep -qi 'insufficient funds'; then
+        echo "shielding coinbase: insufficient funds; mining ${mine_step} more blocks..." >&2
+        scripts/junocash/testnet/mine.sh "${mine_step}" >/dev/null
+        continue
+      fi
+
+      echo "z_shieldcoinbase failed; raw output:" >&2
+      printf '%s\n' "${shield_out}" >&2
+      exit 1
+    done
+    if [[ -z "${opid_shield}" ]]; then
+      echo "z_shieldcoinbase did not succeed after retries" >&2
+      exit 1
+    fi
     txid_shield="$(
       python3 - <<PY
 import json,subprocess,sys,time
