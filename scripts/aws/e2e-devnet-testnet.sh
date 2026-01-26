@@ -45,6 +45,10 @@ SOLANA_FUNDER_KEYPAIR_B64="${JUNO_E2E_SOLANA_FUNDER_KEYPAIR_B64:-}"
 SOLANA_FUNDER_MIN_SOL="${JUNO_E2E_SOLANA_FUNDER_MIN_SOL:-6}"
 SOLANA_FUNDER_WAIT_TIMEOUT_SECS="${JUNO_E2E_SOLANA_FUNDER_WAIT_TIMEOUT_SECS:-3600}"
 
+JUNOCASH_TESTNET_PREFUND_AMOUNT="${JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT:-}"
+JUNOCASH_TESTNET_FUND_TIMEOUT_SECS="${JUNO_E2E_JUNOCASH_TESTNET_FUND_TIMEOUT_SECS:-}"
+JUNOCASH_SEND_MINCONF="${JUNO_E2E_JUNOCASH_SEND_MINCONF:-}"
+
 usage() {
   cat <<'USAGE' >&2
 Usage:
@@ -87,10 +91,15 @@ Environment:
   JUNO_E2E_SOLANA_FUNDER_WAIT_TIMEOUT_SECS (default: 3600)
   JUNO_E2E_SSM_TIMEOUT_SECS      (default: 43200; timeoutSeconds for SSM AWS-RunShellScript)
 
+  JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT (optional; default is 5.0 inside scripts/e2e/devnet-testnet.sh)
+  JUNO_E2E_JUNOCASH_TESTNET_FUND_TIMEOUT_SECS (optional; default is 3600 inside scripts/e2e/devnet-testnet.sh)
+  JUNO_E2E_JUNOCASH_SEND_MINCONF (optional; default is 10 inside scripts/e2e/devnet-testnet.sh)
+
 Notes:
   - All AWS calls use: --profile juno
   - By default, the EC2 instance is terminated on exit (success/failure), unless --keep-instance.
   - This script updates terraform allowed_pcr0 for the Nitro operator KMS key to match the freshly-built EIF.
+  - JunoCash is Orchard-only: the E2E logs will print `fund_user_ua=...` and wait until it is funded (or until timeout).
 USAGE
 }
 
@@ -426,6 +435,7 @@ sleep 5
 echo "SSM phase 2: run 2 enclaves + init keys + run e2e..." >&2
 export BASE_DEPLOYMENT DEPLOYMENTS_FILE KMS_KEY_ID KMS_VSOCK_PORT ENCLAVE_PORT ENCLAVE_CID1 ENCLAVE_CID2 ENCLAVE_MEM_MIB ENCLAVE_CPU_COUNT
 export SOLANA_FUNDER_KEYPAIR_B64 SOLANA_FUNDER_MIN_SOL SOLANA_FUNDER_WAIT_TIMEOUT_SECS
+export JUNOCASH_TESTNET_PREFUND_AMOUNT JUNOCASH_TESTNET_FUND_TIMEOUT_SECS JUNOCASH_SEND_MINCONF
 PHASE2_CMDS="$(
   python3 - <<'PY'
 import json,os
@@ -443,6 +453,9 @@ cpu=os.environ["ENCLAVE_CPU_COUNT"]
 funder_b64=os.environ.get("SOLANA_FUNDER_KEYPAIR_B64","")
 funder_min_sol=os.environ.get("SOLANA_FUNDER_MIN_SOL","6")
 funder_wait_timeout=os.environ.get("SOLANA_FUNDER_WAIT_TIMEOUT_SECS","3600")
+juno_prefund_amt=os.environ.get("JUNOCASH_TESTNET_PREFUND_AMOUNT","")
+juno_fund_timeout=os.environ.get("JUNOCASH_TESTNET_FUND_TIMEOUT_SECS","")
+juno_send_minconf=os.environ.get("JUNOCASH_SEND_MINCONF","")
 
 decode_cmd = ":"
 if funder_b64.strip():
@@ -499,6 +512,9 @@ cmds=[
   # Run E2E.
   f"export JUNO_E2E_NITRO_CID1={cid1} JUNO_E2E_NITRO_CID2={cid2} JUNO_E2E_NITRO_PORT={enclave_port}",
   "export JUNO_E2E_SOLANA_FUNDER_KEYPAIR=./tmp/solana-funder.json",
+  f"export JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT='{juno_prefund_amt}'",
+  f"export JUNO_E2E_JUNOCASH_TESTNET_FUND_TIMEOUT_SECS='{juno_fund_timeout}'",
+  f"export JUNO_E2E_JUNOCASH_SEND_MINCONF='{juno_send_minconf}'",
   f"scripts/e2e/devnet-testnet.sh --base-deployment '{base}' --deployments-file '{deployments}'",
 ]
 print(json.dumps(cmds))
