@@ -20,6 +20,7 @@ PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 SOLVER_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER_KEYPAIR:-}"
 SOLVER2_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER2_KEYPAIR:-}"
 CREATOR_KEYPAIR_OVERRIDE="${JUNO_E2E_CREATOR_KEYPAIR:-}"
+SOLANA_FUNDER_KEYPAIR="${JUNO_E2E_SOLANA_FUNDER_KEYPAIR:-}"
 
 NITRO_CID1="${JUNO_E2E_NITRO_CID1:-${JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID1:-}}"
 NITRO_CID2="${JUNO_E2E_NITRO_CID2:-${JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID2:-}}"
@@ -58,6 +59,7 @@ JunoCash testnet funding (choose ONE):
 Optional environment:
   - JUNO_E2E_NET_AMOUNT_A / JUNO_E2E_NET_AMOUNT_B (default: 1000)
   - JUNO_E2E_PRIORITY_LEVEL (default: Medium)
+  - JUNO_E2E_SOLANA_FUNDER_KEYPAIR (funded devnet keypair used to fund solver/creator when airdrops are rate-limited)
   - JUNO_E2E_SOLVER_KEYPAIR / _SOLVER2_KEYPAIR / _CREATOR_KEYPAIR (skip airdrop if provided)
 USAGE
 }
@@ -121,6 +123,10 @@ if [[ -n "${SOLVER2_KEYPAIR_OVERRIDE}" && ! -f "${SOLVER2_KEYPAIR_OVERRIDE}" ]];
 fi
 if [[ -n "${CREATOR_KEYPAIR_OVERRIDE}" && ! -f "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
   echo "creator keypair not found: ${CREATOR_KEYPAIR_OVERRIDE}" >&2
+  exit 2
+fi
+if [[ -n "${SOLANA_FUNDER_KEYPAIR}" && ! -f "${SOLANA_FUNDER_KEYPAIR}" ]]; then
+  echo "solana funder keypair not found: ${SOLANA_FUNDER_KEYPAIR}" >&2
   exit 2
 fi
 
@@ -227,6 +233,20 @@ airdrop() {
   return 1
 }
 
+lamports_to_sol() {
+  local lamports="$1"
+  python3 - "$lamports" <<'PY'
+import sys
+lamports=int(sys.argv[1])
+whole=lamports//1_000_000_000
+frac=lamports%1_000_000_000
+if frac==0:
+  print(str(whole))
+else:
+  print(f"{whole}.{frac:09d}".rstrip("0"))
+PY
+}
+
 wait_for_account() {
   local pubkey="$1"
   local attempts="${2:-60}"
@@ -238,6 +258,36 @@ wait_for_account() {
   done
   echo "account not found after waiting: ${pubkey}" >&2
   return 1
+}
+
+ensure_min_lamports() {
+  local pubkey="$1"
+  local min_lamports="$2"
+  local label="$3"
+  local kp_for_airdrop="$4"
+
+  local bal_lamports
+  bal_lamports="$(solana_balance_lamports "${pubkey}")"
+  if [[ ! "${bal_lamports}" =~ ^[0-9]+$ ]]; then bal_lamports="0"; fi
+
+  if [[ "${bal_lamports}" -ge "${min_lamports}" ]]; then
+    return 0
+  fi
+
+  if [[ -n "${SOLANA_FUNDER_KEYPAIR}" ]]; then
+    local need_lamports="$((min_lamports - bal_lamports))"
+    local need_sol
+    need_sol="$(lamports_to_sol "${need_lamports}")"
+    echo "${label} balance low (${bal_lamports} lamports); funding ${need_sol} SOL from solana funder..." >&2
+    solana -u "${SOLANA_RPC_URL}" transfer --allow-unfunded-recipient "${pubkey}" "${need_sol}" --keypair "${SOLANA_FUNDER_KEYPAIR}" >/dev/null
+    wait_for_account "${pubkey}" 120 || true
+    return 0
+  fi
+
+  local sol
+  sol="$(lamports_to_sol "${min_lamports}")"
+  echo "${label} balance low (${bal_lamports} lamports); requesting devnet airdrop (${sol} SOL)..." >&2
+  airdrop "${pubkey}" "${sol}" "${kp_for_airdrop}"
 }
 
 solana_balance_lamports() {
@@ -388,15 +438,22 @@ echo "solver_pubkey=${SOLVER_PUBKEY}" >&2
 echo "solver2_pubkey=${SOLVER2_PUBKEY}" >&2
 echo "creator_pubkey=${CREATOR_PUBKEY}" >&2
 
-echo "funding Solana keypairs (devnet airdrop)..." >&2
-if [[ -z "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then airdrop "${SOLVER_PUBKEY}" 2 "${SOLVER_KEYPAIR}"; fi
-if [[ -z "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then airdrop "${CREATOR_PUBKEY}" 2 "${CREATOR_KEYPAIR}"; fi
+if [[ -n "${SOLANA_FUNDER_KEYPAIR}" ]]; then
+  FUNDER_PUBKEY="$(solana-keygen pubkey "${SOLANA_FUNDER_KEYPAIR}")"
+  echo "solana_funder_pubkey=${FUNDER_PUBKEY}" >&2
+fi
+
+echo "funding Solana keypairs..." >&2
+ensure_min_lamports "${SOLVER_PUBKEY}" "${JUNO_E2E_MIN_SOLVER_LAMPORTS:-2000000000}" "solver" "${SOLVER_KEYPAIR}"
+ensure_min_lamports "${CREATOR_PUBKEY}" "${JUNO_E2E_MIN_CREATOR_LAMPORTS:-2000000000}" "creator" "${CREATOR_KEYPAIR}"
 
 min_solver2_lamports="${JUNO_E2E_MIN_SOLVER2_LAMPORTS:-500000000}"
 solver2_balance_now="$(solana_balance_lamports "${SOLVER2_PUBKEY}")"
 if [[ ! "${solver2_balance_now}" =~ ^[0-9]+$ ]]; then solver2_balance_now="0"; fi
 if [[ "${solver2_balance_now}" -lt "${min_solver2_lamports}" ]]; then
-  if [[ -z "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then
+  if [[ -n "${SOLANA_FUNDER_KEYPAIR}" ]]; then
+    ensure_min_lamports "${SOLVER2_PUBKEY}" "${min_solver2_lamports}" "solver2" "${SOLVER2_KEYPAIR}"
+  elif [[ -z "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then
     echo "solver2 balance low (${solver2_balance_now} lamports); funding from solver..." >&2
     solana -u "${SOLANA_RPC_URL}" transfer --allow-unfunded-recipient "${SOLVER2_PUBKEY}" 0.5 --keypair "${SOLVER_KEYPAIR}" >/dev/null
   else
@@ -819,7 +876,29 @@ wait_for_account "${FILL_A}" 120
 echo "sending JunoCash payment user->solver (amount=${PAYMENT_AMOUNT_A_STR})..." >&2
 recipients_a="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{\"address\":addr,\"amount\":float(amt)}]))' "${SOLVER_A_UA}" "${PAYMENT_AMOUNT_A_STR}")"
 opid_a="$(jcli z_sendmany "${USER_UA}" "${recipients_a}" "${JUNOCASH_SEND_MINCONF}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
-txid_a="$(python3 - <<PY\nimport json,subprocess,sys,time\nopid='${opid_a}'\nfor _ in range(1800):\n  out=subprocess.check_output(['scripts/junocash/testnet/cli.sh','z_getoperationresult',f'[\"{opid}\"]']).decode()\n  try:\n    items=json.loads(out)\n  except Exception:\n    time.sleep(1); continue\n  if not items:\n    time.sleep(1); continue\n  it=items[0]\n  if it.get('status')=='success':\n    print((it.get('result') or {}).get('txid',''))\n    sys.exit(0)\n  if it.get('status')=='failed':\n    print(json.dumps(it)); sys.exit(1)\n  time.sleep(1)\nprint('')\nsys.exit(1)\nPY\n)" || { echo "sendmany op failed (A)" >&2; exit 1; }
+txid_a="$(
+  python3 - <<PY
+import json,subprocess,sys,time
+opid='${opid_a}'
+for _ in range(1800):
+  out=subprocess.check_output(['scripts/junocash/testnet/cli.sh','z_getoperationresult',f'["{opid}"]']).decode()
+  try:
+    items=json.loads(out)
+  except Exception:
+    time.sleep(1); continue
+  if not items:
+    time.sleep(1); continue
+  it=items[0]
+  if it.get('status')=='success':
+    print((it.get('result') or {}).get('txid',''))
+    sys.exit(0)
+  if it.get('status')=='failed':
+    print(json.dumps(it)); sys.exit(1)
+  time.sleep(1)
+print('')
+sys.exit(1)
+PY
+)" || { echo "sendmany op failed (A)" >&2; exit 1; }
 echo "txid_a=${txid_a}" >&2
 scripts/junocash/testnet/mine.sh 1 >/dev/null
 PAYMENT_HEIGHT_A="$(jcli getblockcount)"
@@ -919,14 +998,54 @@ if [[ "${SOLVER_B_UA}" != "${SOLVER_A_UA}" ]]; then
   fund_str="$(zat_to_junocash_amount "${fund_zat}")"
   recipients_fund="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{\"address\":addr,\"amount\":float(amt)}]))' "${SOLVER_B_UA}" "${fund_str}")"
   opid_fund="$(jcli z_sendmany "${USER_UA}" "${recipients_fund}" "${JUNOCASH_SEND_MINCONF}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
-  python3 - <<PY >/dev/null\nimport json,subprocess,sys,time\nopid='${opid_fund}'\nfor _ in range(1800):\n  out=subprocess.check_output(['scripts/junocash/testnet/cli.sh','z_getoperationresult',f'[\"{opid}\"]']).decode()\n  try:\n    items=json.loads(out)\n  except Exception:\n    time.sleep(1); continue\n  if not items:\n    time.sleep(1); continue\n  it=items[0]\n  if it.get('status')=='success':\n    sys.exit(0)\n  if it.get('status')=='failed':\n    sys.exit(1)\n  time.sleep(1)\nsys.exit(1)\nPY\n || { echo "solver funding op failed" >&2; exit 1; }
+  python3 - <<PY >/dev/null || { echo "solver funding op failed" >&2; exit 1; }
+import json,subprocess,sys,time
+opid='${opid_fund}'
+for _ in range(1800):
+  out=subprocess.check_output(['scripts/junocash/testnet/cli.sh','z_getoperationresult',f'["{opid}"]']).decode()
+  try:
+    items=json.loads(out)
+  except Exception:
+    time.sleep(1); continue
+  if not items:
+    time.sleep(1); continue
+  it=items[0]
+  if it.get('status')=='success':
+    sys.exit(0)
+  if it.get('status')=='failed':
+    sys.exit(1)
+  time.sleep(1)
+sys.exit(1)
+PY
   scripts/junocash/testnet/mine.sh "${JUNOCASH_SEND_MINCONF}" >/dev/null
 fi
 
 echo "sending JunoCash payment solver->user (amount=${PAYMENT_AMOUNT_B_STR})..." >&2
 recipients_b="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{\"address\":addr,\"amount\":float(amt)}]))' "${USER_UA}" "${PAYMENT_AMOUNT_B_STR}")"
 opid_b="$(jcli z_sendmany "${SOLVER_B_UA}" "${recipients_b}" "${JUNOCASH_SEND_MINCONF}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
-txid_b="$(python3 - <<PY\nimport json,subprocess,sys,time\nopid='${opid_b}'\nfor _ in range(1800):\n  out=subprocess.check_output(['scripts/junocash/testnet/cli.sh','z_getoperationresult',f'[\"{opid}\"]']).decode()\n  try:\n    items=json.loads(out)\n  except Exception:\n    time.sleep(1); continue\n  if not items:\n    time.sleep(1); continue\n  it=items[0]\n  if it.get('status')=='success':\n    print((it.get('result') or {}).get('txid',''))\n    sys.exit(0)\n  if it.get('status')=='failed':\n    print(json.dumps(it)); sys.exit(1)\n  time.sleep(1)\nprint('')\nsys.exit(1)\nPY\n)" || { echo "sendmany op failed (B)" >&2; exit 1; }
+txid_b="$(
+  python3 - <<PY
+import json,subprocess,sys,time
+opid='${opid_b}'
+for _ in range(1800):
+  out=subprocess.check_output(['scripts/junocash/testnet/cli.sh','z_getoperationresult',f'["{opid}"]']).decode()
+  try:
+    items=json.loads(out)
+  except Exception:
+    time.sleep(1); continue
+  if not items:
+    time.sleep(1); continue
+  it=items[0]
+  if it.get('status')=='success':
+    print((it.get('result') or {}).get('txid',''))
+    sys.exit(0)
+  if it.get('status')=='failed':
+    print(json.dumps(it)); sys.exit(1)
+  time.sleep(1)
+print('')
+sys.exit(1)
+PY
+)" || { echo "sendmany op failed (B)" >&2; exit 1; }
 echo "txid_b=${txid_b}" >&2
 scripts/junocash/testnet/mine.sh 1 >/dev/null
 PAYMENT_HEIGHT_B="$(jcli getblockcount)"
