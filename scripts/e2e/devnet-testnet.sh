@@ -610,9 +610,8 @@ if [[ "${genesis_norm}" != "${expected_genesis_norm}" ]]; then
 fi
 
 echo "creating JunoCash accounts + orchard UAs..." >&2
-if [[ -n "${JUNOCASH_TESTNET_WALLET_DAT_GZ_B64}" ]]; then
-  if read -r USER_ACCOUNT USER_UA <<<"$(
-    jcli z_listaccounts | python3 -c 'import json,sys
+if read -r USER_ACCOUNT USER_UA <<<"$(
+  jcli z_listaccounts | python3 -c 'import json,sys
 items=json.load(sys.stdin)
 if not isinstance(items, list) or not items:
   raise SystemExit(1)
@@ -624,12 +623,8 @@ if acct is None or ua == "":
   raise SystemExit(1)
 print(int(acct), ua)
 '
-  )"; then
-    :
-  else
-    USER_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
-    USER_UA="$(jcli z_getaddressforaccount "${USER_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
-  fi
+)"; then
+  :
 else
   USER_ACCOUNT="$(jcli z_getnewaccount | python3 -c 'import json,sys; print(json.load(sys.stdin)["account"])')"
   USER_UA="$(jcli z_getaddressforaccount "${USER_ACCOUNT}" '["orchard"]' | python3 -c 'import json,sys; print(json.load(sys.stdin)["address"])')"
