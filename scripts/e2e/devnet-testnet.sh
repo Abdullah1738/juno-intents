@@ -764,7 +764,12 @@ for idx in 1 2; do
   fi
 
   witness_hex="$("${GO_NITRO}" witness --enclave-cid "${cid}" --enclave-port "${NITRO_PORT}" --deployment-id "${DEPLOYMENT_ID_HEX}" --junocash-chain-id "${JUNOCASH_CHAIN_ID}" --junocash-genesis-hash "${JUNOCASH_GENESIS_EXPECTED}")"
-  bundle_hex="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove_attestation_bundle_v1 -- --witness-hex "${witness_hex}")"
+  raw_bundle_hex="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove_attestation_bundle_v1 -- --witness-hex "${witness_hex}")"
+  bundle_hex="$(printf '%s\n' "${raw_bundle_hex}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
+  if [[ -z "${bundle_hex}" ]]; then
+    echo "failed to extract attestation bundle hex" >&2
+    exit 1
+  fi
 
   info="$("${GO_INTENTS}" orp-attestation-info --bundle-hex "${bundle_hex}")"
   meas="$(printf '%s\n' "${info}" | sed -nE 's/^measurement=([0-9a-fA-F]+)$/\\1/p' | head -n 1)"
