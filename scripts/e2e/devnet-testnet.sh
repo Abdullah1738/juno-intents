@@ -658,18 +658,44 @@ fi
 prefund_min_zat="$(juno_amount_to_zat "${prefund_amount_ok}")"
 
 balance_zat() {
-  local ua="$1"
+  local acct="$1"
   local minconf="$2"
-  local raw
-  raw="$(jcli z_getbalance "${ua}" "${minconf}" 2>/dev/null || true)"
-  raw="$(printf '%s' "${raw}" | tr -d '\" \t\r\n')"
-  if [[ -z "${raw}" ]]; then
+  local raw out
+
+  if ! [[ "${minconf}" =~ ^[0-9]+$ ]]; then
+    minconf="1"
+  fi
+  if [[ "${minconf}" -lt 1 ]]; then
+    minconf="1"
+  fi
+
+  raw="$(jcli z_getbalanceforaccount "${acct}" "${minconf}" 2>/dev/null || true)"
+  out="$(
+    python3 -c 'import json,sys
+try:
+  j=json.load(sys.stdin)
+except Exception:
+  raise SystemExit(1)
+p=(j.get("pools") or {})
+o=(p.get("orchard") or {})
+v=o.get("valueZat", 0)
+if isinstance(v, bool):
+  raise SystemExit(1)
+if isinstance(v, int):
+  print(v); raise SystemExit(0)
+try:
+  print(int(v))
+except Exception:
+  raise SystemExit(1)
+' <<<"${raw}" 2>/dev/null || true
+  )"
+  if [[ ! "${out}" =~ ^[0-9]+$ ]]; then
     return 1
   fi
-  juno_amount_to_zat "${raw}" 2>/dev/null || return 1
+  printf '%s\n' "${out}"
 }
 
-current_any_zat="$(balance_zat "${USER_UA}" 0 2>/dev/null || true)"
+current_any_zat="$(balance_zat "${USER_ACCOUNT}" 1 2>/dev/null || true)"
 if [[ ! "${current_any_zat}" =~ ^[0-9]+$ ]]; then current_any_zat="0"; fi
 if [[ "${current_any_zat}" -lt "${prefund_min_zat}" ]]; then
   echo "wallet needs funding: send >=${prefund_amount_ok} JunoCash testnet to:" >&2
@@ -682,7 +708,7 @@ if [[ "${current_any_zat}" -lt "${prefund_min_zat}" ]]; then
   progress_secs=30
   while [[ "${elapsed}" -lt "${JUNOCASH_TESTNET_FUND_TIMEOUT_SECS}" ]]; do
     wait_for_wallet_scan_complete 60 || true
-    current_any_zat="$(balance_zat "${USER_UA}" 0 2>/dev/null || true)"
+    current_any_zat="$(balance_zat "${USER_ACCOUNT}" 1 2>/dev/null || true)"
     if [[ "${current_any_zat}" =~ ^[0-9]+$ ]] && [[ "${current_any_zat}" -ge "${prefund_min_zat}" ]]; then
       break
     fi
@@ -700,7 +726,7 @@ if [[ "${current_any_zat}" -lt "${prefund_min_zat}" ]]; then
   fi
 fi
 
-confirmed_zat="$(balance_zat "${USER_UA}" "${JUNOCASH_SEND_MINCONF}" 2>/dev/null || true)"
+confirmed_zat="$(balance_zat "${USER_ACCOUNT}" "${JUNOCASH_SEND_MINCONF}" 2>/dev/null || true)"
 if [[ ! "${confirmed_zat}" =~ ^[0-9]+$ ]]; then confirmed_zat="0"; fi
 if [[ "${confirmed_zat}" -lt "${prefund_min_zat}" ]]; then
   echo "mining ${JUNOCASH_SEND_MINCONF} blocks to reach minconf=${JUNOCASH_SEND_MINCONF}..." >&2
