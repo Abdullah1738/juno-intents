@@ -19,10 +19,18 @@ JUNOCASH_TESTNET_MODE="${JUNO_E2E_JUNOCASH_TESTNET_MODE:-${JUNO_TESTNET_MODE:-pu
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
 RISC0_FEATURES="${JUNO_E2E_RISC0_FEATURES-cuda}"
-RISC0_FEATURE_ARGS=()
-if [[ -n "${RISC0_FEATURES}" ]]; then
-  RISC0_FEATURE_ARGS=(--features "${RISC0_FEATURES}")
-fi
+
+risc0_prove_bundle() {
+  local manifest="$1"
+  local bin="$2"
+  local witness_hex="$3"
+
+  if [[ -n "${RISC0_FEATURES}" ]]; then
+    (cd "${ROOT}" && cargo run --release --locked --manifest-path "${manifest}" --features "${RISC0_FEATURES}" --bin "${bin}" -- --witness-hex "${witness_hex}")
+  else
+    (cd "${ROOT}" && cargo run --release --locked --manifest-path "${manifest}" --bin "${bin}" -- --witness-hex "${witness_hex}")
+  fi
+}
 
 SOLVER_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER_KEYPAIR:-}"
 SOLVER2_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER2_KEYPAIR:-}"
@@ -790,7 +798,7 @@ for idx in 1 2; do
     bundle_hex="$(tr -d ' \t\r\n' <"${bundle_file}")"
   else
     witness_hex="$("${GO_NITRO}" witness --enclave-cid "${cid}" --enclave-port "${NITRO_PORT}" --deployment-id "${DEPLOYMENT_ID_HEX}" --junocash-chain-id "${JUNOCASH_CHAIN_ID}" --junocash-genesis-hash "${JUNOCASH_GENESIS_EXPECTED}")"
-    raw_bundle_hex="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml "${RISC0_FEATURE_ARGS[@]}" --bin prove_attestation_bundle_v1 -- --witness-hex "${witness_hex}")"
+    raw_bundle_hex="$(risc0_prove_bundle risc0/attestation/host/Cargo.toml prove_attestation_bundle_v1 "${witness_hex}")"
     bundle_hex="$(printf '%s\n' "${raw_bundle_hex}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
     if [[ -z "${bundle_hex}" ]]; then
       echo "failed to extract attestation bundle hex" >&2
@@ -1212,11 +1220,11 @@ done
   --priority-level "${PRIORITY_LEVEL}" >/dev/null
 
 echo "proving receipt bundles (Groth16)..." >&2
-RAW_BUNDLE_A="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml "${RISC0_FEATURE_ARGS[@]}" --bin prove_bundle_v1 -- --witness-hex "${WITNESS_A}")"
+RAW_BUNDLE_A="$(risc0_prove_bundle risc0/receipt/host/Cargo.toml prove_bundle_v1 "${WITNESS_A}")"
 BUNDLE_A="$(printf '%s\n' "${RAW_BUNDLE_A}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
 if [[ -z "${BUNDLE_A}" ]]; then echo "failed to extract bundle hex (A)" >&2; exit 1; fi
 
-RAW_BUNDLE_B="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml "${RISC0_FEATURE_ARGS[@]}" --bin prove_bundle_v1 -- --witness-hex "${WITNESS_B}")"
+RAW_BUNDLE_B="$(risc0_prove_bundle risc0/receipt/host/Cargo.toml prove_bundle_v1 "${WITNESS_B}")"
 BUNDLE_B="$(printf '%s\n' "${RAW_BUNDLE_B}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
 if [[ -z "${BUNDLE_B}" ]]; then echo "failed to extract bundle hex (B)" >&2; exit 1; fi
 
