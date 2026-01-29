@@ -25,10 +25,23 @@ risc0_prove_bundle() {
   local bin="$2"
   local witness_hex="$3"
 
+  local witness_env="JUNO_RECEIPT_WITNESS_HEX"
+  if [[ "${bin}" == *attestation* ]]; then
+    witness_env="JUNO_ATTESTATION_WITNESS_HEX"
+  fi
+
   if [[ -n "${RISC0_FEATURES}" ]]; then
-    (cd "${ROOT}" && cargo run --release --locked --manifest-path "${manifest}" --features "${RISC0_FEATURES}" --bin "${bin}" -- --witness-hex "${witness_hex}")
+    (
+      cd "${ROOT}" && \
+      export "${witness_env}=${witness_hex}" && \
+      cargo run --release --locked --manifest-path "${manifest}" --features "${RISC0_FEATURES}" --bin "${bin}"
+    )
   else
-    (cd "${ROOT}" && cargo run --release --locked --manifest-path "${manifest}" --bin "${bin}" -- --witness-hex "${witness_hex}")
+    (
+      cd "${ROOT}" && \
+      export "${witness_env}=${witness_hex}" && \
+      cargo run --release --locked --manifest-path "${manifest}" --bin "${bin}"
+    )
   fi
 }
 
@@ -1050,7 +1063,7 @@ WITNESS_A="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/hos
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --fill-id "${FILL_ID_A_HEX}")"
 
-INPUTS_A="$("${GO_INTENTS}" receipt-inputs --witness-hex "${WITNESS_A}" --json=false)"
+INPUTS_A="$(JUNO_RECEIPT_WITNESS_HEX="${WITNESS_A}" "${GO_INTENTS}" receipt-inputs --json=false)"
 AMOUNT_A="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^amount=([0-9]+)$/\1/p' | head -n 1)"
 RECEIVER_TAG_A_WITNESS="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^receiver_tag=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
 ORCHARD_ROOT_A="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^orchard_root=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
@@ -1180,7 +1193,7 @@ WITNESS_B="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/hos
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --fill-id "${FILL_ID_B_HEX}")"
 
-INPUTS_B="$("${GO_INTENTS}" receipt-inputs --witness-hex "${WITNESS_B}" --json=false)"
+INPUTS_B="$(JUNO_RECEIPT_WITNESS_HEX="${WITNESS_B}" "${GO_INTENTS}" receipt-inputs --json=false)"
 AMOUNT_B="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^amount=([0-9]+)$/\1/p' | head -n 1)"
 RECEIVER_TAG_B_WITNESS="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^receiver_tag=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
 ORCHARD_ROOT_B="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^orchard_root=([0-9a-fA-F]+)$/\1/p' | head -n 1)"

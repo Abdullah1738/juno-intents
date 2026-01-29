@@ -28,6 +28,25 @@ func TestE2EDevnetTestnetScriptDoesNotClobberKeypairs(t *testing.T) {
 	}
 }
 
+func TestE2EDevnetTestnetScriptDoesNotLeakWitnessOnCommandLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	if bytes.Contains(src, []byte("--witness-hex")) {
+		t.Fatalf("devnet-testnet.sh should not pass witness hex via CLI args")
+	}
+	if !bytes.Contains(src, []byte("JUNO_ATTESTATION_WITNESS_HEX")) {
+		t.Fatalf("devnet-testnet.sh should set JUNO_ATTESTATION_WITNESS_HEX for RISC0 proving")
+	}
+}
+
 func TestAWSE2EDevnetTestnetScriptDetectsCudaArch(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script tests are not supported on windows")
