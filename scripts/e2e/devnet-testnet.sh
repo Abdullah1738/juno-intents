@@ -130,6 +130,26 @@ need_cmd cargo
 need_cmd go
 need_cmd curl
 
+retry() {
+  local attempts="${1:-5}"
+  local delay_secs="${2:-3}"
+  shift 2
+
+  local n=1
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if (( n >= attempts )); then
+      echo "command failed after ${attempts} attempts: $*" >&2
+      return 1
+    fi
+    echo "command failed; retrying in ${delay_secs}s (${n}/${attempts}): $*" >&2
+    sleep "${delay_secs}"
+    n="$((n + 1))"
+  done
+}
+
 if [[ -z "${NITRO_CID1}" || -z "${NITRO_CID2}" ]]; then
   echo "missing Nitro enclave CIDs: set JUNO_E2E_NITRO_CID1 and JUNO_E2E_NITRO_CID2 (or legacy JUNO_E2E_CRP_SUBMIT_ENCLAVE_CID1/2)" >&2
   exit 2
@@ -561,8 +581,8 @@ if [[ "${solver2_balance_now}" -lt "${min_solver2_lamports}" ]]; then
 fi
 
 echo "creating wJUNO SPL mint + token accounts..." >&2
-if ! MINT_OUT="$(spl-token -u "${SOLANA_RPC_URL}" create-token --decimals 0 --owner "${SOLVER_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact 2>&1)"; then
-  printf '%s\n' "${MINT_OUT}" >&2
+if ! MINT_OUT="$(retry 5 3 spl-token -u "${SOLANA_RPC_URL}" create-token --decimals 0 --owner "${SOLVER_PUBKEY}" --fee-payer "${SOLVER_KEYPAIR}" --output json-compact)"; then
+  echo "spl-token create-token failed" >&2
   exit 1
 fi
 MINT="$(parse_spl_address <<<"${MINT_OUT}")"
@@ -848,7 +868,7 @@ done
 
 echo "init ORP/CRP/IEP configs..." >&2
 ORP_CONFIG="$("${GO_INTENTS}" pda --program-id "${ORP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
-"${GO_INTENTS}" init-orp \
+retry 5 3 "${GO_INTENTS}" init-orp \
   --orp-program-id "${ORP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --admin "${SOLVER_PUBKEY}" \
@@ -858,22 +878,22 @@ ORP_CONFIG="$("${GO_INTENTS}" pda --program-id "${ORP_PROGRAM_ID}" --deployment-
   --verifier-program-id "${VERIFIER_PROGRAM_ID}" \
   --allowed-measurement "${OP_MEAS_1}" \
   --allowed-measurement "${OP_MEAS_2}" \
-  --payer-keypair "${SOLVER_KEYPAIR}" >/dev/null
+  --payer-keypair "${SOLVER_KEYPAIR}"
 wait_for_account "${ORP_CONFIG}" 60
 
-"${GO_INTENTS}" orp-register-operator \
+retry 5 3 "${GO_INTENTS}" orp-register-operator \
   --orp-program-id "${ORP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --bundle-hex "${OP_BUNDLE_1}" \
-  --payer-keypair "${SOLVER_KEYPAIR}" >/dev/null
+  --payer-keypair "${SOLVER_KEYPAIR}"
 
-"${GO_INTENTS}" orp-register-operator \
+retry 5 3 "${GO_INTENTS}" orp-register-operator \
   --orp-program-id "${ORP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --bundle-hex "${OP_BUNDLE_2}" \
-  --payer-keypair "${SOLVER_KEYPAIR}" >/dev/null
+  --payer-keypair "${SOLVER_KEYPAIR}"
 
-"${GO_INTENTS}" init-crp \
+retry 5 3 "${GO_INTENTS}" init-crp \
   --crp-program-id "${CRP_PROGRAM_ID}" \
   --operator-registry-program "${ORP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
@@ -883,9 +903,9 @@ wait_for_account "${ORP_CONFIG}" 60
   --finalization-delay-slots 0 \
   --operator "${OP_PUBKEY_1}" \
   --operator "${OP_PUBKEY_2}" \
-  --payer-keypair "${SOLVER_KEYPAIR}" >/dev/null
+  --payer-keypair "${SOLVER_KEYPAIR}"
 
-"${GO_INTENTS}" init-iep \
+retry 5 3 "${GO_INTENTS}" init-iep \
   --iep-program-id "${IEP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --mint "${MINT}" \
@@ -895,7 +915,7 @@ wait_for_account "${ORP_CONFIG}" 60
   --verifier-router "${VERIFIER_ROUTER_PDA}" \
   --verifier-entry "${VERIFIER_ENTRY_PDA}" \
   --verifier-program "${VERIFIER_PROGRAM_ID}" \
-  --payer-keypair "${SOLVER_KEYPAIR}" >/dev/null
+  --payer-keypair "${SOLVER_KEYPAIR}"
 
 echo "starting solvernet solvers (auto-fill)..." >&2
 SOLVERNET1_LISTEN="${JUNO_E2E_SOLVERNET1_LISTEN:-127.0.0.1:8081}"
