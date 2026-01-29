@@ -133,7 +133,7 @@
       "junocash_genesis_hash": "009a83c6bd95d1f0548fe4c5f6555c785e9c456ca33f58c2d7755c2bdd1e842f",
       "kind": "base",
       "name": "devnet-tee-testnet-base",
-      "operator_registry_program_id": "9nxrwEF3uYRCCsmvR1EzhWFjBcTJSJ8QRyGoTUxPdgEW",
+    "operator_registry_program_id": "6QE3EkBgc6RxpxZzxxBotTwzE3ke7rrLLZTaXSknyLDY",
       "receipt_verifier_program_id": "5R4u6JeViqzeSRDy1E28mB81eymfnBR9WEZE5BfAAKmv",
       "rpc_url": "https://api.devnet.solana.com",
       "upgrade_mode": "final",
