@@ -756,7 +756,7 @@ for idx in 1 2; do
   cid="${!cid_var}"
 
   pub_out="$("${GO_NITRO}" pubkey --enclave-cid "${cid}" --enclave-port "${NITRO_PORT}")"
-  op_pub_b58="$(printf '%s\n' "${pub_out}" | sed -nE 's/^operator_pubkey_base58=(.+)$/\\1/p' | head -n 1)"
+  op_pub_b58="$(printf '%s\n' "${pub_out}" | sed -nE 's/^operator_pubkey_base58=(.+)$/\1/p' | head -n 1)"
   if [[ -z "${op_pub_b58}" ]]; then
     echo "failed to parse operator pubkey from nitro-operator pubkey" >&2
     printf '%s\n' "${pub_out}" >&2
@@ -772,8 +772,8 @@ for idx in 1 2; do
   fi
 
   info="$("${GO_INTENTS}" orp-attestation-info --bundle-hex "${bundle_hex}")"
-  meas="$(printf '%s\n' "${info}" | sed -nE 's/^measurement=([0-9a-fA-F]+)$/\\1/p' | head -n 1)"
-  op_b58_in_bundle="$(printf '%s\n' "${info}" | sed -nE 's/^operator_pubkey=([1-9A-HJ-NP-Za-km-z]+)$/\\1/p' | head -n 1)"
+  meas="$(printf '%s\n' "${info}" | sed -nE 's/^measurement=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
+  op_b58_in_bundle="$(printf '%s\n' "${info}" | sed -nE 's/^operator_pubkey=([1-9A-HJ-NP-Za-km-z]+)$/\1/p' | head -n 1)"
   if [[ -z "${meas}" || -z "${op_b58_in_bundle}" ]]; then
     echo "failed to parse attestation info" >&2
     printf '%s\n' "${info}" >&2
@@ -1013,9 +1013,9 @@ WITNESS_A="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/hos
   --fill-id "${FILL_ID_A_HEX}")"
 
 INPUTS_A="$("${GO_INTENTS}" receipt-inputs --witness-hex "${WITNESS_A}" --json=false)"
-AMOUNT_A="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^amount=([0-9]+)$/\\1/p' | head -n 1)"
-RECEIVER_TAG_A_WITNESS="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^receiver_tag=([0-9a-fA-F]+)$/\\1/p' | head -n 1)"
-ORCHARD_ROOT_A="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^orchard_root=([0-9a-fA-F]+)$/\\1/p' | head -n 1)"
+AMOUNT_A="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^amount=([0-9]+)$/\1/p' | head -n 1)"
+RECEIVER_TAG_A_WITNESS="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^receiver_tag=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
+ORCHARD_ROOT_A="$(printf '%s\n' "${INPUTS_A}" | sed -nE 's/^orchard_root=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
 if [[ "${AMOUNT_A}" != "${AMOUNT_A_ZAT}" || "${RECEIVER_TAG_A_WITNESS}" != "${RECEIVER_TAG_A}" ]]; then
   echo "witness mismatch (A): amount/receiver_tag" >&2
   exit 1
@@ -1143,9 +1143,9 @@ WITNESS_B="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/hos
   --fill-id "${FILL_ID_B_HEX}")"
 
 INPUTS_B="$("${GO_INTENTS}" receipt-inputs --witness-hex "${WITNESS_B}" --json=false)"
-AMOUNT_B="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^amount=([0-9]+)$/\\1/p' | head -n 1)"
-RECEIVER_TAG_B_WITNESS="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^receiver_tag=([0-9a-fA-F]+)$/\\1/p' | head -n 1)"
-ORCHARD_ROOT_B="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^orchard_root=([0-9a-fA-F]+)$/\\1/p' | head -n 1)"
+AMOUNT_B="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^amount=([0-9]+)$/\1/p' | head -n 1)"
+RECEIVER_TAG_B_WITNESS="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^receiver_tag=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
+ORCHARD_ROOT_B="$(printf '%s\n' "${INPUTS_B}" | sed -nE 's/^orchard_root=([0-9a-fA-F]+)$/\1/p' | head -n 1)"
 if [[ "${AMOUNT_B}" != "${AMOUNT_B_ZAT}" || "${RECEIVER_TAG_B_WITNESS}" != "${RECEIVER_TAG_B}" ]]; then
   echo "witness mismatch (B): amount/receiver_tag" >&2
   exit 1
