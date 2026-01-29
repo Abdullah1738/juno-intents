@@ -823,7 +823,7 @@ ORP_CONFIG="$("${GO_INTENTS}" pda --program-id "${ORP_PROGRAM_ID}" --deployment-
 "${GO_INTENTS}" init-orp \
   --orp-program-id "${ORP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
-  --admin "${FEE_COLLECTOR_PUBKEY}" \
+  --admin "${SOLVER_PUBKEY}" \
   --junocash-chain-id "${JUNOCASH_CHAIN_ID}" \
   --junocash-genesis-hash "${JUNOCASH_GENESIS_EXPECTED}" \
   --verifier-router-program "${VERIFIER_ROUTER_PROGRAM_ID}" \
