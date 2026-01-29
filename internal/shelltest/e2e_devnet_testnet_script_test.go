@@ -27,3 +27,19 @@ func TestE2EDevnetTestnetScriptDoesNotClobberKeypairs(t *testing.T) {
 		t.Fatalf("devnet-testnet.sh should reuse existing creator keypair when present")
 	}
 }
+
+func TestAWSE2EDevnetTestnetScriptDetectsCudaArch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "aws", "e2e-devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	if !bytes.Contains(src, []byte("nvidia-smi --query-gpu=compute_cap")) {
+		t.Fatalf("e2e-devnet-testnet.sh should detect CUDA compute capability for NVCC flags")
+	}
+}
