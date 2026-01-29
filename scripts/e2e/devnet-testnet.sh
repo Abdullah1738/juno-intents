@@ -18,6 +18,12 @@ JUNOCASH_TESTNET_MODE="${JUNO_E2E_JUNOCASH_TESTNET_MODE:-${JUNO_TESTNET_MODE:-pu
 
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
+RISC0_FEATURES="${JUNO_E2E_RISC0_FEATURES-cuda}"
+RISC0_FEATURE_ARGS=()
+if [[ -n "${RISC0_FEATURES}" ]]; then
+  RISC0_FEATURE_ARGS=(--features "${RISC0_FEATURES}")
+fi
+
 SOLVER_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER_KEYPAIR:-}"
 SOLVER2_KEYPAIR_OVERRIDE="${JUNO_E2E_SOLVER2_KEYPAIR:-}"
 CREATOR_KEYPAIR_OVERRIDE="${JUNO_E2E_CREATOR_KEYPAIR:-}"
@@ -61,6 +67,7 @@ Optional environment:
   - JUNO_E2E_JUNOCASH_TESTNET_MODE (default: public; set to pair for a 2-node private testnet)
   - JUNO_E2E_NET_AMOUNT_A / JUNO_E2E_NET_AMOUNT_B (default: 1000)
   - JUNO_E2E_PRIORITY_LEVEL (default: Medium)
+  - JUNO_E2E_RISC0_FEATURES (default: cuda; set to empty to disable CUDA and use Docker proving)
   - JUNO_E2E_SOLANA_FUNDER_KEYPAIR (funded devnet keypair used to fund solver/creator when airdrops are rate-limited)
   - JUNO_E2E_SOLVER_KEYPAIR / _SOLVER2_KEYPAIR / _CREATOR_KEYPAIR (skip airdrop if provided)
 USAGE
@@ -783,7 +790,7 @@ for idx in 1 2; do
     bundle_hex="$(tr -d ' \t\r\n' <"${bundle_file}")"
   else
     witness_hex="$("${GO_NITRO}" witness --enclave-cid "${cid}" --enclave-port "${NITRO_PORT}" --deployment-id "${DEPLOYMENT_ID_HEX}" --junocash-chain-id "${JUNOCASH_CHAIN_ID}" --junocash-genesis-hash "${JUNOCASH_GENESIS_EXPECTED}")"
-    raw_bundle_hex="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove_attestation_bundle_v1 -- --witness-hex "${witness_hex}")"
+    raw_bundle_hex="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml "${RISC0_FEATURE_ARGS[@]}" --bin prove_attestation_bundle_v1 -- --witness-hex "${witness_hex}")"
     bundle_hex="$(printf '%s\n' "${raw_bundle_hex}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
     if [[ -z "${bundle_hex}" ]]; then
       echo "failed to extract attestation bundle hex" >&2
@@ -1205,11 +1212,11 @@ done
   --priority-level "${PRIORITY_LEVEL}" >/dev/null
 
 echo "proving receipt bundles (Groth16)..." >&2
-RAW_BUNDLE_A="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --bin prove_bundle_v1 -- --witness-hex "${WITNESS_A}")"
+RAW_BUNDLE_A="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml "${RISC0_FEATURE_ARGS[@]}" --bin prove_bundle_v1 -- --witness-hex "${WITNESS_A}")"
 BUNDLE_A="$(printf '%s\n' "${RAW_BUNDLE_A}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
 if [[ -z "${BUNDLE_A}" ]]; then echo "failed to extract bundle hex (A)" >&2; exit 1; fi
 
-RAW_BUNDLE_B="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml --features cuda --bin prove_bundle_v1 -- --witness-hex "${WITNESS_B}")"
+RAW_BUNDLE_B="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/receipt/host/Cargo.toml "${RISC0_FEATURE_ARGS[@]}" --bin prove_bundle_v1 -- --witness-hex "${WITNESS_B}")"
 BUNDLE_B="$(printf '%s\n' "${RAW_BUNDLE_B}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
 if [[ -z "${BUNDLE_B}" ]]; then echo "failed to extract bundle hex (B)" >&2; exit 1; fi
 
