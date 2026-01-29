@@ -15,5 +15,5 @@ Non-custodial intents bridge between JunoCash (Orchard-only) and Solana.
 - Unit tests: `make test`
 - Solana program-tests (local): `make test-solana`
 - Real-network E2E (Solana devnet + JunoCash testnet, Nitro + Groth16): `scripts/aws/e2e-devnet-testnet.sh`
-  - Devnet `requestAirdrop` is often rate-limited; fund a devnet keypair and set `JUNO_E2E_SOLANA_FUNDER_KEYPAIR_B64=base64(keypair.json)` (needs ≥6 SOL).
+  - Devnet `requestAirdrop` is often rate-limited; fund a devnet keypair and set `JUNO_E2E_SOLANA_FUNDER_KEYPAIR_B64=base64(keypair.json)` (needs ≥2 SOL).
   - JunoCash is Orchard-only; the E2E will print `fund_user_ua=...` and wait for it to be funded (default: 5.0; override via `JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT`).

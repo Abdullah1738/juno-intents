@@ -283,8 +283,9 @@ ensure_min_lamports() {
     return 0
   fi
 
+  local need_lamports="$((min_lamports - bal_lamports))"
+
   if [[ -n "${SOLANA_FUNDER_KEYPAIR}" ]]; then
-    local need_lamports="$((min_lamports - bal_lamports))"
     local need_sol
     need_sol="$(lamports_to_sol "${need_lamports}")"
     echo "${label} balance low (${bal_lamports} lamports); funding ${need_sol} SOL from solana funder..." >&2
@@ -293,10 +294,10 @@ ensure_min_lamports() {
     return 0
   fi
 
-  local sol
-  sol="$(lamports_to_sol "${min_lamports}")"
-  echo "${label} balance low (${bal_lamports} lamports); requesting devnet airdrop (${sol} SOL)..." >&2
-  airdrop "${pubkey}" "${sol}" "${kp_for_airdrop}"
+  local need_sol
+  need_sol="$(lamports_to_sol "${need_lamports}")"
+  echo "${label} balance low (${bal_lamports} lamports); requesting devnet airdrop (${need_sol} SOL)..." >&2
+  airdrop "${pubkey}" "${need_sol}" "${kp_for_airdrop}"
 }
 
 solana_balance_lamports() {
@@ -483,9 +484,21 @@ echo "selecting Solana keypairs..." >&2
 SOLVER_KEYPAIR="${WORKDIR}/solver.json"
 SOLVER2_KEYPAIR="${WORKDIR}/solver2.json"
 CREATOR_KEYPAIR="${WORKDIR}/creator.json"
-if [[ -n "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then SOLVER_KEYPAIR="${SOLVER_KEYPAIR_OVERRIDE}"; else solana-keygen new --no-bip39-passphrase --silent --force -o "${SOLVER_KEYPAIR}"; fi
-if [[ -n "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then SOLVER2_KEYPAIR="${SOLVER2_KEYPAIR_OVERRIDE}"; else solana-keygen new --no-bip39-passphrase --silent --force -o "${SOLVER2_KEYPAIR}"; fi
-if [[ -n "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then CREATOR_KEYPAIR="${CREATOR_KEYPAIR_OVERRIDE}"; else solana-keygen new --no-bip39-passphrase --silent --force -o "${CREATOR_KEYPAIR}"; fi
+if [[ -n "${SOLVER_KEYPAIR_OVERRIDE}" ]]; then
+  SOLVER_KEYPAIR="${SOLVER_KEYPAIR_OVERRIDE}"
+elif [[ ! -s "${SOLVER_KEYPAIR}" ]]; then
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${SOLVER_KEYPAIR}"
+fi
+if [[ -n "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then
+  SOLVER2_KEYPAIR="${SOLVER2_KEYPAIR_OVERRIDE}"
+elif [[ ! -s "${SOLVER2_KEYPAIR}" ]]; then
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${SOLVER2_KEYPAIR}"
+fi
+if [[ -n "${CREATOR_KEYPAIR_OVERRIDE}" ]]; then
+  CREATOR_KEYPAIR="${CREATOR_KEYPAIR_OVERRIDE}"
+elif [[ ! -s "${CREATOR_KEYPAIR}" ]]; then
+  solana-keygen new --no-bip39-passphrase --silent --force -o "${CREATOR_KEYPAIR}"
+fi
 SOLVER_PUBKEY="$(solana-keygen pubkey "${SOLVER_KEYPAIR}")"
 SOLVER2_PUBKEY="$(solana-keygen pubkey "${SOLVER2_KEYPAIR}")"
 CREATOR_PUBKEY="$(solana-keygen pubkey "${CREATOR_KEYPAIR}")"
@@ -499,18 +512,20 @@ if [[ -n "${SOLANA_FUNDER_KEYPAIR}" ]]; then
 fi
 
 echo "funding Solana keypairs..." >&2
-ensure_min_lamports "${SOLVER_PUBKEY}" "${JUNO_E2E_MIN_SOLVER_LAMPORTS:-2000000000}" "solver" "${SOLVER_KEYPAIR}"
-ensure_min_lamports "${CREATOR_PUBKEY}" "${JUNO_E2E_MIN_CREATOR_LAMPORTS:-2000000000}" "creator" "${CREATOR_KEYPAIR}"
+ensure_min_lamports "${SOLVER_PUBKEY}" "${JUNO_E2E_MIN_SOLVER_LAMPORTS:-250000000}" "solver" "${SOLVER_KEYPAIR}"
+ensure_min_lamports "${CREATOR_PUBKEY}" "${JUNO_E2E_MIN_CREATOR_LAMPORTS:-200000000}" "creator" "${CREATOR_KEYPAIR}"
 
-min_solver2_lamports="${JUNO_E2E_MIN_SOLVER2_LAMPORTS:-500000000}"
+min_solver2_lamports="${JUNO_E2E_MIN_SOLVER2_LAMPORTS:-100000000}"
 solver2_balance_now="$(solana_balance_lamports "${SOLVER2_PUBKEY}")"
 if [[ ! "${solver2_balance_now}" =~ ^[0-9]+$ ]]; then solver2_balance_now="0"; fi
 if [[ "${solver2_balance_now}" -lt "${min_solver2_lamports}" ]]; then
   if [[ -n "${SOLANA_FUNDER_KEYPAIR}" ]]; then
     ensure_min_lamports "${SOLVER2_PUBKEY}" "${min_solver2_lamports}" "solver2" "${SOLVER2_KEYPAIR}"
   elif [[ -z "${SOLVER2_KEYPAIR_OVERRIDE}" ]]; then
-    echo "solver2 balance low (${solver2_balance_now} lamports); funding from solver..." >&2
-    solana -u "${SOLANA_RPC_URL}" transfer --allow-unfunded-recipient "${SOLVER2_PUBKEY}" 0.5 --keypair "${SOLVER_KEYPAIR}" >/dev/null
+    solver2_need_lamports="$((min_solver2_lamports - solver2_balance_now))"
+    solver2_need_sol="$(lamports_to_sol "${solver2_need_lamports}")"
+    echo "solver2 balance low (${solver2_balance_now} lamports); funding ${solver2_need_sol} SOL from solver..." >&2
+    solana -u "${SOLANA_RPC_URL}" transfer --allow-unfunded-recipient "${SOLVER2_PUBKEY}" "${solver2_need_sol}" --keypair "${SOLVER_KEYPAIR}" >/dev/null
   else
     echo "solver2 balance low; provide JUNO_E2E_SOLVER2_KEYPAIR with funds" >&2
     exit 1
