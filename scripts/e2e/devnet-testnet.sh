@@ -763,12 +763,18 @@ for idx in 1 2; do
     exit 1
   fi
 
-  witness_hex="$("${GO_NITRO}" witness --enclave-cid "${cid}" --enclave-port "${NITRO_PORT}" --deployment-id "${DEPLOYMENT_ID_HEX}" --junocash-chain-id "${JUNOCASH_CHAIN_ID}" --junocash-genesis-hash "${JUNOCASH_GENESIS_EXPECTED}")"
-  raw_bundle_hex="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove_attestation_bundle_v1 -- --witness-hex "${witness_hex}")"
-  bundle_hex="$(printf '%s\n' "${raw_bundle_hex}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
-  if [[ -z "${bundle_hex}" ]]; then
-    echo "failed to extract attestation bundle hex" >&2
-    exit 1
+  bundle_file="${WORKDIR}/op_bundle_${idx}_${DEPLOYMENT_ID_HEX}.hex"
+  if [[ -f "${bundle_file}" ]]; then
+    bundle_hex="$(tr -d ' \t\r\n' <"${bundle_file}")"
+  else
+    witness_hex="$("${GO_NITRO}" witness --enclave-cid "${cid}" --enclave-port "${NITRO_PORT}" --deployment-id "${DEPLOYMENT_ID_HEX}" --junocash-chain-id "${JUNOCASH_CHAIN_ID}" --junocash-genesis-hash "${JUNOCASH_GENESIS_EXPECTED}")"
+    raw_bundle_hex="$(cd "${ROOT}" && cargo run --release --locked --manifest-path risc0/attestation/host/Cargo.toml --features cuda --bin prove_attestation_bundle_v1 -- --witness-hex "${witness_hex}")"
+    bundle_hex="$(printf '%s\n' "${raw_bundle_hex}" | grep -E '^[0-9a-fA-F]+$' | tail -n 1 || true)"
+    if [[ -z "${bundle_hex}" ]]; then
+      echo "failed to extract attestation bundle hex" >&2
+      exit 1
+    fi
+    printf '%s\n' "${bundle_hex}" >"${bundle_file}"
   fi
 
   info="$("${GO_INTENTS}" orp-attestation-info --bundle-hex "${bundle_hex}")"
@@ -798,6 +804,7 @@ for idx in 1 2; do
 done
 
 echo "init ORP/CRP/IEP configs..." >&2
+ORP_CONFIG="$("${GO_INTENTS}" pda --program-id "${ORP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
 "${GO_INTENTS}" init-orp \
   --orp-program-id "${ORP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
@@ -809,6 +816,7 @@ echo "init ORP/CRP/IEP configs..." >&2
   --allowed-measurement "${OP_MEAS_1}" \
   --allowed-measurement "${OP_MEAS_2}" \
   --payer-keypair "${SOLVER_KEYPAIR}" >/dev/null
+wait_for_account "${ORP_CONFIG}" 60
 
 "${GO_INTENTS}" orp-register-operator \
   --orp-program-id "${ORP_PROGRAM_ID}" \
