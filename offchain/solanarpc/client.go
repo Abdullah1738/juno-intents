@@ -187,7 +187,14 @@ func (c *Client) AccountDataBase64(ctx context.Context, pubkey string) ([]byte, 
 			Data []any `json:"data"`
 		} `json:"value"`
 	}
-	if err := c.rpcCall(ctx, "getAccountInfo", []any{pubkey, map[string]any{"encoding": "base64"}}, &resp); err != nil {
+	params := []any{
+		pubkey,
+		map[string]any{
+			"encoding":   "base64",
+			"commitment": "confirmed",
+		},
+	}
+	if err := c.rpcCall(ctx, "getAccountInfo", params, &resp); err != nil {
 		return nil, err
 	}
 	if len(resp.Value.Data) < 1 {

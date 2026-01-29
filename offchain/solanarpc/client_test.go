@@ -100,6 +100,50 @@ func TestClient_RequestAirdrop(t *testing.T) {
 	}
 }
 
+func TestClient_AccountDataBase64(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+			Params []any  `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Method != "getAccountInfo" {
+			t.Fatalf("method=%q", req.Method)
+		}
+		if len(req.Params) != 2 {
+			t.Fatalf("params len=%d", len(req.Params))
+		}
+		if req.Params[0].(string) != "Pubkey111111111111111111111111111111111111" {
+			t.Fatalf("pubkey=%v", req.Params[0])
+		}
+		cfg, ok := req.Params[1].(map[string]any)
+		if !ok {
+			t.Fatalf("params[1] type=%T", req.Params[1])
+		}
+		if cfg["encoding"] != "base64" {
+			t.Fatalf("encoding=%v", cfg["encoding"])
+		}
+		if cfg["commitment"] != "confirmed" {
+			t.Fatalf("commitment=%v", cfg["commitment"])
+		}
+
+		// "YWJj" is "abc"
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{"value":{"data":["YWJj","base64"]}}}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, nil)
+	b, err := c.AccountDataBase64(context.Background(), "Pubkey111111111111111111111111111111111111")
+	if err != nil {
+		t.Fatalf("AccountDataBase64: %v", err)
+	}
+	if string(b) != "abc" {
+		t.Fatalf("b=%q, want abc", string(b))
+	}
+}
+
 func TestClient_ProgramAccountsByDataSizeBase64(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
