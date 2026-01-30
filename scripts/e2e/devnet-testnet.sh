@@ -176,6 +176,14 @@ if [[ -n "${RISC0_FEATURES}" && "${RISC0_FEATURES}" == *cuda* ]]; then
       export NVCC_PREPEND_FLAGS
     fi
   fi
+
+  # If we set NVCC_APPEND_FLAGS but leave NVCC_PREPEND_FLAGS unset, some RISC0 CUDA
+  # build scripts will not add an arch flag and nvcc defaults to sm_52, which is
+  # too old for CUDA atomics. Ensure a sane default.
+  if [[ -z "${NVCC_PREPEND_FLAGS:-}" ]]; then
+    NVCC_PREPEND_FLAGS="-arch=native"
+    export NVCC_PREPEND_FLAGS
+  fi
 fi
 
 retry() {
