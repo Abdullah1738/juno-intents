@@ -904,6 +904,8 @@ retry 5 3 "${GO_INTENTS}" init-crp \
   --operator "${OP_PUBKEY_1}" \
   --operator "${OP_PUBKEY_2}" \
   --payer-keypair "${SOLVER_KEYPAIR}"
+CRP_CONFIG="$("${GO_INTENTS}" pda --program-id "${CRP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
+wait_for_account "${CRP_CONFIG}" 60
 
 retry 5 3 "${GO_INTENTS}" init-iep \
   --iep-program-id "${IEP_PROGRAM_ID}" \
@@ -916,6 +918,8 @@ retry 5 3 "${GO_INTENTS}" init-iep \
   --verifier-entry "${VERIFIER_ENTRY_PDA}" \
   --verifier-program "${VERIFIER_PROGRAM_ID}" \
   --payer-keypair "${SOLVER_KEYPAIR}"
+IEP_CONFIG="$("${GO_INTENTS}" pda --program-id "${IEP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
+wait_for_account "${IEP_CONFIG}" 60
 
 echo "starting solvernet solvers (auto-fill)..." >&2
 SOLVERNET1_LISTEN="${JUNO_E2E_SOLVERNET1_LISTEN:-127.0.0.1:8081}"
@@ -1001,7 +1005,7 @@ echo "solver_a_pubkey=${SOLVER_A_PUBKEY}" >&2
 echo "intent_a=${INTENT_A}" >&2
 echo "fill_a=${FILL_A}" >&2
 
-"${GO_INTENTS}" iep-create-intent \
+retry 5 3 "${GO_INTENTS}" iep-create-intent \
   --iep-program-id "${IEP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --intent-nonce "${INTENT_NONCE_A}" \
@@ -1119,7 +1123,7 @@ echo "solver_b_pubkey=${SOLVER_B_PUBKEY}" >&2
 echo "intent_b=${INTENT_B}" >&2
 echo "fill_b=${FILL_B}" >&2
 
-"${GO_INTENTS}" iep-create-intent \
+retry 5 3 "${GO_INTENTS}" iep-create-intent \
   --iep-program-id "${IEP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --intent-nonce "${INTENT_NONCE_B}" \
