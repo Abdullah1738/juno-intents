@@ -560,17 +560,57 @@ echo "solver_pubkey=${SOLVER_PUBKEY}" >&2
 echo "solver2_pubkey=${SOLVER2_PUBKEY}" >&2
 echo "creator_pubkey=${CREATOR_PUBKEY}" >&2
 
-if [[ -n "${SOLANA_FUNDER_KEYPAIR}" ]]; then
-  FUNDER_PUBKEY="$(solana-keygen pubkey "${SOLANA_FUNDER_KEYPAIR}")"
-  echo "solana_funder_pubkey=${FUNDER_PUBKEY}" >&2
-fi
+	if [[ -n "${SOLANA_FUNDER_KEYPAIR}" ]]; then
+	  FUNDER_PUBKEY="$(solana-keygen pubkey "${SOLANA_FUNDER_KEYPAIR}")"
+	  echo "solana_funder_pubkey=${FUNDER_PUBKEY}" >&2
 
-echo "funding Solana keypairs..." >&2
-ensure_min_lamports "${SOLVER_PUBKEY}" "${JUNO_E2E_MIN_SOLVER_LAMPORTS:-250000000}" "solver" "${SOLVER_KEYPAIR}"
-ensure_min_lamports "${CREATOR_PUBKEY}" "${JUNO_E2E_MIN_CREATOR_LAMPORTS:-200000000}" "creator" "${CREATOR_KEYPAIR}"
+	  min_solver_lamports="${JUNO_E2E_MIN_SOLVER_LAMPORTS:-250000000}"
+	  min_creator_lamports="${JUNO_E2E_MIN_CREATOR_LAMPORTS:-200000000}"
+	  min_solver2_lamports="${JUNO_E2E_MIN_SOLVER2_LAMPORTS:-100000000}"
+	  funder_buffer_lamports="${JUNO_E2E_SOLANA_FUNDER_BUFFER_LAMPORTS:-50000000}"
 
-min_solver2_lamports="${JUNO_E2E_MIN_SOLVER2_LAMPORTS:-100000000}"
-solver2_balance_now="$(solana_balance_lamports "${SOLVER2_PUBKEY}")"
+	  if [[ ! "${min_solver_lamports}" =~ ^[0-9]+$ ]]; then min_solver_lamports="250000000"; fi
+	  if [[ ! "${min_creator_lamports}" =~ ^[0-9]+$ ]]; then min_creator_lamports="200000000"; fi
+	  if [[ ! "${min_solver2_lamports}" =~ ^[0-9]+$ ]]; then min_solver2_lamports="100000000"; fi
+	  if [[ ! "${funder_buffer_lamports}" =~ ^[0-9]+$ ]]; then funder_buffer_lamports="50000000"; fi
+
+	  funder_min_lamports="$((min_solver_lamports + min_creator_lamports + min_solver2_lamports + funder_buffer_lamports))"
+	  funder_min_sol="$(lamports_to_sol "${funder_min_lamports}")"
+
+	  funder_wait_timeout_secs="${JUNO_E2E_SOLANA_FUNDER_WAIT_TIMEOUT_SECS:-3600}"
+	  if ! [[ "${funder_wait_timeout_secs}" =~ ^[0-9]+$ ]] || [[ "${funder_wait_timeout_secs}" -le 0 ]]; then
+	    funder_wait_timeout_secs="3600"
+	  fi
+
+	  echo "waiting for solana funder balance >= ${funder_min_sol} SOL (lamports=${funder_min_lamports})..." >&2
+	  funder_poll_secs=10
+	  funder_elapsed=0
+	  funder_progress_secs=60
+	  while [[ "${funder_elapsed}" -lt "${funder_wait_timeout_secs}" ]]; do
+	    funder_balance_now="$(solana_balance_lamports "${FUNDER_PUBKEY}")"
+	    if [[ "${funder_balance_now}" =~ ^[0-9]+$ ]] && [[ "${funder_balance_now}" -ge "${funder_min_lamports}" ]]; then
+	      break
+	    fi
+	    if (( funder_elapsed % funder_progress_secs == 0 )); then
+	      fb_str="0.0"
+	      if [[ "${funder_balance_now}" =~ ^[0-9]+$ ]]; then fb_str="$(lamports_to_sol "${funder_balance_now}")"; fi
+	      echo "waiting for solana funder funds... balance=${fb_str} required=${funder_min_sol} elapsed=${funder_elapsed}s" >&2
+	    fi
+	    sleep "${funder_poll_secs}"
+	    funder_elapsed="$((funder_elapsed + funder_poll_secs))"
+	  done
+	  if [[ ! "${funder_balance_now}" =~ ^[0-9]+$ ]] || [[ "${funder_balance_now}" -lt "${funder_min_lamports}" ]]; then
+	    echo "solana funder not funded enough: pubkey=${FUNDER_PUBKEY} required_sol=${funder_min_sol}" >&2
+	    exit 1
+	  fi
+	fi
+
+	echo "funding Solana keypairs..." >&2
+	ensure_min_lamports "${SOLVER_PUBKEY}" "${JUNO_E2E_MIN_SOLVER_LAMPORTS:-250000000}" "solver" "${SOLVER_KEYPAIR}"
+	ensure_min_lamports "${CREATOR_PUBKEY}" "${JUNO_E2E_MIN_CREATOR_LAMPORTS:-200000000}" "creator" "${CREATOR_KEYPAIR}"
+
+	min_solver2_lamports="${JUNO_E2E_MIN_SOLVER2_LAMPORTS:-100000000}"
+	solver2_balance_now="$(solana_balance_lamports "${SOLVER2_PUBKEY}")"
 if [[ ! "${solver2_balance_now}" =~ ^[0-9]+$ ]]; then solver2_balance_now="0"; fi
 if [[ "${solver2_balance_now}" -lt "${min_solver2_lamports}" ]]; then
   if [[ -n "${SOLANA_FUNDER_KEYPAIR}" ]]; then
