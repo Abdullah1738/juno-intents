@@ -22,6 +22,17 @@ var (
 	ErrRPCError      = errors.New("solana rpc error")
 )
 
+type RPCError struct {
+	Code    int
+	Message string
+}
+
+func (e *RPCError) Error() string {
+	return fmt.Sprintf("%s: %d %s", ErrRPCError.Error(), e.Code, e.Message)
+}
+
+func (e *RPCError) Unwrap() error { return ErrRPCError }
+
 type Client struct {
 	rpcURL string
 	http   *http.Client
@@ -119,7 +130,7 @@ func (c *Client) rpcCall(ctx context.Context, method string, params any, out any
 		return fmt.Errorf("decode rpc response: %w", err)
 	}
 	if rr.Error != nil {
-		return fmt.Errorf("%w: %d %s", ErrRPCError, rr.Error.Code, rr.Error.Message)
+		return &RPCError{Code: rr.Error.Code, Message: rr.Error.Message}
 	}
 	if out == nil {
 		return nil

@@ -3,6 +3,7 @@ package solanarpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,6 +31,32 @@ func TestClient_Slot(t *testing.T) {
 	}
 	if got != 123 {
 		t.Fatalf("slot=%d, want 123", got)
+	}
+}
+
+func TestClient_RPCErrorType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","error":{"code":403,"message":"Access forbidden"}}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, nil)
+	_, err := c.Slot(context.Background())
+	if err == nil {
+		t.Fatalf("want error")
+	}
+	if !errors.Is(err, ErrRPCError) {
+		t.Fatalf("errors.Is(err, ErrRPCError)=false: %v", err)
+	}
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("errors.As(err, *RPCError)=false: %T %v", err, err)
+	}
+	if rpcErr.Code != 403 {
+		t.Fatalf("code=%d, want 403", rpcErr.Code)
+	}
+	if rpcErr.Message != "Access forbidden" {
+		t.Fatalf("message=%q, want %q", rpcErr.Message, "Access forbidden")
 	}
 }
 
