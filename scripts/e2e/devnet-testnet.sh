@@ -310,14 +310,14 @@ wait_for_account() {
   return 1
 }
 
-ensure_min_lamports() {
-  local pubkey="$1"
-  local min_lamports="$2"
-  local label="$3"
-  local kp_for_airdrop="$4"
+	ensure_min_lamports() {
+	  local pubkey="$1"
+	  local min_lamports="$2"
+	  local label="$3"
+	  local kp_for_airdrop="$4"
 
-  local bal_lamports
-  bal_lamports="$(solana_balance_lamports "${pubkey}")"
+	  local bal_lamports
+	  bal_lamports="$(solana_balance_lamports "${pubkey}")"
   if [[ -z "${bal_lamports}" ]]; then
     echo "${label} balance lookup failed (pubkey=${pubkey}); set SOLANA_RPC_URL to a reliable RPC and retry" >&2
     return 1
@@ -331,20 +331,26 @@ ensure_min_lamports() {
     return 0
   fi
 
-  local need_lamports="$((min_lamports - bal_lamports))"
+	  local need_lamports="$((min_lamports - bal_lamports))"
 
-  if [[ -n "${SOLANA_FUNDER_KEYPAIR}" ]]; then
-    local need_sol
-    need_sol="$(lamports_to_sol "${need_lamports}")"
-    echo "${label} balance low (${bal_lamports} lamports); funding ${need_sol} SOL from solana funder..." >&2
-    solana -u "${SOLANA_RPC_URL}" transfer --allow-unfunded-recipient "${pubkey}" "${need_sol}" --keypair "${SOLANA_FUNDER_KEYPAIR}" >/dev/null
-    wait_for_account "${pubkey}" 120 || true
-    return 0
-  fi
+	  if [[ -n "${SOLANA_FUNDER_KEYPAIR}" ]]; then
+	    local need_sol
+	    need_sol="$(lamports_to_sol "${need_lamports}")"
+	    echo "${label} balance low (${bal_lamports} lamports); funding ${need_sol} SOL from solana funder..." >&2
+	    local raw funder_pubkey
+	    if raw="$(solana -u "${SOLANA_RPC_URL}" transfer --allow-unfunded-recipient "${pubkey}" "${need_sol}" --keypair "${SOLANA_FUNDER_KEYPAIR}" 2>&1)"; then
+	      wait_for_account "${pubkey}" 120 || true
+	      return 0
+	    fi
+	    funder_pubkey="$(solana-keygen pubkey "${SOLANA_FUNDER_KEYPAIR}" 2>/dev/null || true)"
+	    echo "solana funder transfer failed (funder_pubkey=${funder_pubkey}):" >&2
+	    printf '%s\n' "${raw}" >&2
+	    echo "falling back to devnet airdrop..." >&2
+	  fi
 
-  local need_sol
-  need_sol="$(lamports_to_sol "${need_lamports}")"
-  echo "${label} balance low (${bal_lamports} lamports); requesting devnet airdrop (${need_sol} SOL)..." >&2
+	  local need_sol
+	  need_sol="$(lamports_to_sol "${need_lamports}")"
+	  echo "${label} balance low (${bal_lamports} lamports); requesting devnet airdrop (${need_sol} SOL)..." >&2
   airdrop "${pubkey}" "${need_sol}" "${kp_for_airdrop}"
 }
 
