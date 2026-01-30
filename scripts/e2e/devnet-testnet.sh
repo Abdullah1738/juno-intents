@@ -18,7 +18,15 @@ JUNOCASH_TESTNET_MODE="${JUNO_E2E_JUNOCASH_TESTNET_MODE:-${JUNO_TESTNET_MODE:-pu
 
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
-RISC0_FEATURES="${JUNO_E2E_RISC0_FEATURES-cuda}"
+# If explicitly set (even empty), honor it.
+# Otherwise: default to CUDA only when proving on-host.
+if [[ -n "${JUNO_E2E_RISC0_FEATURES+set}" ]]; then
+  RISC0_FEATURES="${JUNO_E2E_RISC0_FEATURES}"
+elif [[ "${JUNO_RISC0_USE_DOCKER:-0}" == "1" ]]; then
+  RISC0_FEATURES=""
+else
+  RISC0_FEATURES="cuda"
+fi
 
 risc0_prove_bundle() {
   local manifest="$1"
