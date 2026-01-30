@@ -848,12 +848,13 @@ z_sendmany_opid() {
 
   local opid
   opid="$(
-    python3 -c 'import re,sys
-raw=sys.stdin.read().strip()
+    python3 - "${raw}" 2>/dev/null <<'PY' || true
+import re,sys
+raw=sys.argv[1].strip()
 if not raw:
   raise SystemExit(1)
 raw=raw.strip().strip('"')
-m=re.search(r'(opid-[A-Za-z0-9-]+)', raw)
+m=re.search(r"(opid-[A-Za-z0-9-]+)", raw)
 if m:
   print(m.group(1))
   raise SystemExit(0)
@@ -861,7 +862,7 @@ if raw.startswith("opid-"):
   print(raw)
   raise SystemExit(0)
 raise SystemExit(1)
-' <<<"${raw}" 2>/dev/null || true
+PY
   )"
   if [[ -z "${opid}" ]]; then
     echo "failed to parse opid from z_sendmany output:" >&2
