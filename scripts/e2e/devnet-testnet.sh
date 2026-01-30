@@ -1024,7 +1024,7 @@ echo "waiting for solver fill (A)..." >&2
 wait_for_account "${FILL_A}" 120
 
 echo "sending JunoCash payment user->solver (amount=${PAYMENT_AMOUNT_A_STR})..." >&2
-recipients_a="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{\"address\":addr,\"amount\":float(amt)}]))' "${SOLVER_A_UA}" "${PAYMENT_AMOUNT_A_STR}")"
+recipients_a="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_A_UA}" "${PAYMENT_AMOUNT_A_STR}")"
 opid_a="$(jcli z_sendmany "${USER_UA}" "${recipients_a}" "${JUNOCASH_SEND_MINCONF}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
 txid_a="$(
   python3 - <<PY
@@ -1146,7 +1146,7 @@ if [[ "${SOLVER_B_UA}" != "${SOLVER_A_UA}" ]]; then
   echo "funding solver B so it can pay on JunoCash..." >&2
   fund_zat="$((AMOUNT_B_ZAT + 20000000))"
   fund_str="$(zat_to_junocash_amount "${fund_zat}")"
-  recipients_fund="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{\"address\":addr,\"amount\":float(amt)}]))' "${SOLVER_B_UA}" "${fund_str}")"
+  recipients_fund="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_B_UA}" "${fund_str}")"
   opid_fund="$(jcli z_sendmany "${USER_UA}" "${recipients_fund}" "${JUNOCASH_SEND_MINCONF}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
   python3 - <<PY >/dev/null || { echo "solver funding op failed" >&2; exit 1; }
 import json,subprocess,sys,time
@@ -1171,7 +1171,7 @@ PY
 fi
 
 echo "sending JunoCash payment solver->user (amount=${PAYMENT_AMOUNT_B_STR})..." >&2
-recipients_b="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{\"address\":addr,\"amount\":float(amt)}]))' "${USER_UA}" "${PAYMENT_AMOUNT_B_STR}")"
+recipients_b="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${USER_UA}" "${PAYMENT_AMOUNT_B_STR}")"
 opid_b="$(jcli z_sendmany "${SOLVER_B_UA}" "${recipients_b}" "${JUNOCASH_SEND_MINCONF}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
 txid_b="$(
   python3 - <<PY
