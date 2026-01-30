@@ -1299,7 +1299,22 @@ scripts/junocash/testnet/mine.sh 1 >/dev/null
 PAYMENT_HEIGHT_A="$(jcli getblockcount)"
 
 echo "finding solver note outindex (A)..." >&2
-ACTION_A="$(jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys\nnotes=json.load(sys.stdin)\ntxid=sys.argv[1].strip().lower()\nacct=int(sys.argv[2])\nfor n in notes:\n  if str(n.get(\"pool\"))!=\"orchard\":\n    continue\n  if str(n.get(\"txid\",\"\")).strip().lower()!=txid:\n    continue\n  if n.get(\"account\")!=acct or not n.get(\"spendable\"):\n    continue\n  print(n.get(\"outindex\")); sys.exit(0)\nsys.exit(1)\n' "${txid_a}" "${SOLVER_A_ACCOUNT}")" || { echo "failed to find action index (A)" >&2; exit 1; }
+ACTION_A="$(
+  jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys
+notes=json.load(sys.stdin)
+txid=sys.argv[1].strip().lower()
+acct=int(sys.argv[2])
+for n in notes:
+  if str(n.get("pool"))!="orchard":
+    continue
+  if str(n.get("txid","")).strip().lower()!=txid:
+    continue
+  if n.get("account")!=acct or not n.get("spendable"):
+    continue
+  print(n.get("outindex")); sys.exit(0)
+sys.exit(1)
+' "${txid_a}" "${SOLVER_A_ACCOUNT}"
+)" || { echo "failed to find action index (A)" >&2; exit 1; }
 
 echo "generating witness (A)..." >&2
 DATA_DIR="${JUNO_TESTNET_DATA_DIR_A}"
@@ -1448,7 +1463,22 @@ scripts/junocash/testnet/mine.sh 1 >/dev/null
 PAYMENT_HEIGHT_B="$(jcli getblockcount)"
 
 echo "finding user note outindex (B)..." >&2
-ACTION_B="$(jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys\nnotes=json.load(sys.stdin)\ntxid=sys.argv[1].strip().lower()\nacct=int(sys.argv[2])\nfor n in notes:\n  if str(n.get(\"pool\"))!=\"orchard\":\n    continue\n  if str(n.get(\"txid\",\"\")).strip().lower()!=txid:\n    continue\n  if n.get(\"account\")!=acct or not n.get(\"spendable\"):\n    continue\n  print(n.get(\"outindex\")); sys.exit(0)\nsys.exit(1)\n' "${txid_b}" "${USER_ACCOUNT}")" || { echo "failed to find action index (B)" >&2; exit 1; }
+ACTION_B="$(
+  jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys
+notes=json.load(sys.stdin)
+txid=sys.argv[1].strip().lower()
+acct=int(sys.argv[2])
+for n in notes:
+  if str(n.get("pool"))!="orchard":
+    continue
+  if str(n.get("txid","")).strip().lower()!=txid:
+    continue
+  if n.get("account")!=acct or not n.get("spendable"):
+    continue
+  print(n.get("outindex")); sys.exit(0)
+sys.exit(1)
+' "${txid_b}" "${USER_ACCOUNT}"
+)" || { echo "failed to find action index (B)" >&2; exit 1; }
 
 echo "generating witness (B, outgoing via solver ovk)..." >&2
 wallet_backup_file_b="walletwitness-b.dat"
@@ -1545,7 +1575,11 @@ spl_balance_amount() {
   local token_account="$1"
   local out
   out="$(spl-token -u "${SOLANA_RPC_URL}" balance --address "${token_account}" --output json-compact 2>/dev/null || true)"
-  python3 -c 'import json,sys\nraw=sys.stdin.read().strip()\nobj=json.loads(raw)\nprint(str(obj.get(\"amount\")))' <<<"${out}"
+  python3 -c 'import json,sys
+raw=sys.stdin.read().strip()
+obj=json.loads(raw)
+print(str(obj.get("amount")))
+' <<<"${out}"
 }
 
 echo "verifying balances..." >&2
