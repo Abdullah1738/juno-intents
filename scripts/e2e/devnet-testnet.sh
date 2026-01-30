@@ -574,34 +574,61 @@ echo "creator_pubkey=${CREATOR_PUBKEY}" >&2
 	  if [[ ! "${min_solver2_lamports}" =~ ^[0-9]+$ ]]; then min_solver2_lamports="100000000"; fi
 	  if [[ ! "${funder_buffer_lamports}" =~ ^[0-9]+$ ]]; then funder_buffer_lamports="50000000"; fi
 
-	  funder_min_lamports="$((min_solver_lamports + min_creator_lamports + min_solver2_lamports + funder_buffer_lamports))"
-	  funder_min_sol="$(lamports_to_sol "${funder_min_lamports}")"
+	  solver_balance_now="$(solana_balance_lamports "${SOLVER_PUBKEY}")"
+	  creator_balance_now="$(solana_balance_lamports "${CREATOR_PUBKEY}")"
+	  solver2_balance_now="$(solana_balance_lamports "${SOLVER2_PUBKEY}")"
+	  if [[ ! "${solver_balance_now}" =~ ^[0-9]+$ ]]; then solver_balance_now="0"; fi
+	  if [[ ! "${creator_balance_now}" =~ ^[0-9]+$ ]]; then creator_balance_now="0"; fi
+	  if [[ ! "${solver2_balance_now}" =~ ^[0-9]+$ ]]; then solver2_balance_now="0"; fi
 
-	  funder_wait_timeout_secs="${JUNO_E2E_SOLANA_FUNDER_WAIT_TIMEOUT_SECS:-3600}"
-	  if ! [[ "${funder_wait_timeout_secs}" =~ ^[0-9]+$ ]] || [[ "${funder_wait_timeout_secs}" -le 0 ]]; then
-	    funder_wait_timeout_secs="3600"
+	  need_solver_lamports="0"
+	  need_creator_lamports="0"
+	  need_solver2_lamports="0"
+	  if [[ "${solver_balance_now}" -lt "${min_solver_lamports}" ]]; then
+	    need_solver_lamports="$((min_solver_lamports - solver_balance_now))"
+	  fi
+	  if [[ "${creator_balance_now}" -lt "${min_creator_lamports}" ]]; then
+	    need_creator_lamports="$((min_creator_lamports - creator_balance_now))"
+	  fi
+	  if [[ "${solver2_balance_now}" -lt "${min_solver2_lamports}" ]]; then
+	    need_solver2_lamports="$((min_solver2_lamports - solver2_balance_now))"
 	  fi
 
-	  echo "waiting for solana funder balance >= ${funder_min_sol} SOL (lamports=${funder_min_lamports})..." >&2
-	  funder_poll_secs=10
-	  funder_elapsed=0
-	  funder_progress_secs=60
-	  while [[ "${funder_elapsed}" -lt "${funder_wait_timeout_secs}" ]]; do
-	    funder_balance_now="$(solana_balance_lamports "${FUNDER_PUBKEY}")"
-	    if [[ "${funder_balance_now}" =~ ^[0-9]+$ ]] && [[ "${funder_balance_now}" -ge "${funder_min_lamports}" ]]; then
-	      break
+	  funder_min_lamports="$((need_solver_lamports + need_creator_lamports + need_solver2_lamports))"
+	  if [[ "${funder_min_lamports}" -gt 0 ]]; then
+	    funder_min_lamports="$((funder_min_lamports + funder_buffer_lamports))"
+	  fi
+	  funder_min_sol="$(lamports_to_sol "${funder_min_lamports}")"
+
+	  if [[ "${funder_min_lamports}" -le 0 ]]; then
+	    echo "solana funder not needed (all accounts funded)" >&2
+	  else
+	    funder_wait_timeout_secs="${JUNO_E2E_SOLANA_FUNDER_WAIT_TIMEOUT_SECS:-3600}"
+	    if ! [[ "${funder_wait_timeout_secs}" =~ ^[0-9]+$ ]] || [[ "${funder_wait_timeout_secs}" -le 0 ]]; then
+	      funder_wait_timeout_secs="3600"
 	    fi
-	    if (( funder_elapsed % funder_progress_secs == 0 )); then
-	      fb_str="0.0"
-	      if [[ "${funder_balance_now}" =~ ^[0-9]+$ ]]; then fb_str="$(lamports_to_sol "${funder_balance_now}")"; fi
-	      echo "waiting for solana funder funds... balance=${fb_str} required=${funder_min_sol} elapsed=${funder_elapsed}s" >&2
+
+	    echo "waiting for solana funder balance >= ${funder_min_sol} SOL (lamports=${funder_min_lamports})..." >&2
+	    funder_poll_secs=10
+	    funder_elapsed=0
+	    funder_progress_secs=60
+	    while [[ "${funder_elapsed}" -lt "${funder_wait_timeout_secs}" ]]; do
+	      funder_balance_now="$(solana_balance_lamports "${FUNDER_PUBKEY}")"
+	      if [[ "${funder_balance_now}" =~ ^[0-9]+$ ]] && [[ "${funder_balance_now}" -ge "${funder_min_lamports}" ]]; then
+	        break
+	      fi
+	      if (( funder_elapsed % funder_progress_secs == 0 )); then
+	        fb_str="0.0"
+	        if [[ "${funder_balance_now}" =~ ^[0-9]+$ ]]; then fb_str="$(lamports_to_sol "${funder_balance_now}")"; fi
+	        echo "waiting for solana funder funds... balance=${fb_str} required=${funder_min_sol} elapsed=${funder_elapsed}s" >&2
+	      fi
+	      sleep "${funder_poll_secs}"
+	      funder_elapsed="$((funder_elapsed + funder_poll_secs))"
+	    done
+	    if [[ ! "${funder_balance_now}" =~ ^[0-9]+$ ]] || [[ "${funder_balance_now}" -lt "${funder_min_lamports}" ]]; then
+	      echo "solana funder not funded enough: pubkey=${FUNDER_PUBKEY} required_sol=${funder_min_sol}" >&2
+	      exit 1
 	    fi
-	    sleep "${funder_poll_secs}"
-	    funder_elapsed="$((funder_elapsed + funder_poll_secs))"
-	  done
-	  if [[ ! "${funder_balance_now}" =~ ^[0-9]+$ ]] || [[ "${funder_balance_now}" -lt "${funder_min_lamports}" ]]; then
-	    echo "solana funder not funded enough: pubkey=${FUNDER_PUBKEY} required_sol=${funder_min_sol}" >&2
-	    exit 1
 	  fi
 	fi
 
