@@ -631,6 +631,45 @@ scripts/junocash/testnet/up.sh >/dev/null
 
 jcli() { scripts/junocash/testnet/cli.sh "$@"; }
 
+z_sendmany_opid() {
+  local from="$1"
+  local recipients_json="$2"
+  local minconf="${3:-1}"
+
+  local raw
+  if ! raw="$(jcli z_sendmany "${from}" "${recipients_json}" "${minconf}" 2>&1)"; then
+    echo "z_sendmany failed:" >&2
+    printf '%s\n' "${raw}" >&2
+    return 1
+  fi
+
+  local opid
+  opid="$(
+    python3 - <<'PY'
+import re,sys
+raw=sys.stdin.read().strip()
+if not raw:
+  raise SystemExit(1)
+raw=raw.strip().strip('"')
+m=re.search(r'(opid-[A-Za-z0-9-]+)', raw)
+if m:
+  print(m.group(1))
+  raise SystemExit(0)
+if raw.startswith("opid-"):
+  print(raw)
+  raise SystemExit(0)
+raise SystemExit(1)
+PY
+      <<<"${raw}" 2>/dev/null || true
+  )"
+  if [[ -z "${opid}" ]]; then
+    echo "failed to parse opid from z_sendmany output:" >&2
+    printf '%s\n' "${raw}" >&2
+    return 1
+  fi
+  printf '%s\n' "${opid}"
+}
+
 wait_for_wallet_scan_complete() {
   local wait_secs="${1:-3600}"
   local elapsed=0
@@ -1025,7 +1064,7 @@ wait_for_account "${FILL_A}" 120
 
 echo "sending JunoCash payment user->solver (amount=${PAYMENT_AMOUNT_A_STR})..." >&2
 recipients_a="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_A_UA}" "${PAYMENT_AMOUNT_A_STR}")"
-opid_a="$(jcli z_sendmany "${USER_UA}" "${recipients_a}" "${JUNOCASH_SEND_MINCONF}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
+opid_a="$(retry 5 3 z_sendmany_opid "${USER_UA}" "${recipients_a}" "${JUNOCASH_SEND_MINCONF}")"
 txid_a="$(
   python3 - <<PY
 import json,subprocess,sys,time
@@ -1147,7 +1186,7 @@ if [[ "${SOLVER_B_UA}" != "${SOLVER_A_UA}" ]]; then
   fund_zat="$((AMOUNT_B_ZAT + 20000000))"
   fund_str="$(zat_to_junocash_amount "${fund_zat}")"
   recipients_fund="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_B_UA}" "${fund_str}")"
-  opid_fund="$(jcli z_sendmany "${USER_UA}" "${recipients_fund}" "${JUNOCASH_SEND_MINCONF}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
+  opid_fund="$(retry 5 3 z_sendmany_opid "${USER_UA}" "${recipients_fund}" "${JUNOCASH_SEND_MINCONF}")"
   python3 - <<PY >/dev/null || { echo "solver funding op failed" >&2; exit 1; }
 import json,subprocess,sys,time
 opid='${opid_fund}'
@@ -1172,7 +1211,7 @@ fi
 
 echo "sending JunoCash payment solver->user (amount=${PAYMENT_AMOUNT_B_STR})..." >&2
 recipients_b="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${USER_UA}" "${PAYMENT_AMOUNT_B_STR}")"
-opid_b="$(jcli z_sendmany "${SOLVER_B_UA}" "${recipients_b}" "${JUNOCASH_SEND_MINCONF}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["opid"])')"
+opid_b="$(retry 5 3 z_sendmany_opid "${SOLVER_B_UA}" "${recipients_b}" "${JUNOCASH_SEND_MINCONF}")"
 txid_b="$(
   python3 - <<PY
 import json,subprocess,sys,time
