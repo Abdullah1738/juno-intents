@@ -780,7 +780,8 @@ for target in "${SOLVER_TA}" "${SOLVER2_TA}" "${CREATOR_TA}"; do
   spl-token -u "${SOLANA_RPC_URL}" mint "${MINT}" 1000000 "${target}" --mint-authority "${SOLVER_KEYPAIR}" --fee-payer "${SOLVER_KEYPAIR}" >/dev/null
 done
 
-slot="$(curl -fsS -X POST -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"getLatestBlockhash"}' "${SOLANA_RPC_URL}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["context"]["slot"])' | tr -d '\r\n ' )"
+latest_blockhash_json="$(retry 10 3 curl -fsS -X POST -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"getLatestBlockhash"}' "${SOLANA_RPC_URL}")"
+slot="$(printf '%s' "${latest_blockhash_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["context"]["slot"])' | tr -d '\r\n ' )"
 EXPIRY_SLOT="$((slot + 5000))"
 echo "expiry_slot=${EXPIRY_SLOT}" >&2
 
