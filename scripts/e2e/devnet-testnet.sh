@@ -1083,6 +1083,7 @@ wait_for_account "${IEP_CONFIG}" 60
 echo "starting solvernet solvers (auto-fill)..." >&2
 SOLVERNET1_LISTEN="${JUNO_E2E_SOLVERNET1_LISTEN:-127.0.0.1:8081}"
 SOLVERNET2_LISTEN="${JUNO_E2E_SOLVERNET2_LISTEN:-127.0.0.1:8082}"
+SOLVERNET_POLL_INTERVAL="${JUNO_E2E_SOLVERNET_POLL_INTERVAL:-10s}"
 SOLVERNET1_QUOTE_URL="http://${SOLVERNET1_LISTEN}/v1/quote"
 SOLVERNET2_QUOTE_URL="http://${SOLVERNET2_LISTEN}/v1/quote"
 SOLVERNET1_ANN_URL="http://${SOLVERNET1_LISTEN}/v1/announcement"
@@ -1103,6 +1104,7 @@ SOLVERNET2_SPREAD="${JUNO_E2E_SOLVERNET2_SPREAD_BPS:-500}"
   --price-zat-per-token-unit "${SOLVERNET1_PRICE}" \
   --spread-bps "${SOLVERNET1_SPREAD}" \
   --orchard-receiver-bytes-hex "${SOLVER1_ORCHARD_RECEIVER_HEX}" \
+  --poll-interval "${SOLVERNET_POLL_INTERVAL}" \
   --keypair "${SOLVER_KEYPAIR}" \
   >"${WORKDIR}/solvernet1.log" 2>&1 &
 SOLVERNET1_PID="$!"
@@ -1117,6 +1119,7 @@ SOLVERNET1_PID="$!"
   --price-zat-per-token-unit "${SOLVERNET2_PRICE}" \
   --spread-bps "${SOLVERNET2_SPREAD}" \
   --orchard-receiver-bytes-hex "${SOLVER2_ORCHARD_RECEIVER_HEX}" \
+  --poll-interval "${SOLVERNET_POLL_INTERVAL}" \
   --keypair "${SOLVER2_KEYPAIR}" \
   >"${WORKDIR}/solvernet2.log" 2>&1 &
 SOLVERNET2_PID="$!"

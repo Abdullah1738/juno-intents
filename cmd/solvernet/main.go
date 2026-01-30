@@ -366,30 +366,57 @@ func runAutoFillLoop(
 	solverTokenAccount solana.Pubkey,
 	interval time.Duration,
 ) {
-	if interval <= 0 {
-		interval = 2 * time.Second
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
 	splTokenProgramID := mustParsePubkey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 
 	signers := map[solana.Pubkey]ed25519.PrivateKey{
 		solverPubkey: solverPriv,
 	}
 
-	for {
+	sleepCtx := func(d time.Duration) bool {
+		if d <= 0 {
+			return true
+		}
+		t := time.NewTimer(d)
+		defer t.Stop()
 		select {
 		case <-ctx.Done():
+			return false
+		case <-t.C:
+			return true
+		}
+	}
+
+	baseInterval := interval
+	if baseInterval <= 0 {
+		baseInterval = 2 * time.Second
+	}
+	wait := baseInterval
+
+	for {
+		if !sleepCtx(wait) {
 			return
-		case <-ticker.C:
 		}
 
 		accounts, err := rpc.ProgramAccountsByDataSizeBase64(ctx, iepProgram.Base58(), iep.IntentV3Len)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "autofill: getProgramAccounts: %v\n", err)
+			var rpcErr *solanarpc.RPCError
+			if errors.As(err, &rpcErr) && (rpcErr.Code == 403 || rpcErr.Code == 429) {
+				// Public RPCs can temporarily block program account scans; back off
+				// exponentially to avoid hammering the endpoint.
+				wait *= 2
+				if wait < 10*time.Second {
+					wait = 10 * time.Second
+				}
+				if wait > 2*time.Minute {
+					wait = 2 * time.Minute
+				}
+			} else {
+				wait = baseInterval
+			}
 			continue
 		}
+		wait = baseInterval
 
 		for _, pa := range accounts {
 			intentPK, err := solana.ParsePubkey(pa.Pubkey)
