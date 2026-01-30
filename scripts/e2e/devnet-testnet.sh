@@ -759,21 +759,18 @@ fi
 
 prefund_min_zat="$(juno_amount_to_zat "${prefund_amount_ok}")"
 
-balance_zat() {
-  local acct="$1"
-  local minconf="$2"
-  local raw out
+	balance_zat() {
+	  local acct="$1"
+	  local minconf="$2"
+	  local raw out
 
-  if ! [[ "${minconf}" =~ ^[0-9]+$ ]]; then
-    minconf="1"
-  fi
-  if [[ "${minconf}" -lt 1 ]]; then
-    minconf="1"
-  fi
+	  if ! [[ "${minconf}" =~ ^[0-9]+$ ]]; then
+	    minconf="1"
+	  fi
 
-  raw="$(jcli z_getbalanceforaccount "${acct}" "${minconf}" 2>/dev/null || true)"
-  out="$(
-    python3 -c 'import json,sys
+	  raw="$(jcli z_getbalanceforaccount "${acct}" "${minconf}" 2>/dev/null || true)"
+	  out="$(
+	    python3 -c 'import json,sys
 try:
   j=json.load(sys.stdin)
 except Exception:
@@ -795,26 +792,28 @@ except Exception:
     return 1
   fi
   printf '%s\n' "${out}"
-}
+	}
 
-current_any_zat="$(balance_zat "${USER_ACCOUNT}" 1 2>/dev/null || true)"
-if [[ ! "${current_any_zat}" =~ ^[0-9]+$ ]]; then current_any_zat="0"; fi
-if [[ "${current_any_zat}" -lt "${prefund_min_zat}" ]]; then
-  echo "wallet needs funding: send >=${prefund_amount_ok} JunoCash testnet to:" >&2
-  echo "fund_user_ua=${USER_UA}" >&2
+	# minconf=0 includes unconfirmed orchard notes. We accept this for prefunding
+	# so the E2E can proceed and later mine enough confirmations for spending.
+	current_any_zat="$(balance_zat "${USER_ACCOUNT}" 0 2>/dev/null || true)"
+	if [[ ! "${current_any_zat}" =~ ^[0-9]+$ ]]; then current_any_zat="0"; fi
+	if [[ "${current_any_zat}" -lt "${prefund_min_zat}" ]]; then
+	  echo "wallet needs funding: send >=${prefund_amount_ok} JunoCash testnet to:" >&2
+	  echo "fund_user_ua=${USER_UA}" >&2
   if ! [[ "${JUNOCASH_TESTNET_FUND_TIMEOUT_SECS}" =~ ^[0-9]+$ ]] || [[ "${JUNOCASH_TESTNET_FUND_TIMEOUT_SECS}" -le 0 ]]; then
     JUNOCASH_TESTNET_FUND_TIMEOUT_SECS="3600"
   fi
   poll_secs=5
-  elapsed=0
-  progress_secs=30
-  while [[ "${elapsed}" -lt "${JUNOCASH_TESTNET_FUND_TIMEOUT_SECS}" ]]; do
-    wait_for_wallet_scan_complete 60 || true
-    current_any_zat="$(balance_zat "${USER_ACCOUNT}" 1 2>/dev/null || true)"
-    if [[ "${current_any_zat}" =~ ^[0-9]+$ ]] && [[ "${current_any_zat}" -ge "${prefund_min_zat}" ]]; then
-      break
-    fi
-    if (( elapsed % progress_secs == 0 )); then
+	  elapsed=0
+	  progress_secs=30
+	  while [[ "${elapsed}" -lt "${JUNOCASH_TESTNET_FUND_TIMEOUT_SECS}" ]]; do
+	    wait_for_wallet_scan_complete 60 || true
+	    current_any_zat="$(balance_zat "${USER_ACCOUNT}" 0 2>/dev/null || true)"
+	    if [[ "${current_any_zat}" =~ ^[0-9]+$ ]] && [[ "${current_any_zat}" -ge "${prefund_min_zat}" ]]; then
+	      break
+	    fi
+	    if (( elapsed % progress_secs == 0 )); then
       cur_str="0.0"
       if [[ "${current_any_zat}" =~ ^[0-9]+$ ]]; then cur_str="$(zat_to_junocash_amount "${current_any_zat}")"; fi
       echo "waiting for funds... balance=${cur_str} required=${prefund_amount_ok} elapsed=${elapsed}s" >&2
