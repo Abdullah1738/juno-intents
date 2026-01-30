@@ -788,10 +788,27 @@ for target in "${SOLVER_TA}" "${SOLVER2_TA}" "${CREATOR_TA}"; do
   spl-token -u "${SOLANA_RPC_URL}" mint "${MINT}" 1000000 "${target}" --mint-authority "${SOLVER_KEYPAIR}" --fee-payer "${SOLVER_KEYPAIR}" >/dev/null
 done
 
-latest_blockhash_json="$(retry 10 3 curl -fsS -X POST -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"getLatestBlockhash"}' "${SOLANA_RPC_URL}")"
-slot="$(printf '%s' "${latest_blockhash_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["context"]["slot"])' | tr -d '\r\n ' )"
-EXPIRY_SLOT="$((slot + 5000))"
-echo "expiry_slot=${EXPIRY_SLOT}" >&2
+EXPIRY_SLOT_DELTA="${JUNO_E2E_EXPIRY_SLOT_DELTA:-20000}"
+if ! [[ "${EXPIRY_SLOT_DELTA}" =~ ^[0-9]+$ ]] || [[ "${EXPIRY_SLOT_DELTA}" -le 0 ]]; then
+  echo "invalid JUNO_E2E_EXPIRY_SLOT_DELTA: ${EXPIRY_SLOT_DELTA}" >&2
+  exit 2
+fi
+
+solana_current_slot() {
+  local latest_blockhash_json
+  latest_blockhash_json="$(retry 10 3 curl -fsS -X POST -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"getLatestBlockhash"}' "${SOLANA_RPC_URL}")"
+  printf '%s' "${latest_blockhash_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["context"]["slot"])' | tr -d '\r\n '
+}
+
+solana_expiry_slot() {
+  local slot
+  slot="$(solana_current_slot)"
+  if ! [[ "${slot}" =~ ^[0-9]+$ ]]; then
+    echo "failed to read solana slot from rpc" >&2
+    exit 1
+  fi
+  echo "$((slot + EXPIRY_SLOT_DELTA))"
+}
 
 echo "preparing JunoCash testnet data dir..." >&2
 export JUNO_TESTNET_DATA_DIR_A="${WORKDIR}/junocash-testnet-a"
@@ -1209,6 +1226,8 @@ select_solver_by_pubkey() {
 
 echo "=== Direction A (JunoCash -> wJUNO) ===" >&2
 INTENT_NONCE_A="$(rand_hex32)"
+EXPIRY_SLOT_A="$(solana_expiry_slot)"
+echo "expiry_slot_a=${EXPIRY_SLOT_A} (delta=${EXPIRY_SLOT_DELTA})" >&2
 FILL_ID_A_HEX="$("${GO_INTENTS}" pda --program-id "${IEP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --intent-nonce "${INTENT_NONCE_A}" --print fill-id-hex)"
 INTENT_A="$("${GO_INTENTS}" pda --program-id "${IEP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --intent-nonce "${INTENT_NONCE_A}" --print intent)"
 FILL_A="$("${GO_INTENTS}" pda --program-id "${IEP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --intent-nonce "${INTENT_NONCE_A}" --print fill)"
@@ -1220,7 +1239,7 @@ rfq_a="$("${GO_SOLVERNET}" rfq \
   --mint "${MINT}" \
   --net-amount "${NET_AMOUNT_A}" \
   --solana-recipient "${CREATOR_PUBKEY}" \
-  --intent-expiry-slot "${EXPIRY_SLOT}" \
+  --intent-expiry-slot "${EXPIRY_SLOT_A}" \
   --announcement-url "${SOLVERNET1_ANN_URL}" \
   --announcement-url "${SOLVERNET2_ANN_URL}")"
 printf '%s\n' "${rfq_a}" >"${WORKDIR}/rfq_a.json"
@@ -1240,7 +1259,7 @@ retry 5 3 "${GO_INTENTS}" iep-create-intent \
   --mint "${MINT}" \
   --solana-recipient "${CREATOR_PUBKEY}" \
   --net-amount "${NET_AMOUNT_A}" \
-  --expiry-slot "${EXPIRY_SLOT}" \
+  --expiry-slot "${EXPIRY_SLOT_A}" \
   --solver "${SOLVER_A_PUBKEY}" \
   --receiver-tag "${RECEIVER_TAG_A}" \
   --junocash-amount "${AMOUNT_A_ZAT}" \
@@ -1325,6 +1344,8 @@ fi
 
 echo "=== Direction B (wJUNO -> JunoCash) ===" >&2
 INTENT_NONCE_B="$(rand_hex32)"
+EXPIRY_SLOT_B="$(solana_expiry_slot)"
+echo "expiry_slot_b=${EXPIRY_SLOT_B} (delta=${EXPIRY_SLOT_DELTA})" >&2
 FILL_ID_B_HEX="$("${GO_INTENTS}" pda --program-id "${IEP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --intent-nonce "${INTENT_NONCE_B}" --print fill-id-hex)"
 INTENT_B="$("${GO_INTENTS}" pda --program-id "${IEP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --intent-nonce "${INTENT_NONCE_B}" --print intent)"
 FILL_B="$("${GO_INTENTS}" pda --program-id "${IEP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --intent-nonce "${INTENT_NONCE_B}" --print fill)"
@@ -1338,7 +1359,7 @@ rfq_b="$("${GO_SOLVERNET}" rfq \
   --mint "${MINT}" \
   --net-amount "${NET_AMOUNT_B}" \
   --solana-recipient "${CREATOR_PUBKEY}" \
-  --intent-expiry-slot "${EXPIRY_SLOT}" \
+  --intent-expiry-slot "${EXPIRY_SLOT_B}" \
   --announcement-url "${SOLVERNET1_ANN_URL}" \
   --announcement-url "${SOLVERNET2_ANN_URL}")"
 printf '%s\n' "${rfq_b}" >"${WORKDIR}/rfq_b.json"
@@ -1358,7 +1379,7 @@ retry 5 3 "${GO_INTENTS}" iep-create-intent \
   --mint "${MINT}" \
   --solana-recipient "${CREATOR_PUBKEY}" \
   --net-amount "${NET_AMOUNT_B}" \
-  --expiry-slot "${EXPIRY_SLOT}" \
+  --expiry-slot "${EXPIRY_SLOT_B}" \
   --solver "${SOLVER_B_PUBKEY}" \
   --receiver-tag "${RECEIVER_TAG_B}" \
   --junocash-amount "${AMOUNT_B_ZAT}" \
