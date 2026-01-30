@@ -130,6 +130,24 @@ need_cmd cargo
 need_cmd go
 need_cmd curl
 
+# Prefer a modern GCC on Amazon Linux 2; older libstdc++ lacks some C++17
+# algorithms (e.g. inclusive_scan/exclusive_scan) used by RISC0 native kernels.
+if [[ -z "${CC:-}" ]]; then
+  if command -v gcc10-gcc >/dev/null; then
+    CC="gcc10-gcc"
+  elif command -v gcc-10 >/dev/null; then
+    CC="gcc-10"
+  fi
+fi
+if [[ -z "${CXX:-}" ]]; then
+  if command -v gcc10-g++ >/dev/null; then
+    CXX="gcc10-g++"
+  elif command -v g++-10 >/dev/null; then
+    CXX="g++-10"
+  fi
+fi
+export CC CXX
+
 retry() {
   local attempts="${1:-5}"
   local delay_secs="${2:-3}"
