@@ -44,6 +44,7 @@ KEEP_INSTANCE="${JUNO_E2E_KEEP_INSTANCE:-0}"
 SOLANA_FUNDER_KEYPAIR_B64="${JUNO_E2E_SOLANA_FUNDER_KEYPAIR_B64:-}"
 SOLANA_FUNDER_MIN_SOL="${JUNO_E2E_SOLANA_FUNDER_MIN_SOL:-2}"
 SOLANA_FUNDER_WAIT_TIMEOUT_SECS="${JUNO_E2E_SOLANA_FUNDER_WAIT_TIMEOUT_SECS:-3600}"
+SOLANA_RPC_URL_OVERRIDE="${JUNO_E2E_SOLANA_RPC_URL:-}"
 
 JUNOCASH_TESTNET_PREFUND_AMOUNT="${JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT:-}"
 JUNOCASH_TESTNET_FUND_TIMEOUT_SECS="${JUNO_E2E_JUNOCASH_TESTNET_FUND_TIMEOUT_SECS:-}"
@@ -86,6 +87,7 @@ Environment:
   JUNO_SOLANA_VERSION            (default: v1.18.26)
 
   JUNO_E2E_KEEP_INSTANCE         (default: 0; set to 1 to keep instance for debugging)
+  JUNO_E2E_SOLANA_RPC_URL        (optional; override Solana RPC URL used by the E2E runner)
   JUNO_E2E_SOLANA_FUNDER_KEYPAIR_B64 (optional; base64(keypair.json) used to fund devnet SOL without airdrops)
   JUNO_E2E_SOLANA_FUNDER_MIN_SOL (default: 2; wait until funder has at least this many SOL)
   JUNO_E2E_SOLANA_FUNDER_WAIT_TIMEOUT_SECS (default: 3600)
@@ -444,10 +446,12 @@ sleep 5
 echo "SSM phase 2: run 2 enclaves + init keys + run e2e..." >&2
 export BASE_DEPLOYMENT DEPLOYMENTS_FILE KMS_KEY_ID KMS_VSOCK_PORT ENCLAVE_PORT ENCLAVE_CID1 ENCLAVE_CID2 ENCLAVE_MEM_MIB ENCLAVE_CPU_COUNT
 export SOLANA_FUNDER_KEYPAIR_B64 SOLANA_FUNDER_MIN_SOL SOLANA_FUNDER_WAIT_TIMEOUT_SECS
+export SOLANA_RPC_URL_OVERRIDE
 export JUNOCASH_TESTNET_PREFUND_AMOUNT JUNOCASH_TESTNET_FUND_TIMEOUT_SECS JUNOCASH_SEND_MINCONF
 PHASE2_CMDS="$(
   python3 - <<'PY'
 import json,os
+import shlex
 from decimal import Decimal
 region=os.environ["REGION"]
 base=os.environ["BASE_DEPLOYMENT"]
@@ -460,8 +464,7 @@ cid2=os.environ["ENCLAVE_CID2"]
 mem=os.environ["ENCLAVE_MEM_MIB"]
 cpu=os.environ["ENCLAVE_CPU_COUNT"]
 funder_b64=os.environ.get("SOLANA_FUNDER_KEYPAIR_B64","")
-funder_min_sol=os.environ.get("SOLANA_FUNDER_MIN_SOL","6")
-funder_wait_timeout=os.environ.get("SOLANA_FUNDER_WAIT_TIMEOUT_SECS","3600")
+solana_rpc_url=os.environ.get("SOLANA_RPC_URL_OVERRIDE","").strip()
 juno_prefund_amt=os.environ.get("JUNOCASH_TESTNET_PREFUND_AMOUNT","")
 juno_fund_timeout=os.environ.get("JUNOCASH_TESTNET_FUND_TIMEOUT_SECS","")
 juno_send_minconf=os.environ.get("JUNOCASH_SEND_MINCONF","")
@@ -470,12 +473,6 @@ decode_cmd = ":"
 if funder_b64.strip():
   # base64(keypair.json) of a funded devnet account
   decode_cmd = "printf '%s' '" + "".join(funder_b64.split()) + "' | tr -d ' \\t\\r\\n' | base64 -d > \"${FUNDER_KP}\""
-
-min_sol = Decimal(funder_min_sol or "6")
-min_lamports = int(min_sol * Decimal(1_000_000_000))
-wait_timeout_secs = int(funder_wait_timeout or "3600")
-poll_secs = 10
-attempts = max(1, wait_timeout_secs // poll_secs)
 
 cmds=[
   "set -eu",
@@ -493,13 +490,12 @@ cmds=[
   "if [ -f /usr/local/etc/profile.d/nitro-cli-env.sh ]; then . /usr/local/etc/profile.d/nitro-cli-env.sh; fi",
   "cd /tmp/juno-intents",
   "mkdir -p tmp",
+  *([f"export SOLANA_RPC_URL={shlex.quote(solana_rpc_url)}"] if solana_rpc_url else []),
   "FUNDER_KP=./tmp/solana-funder.json",
   decode_cmd,
   "if [ ! -s \"${FUNDER_KP}\" ]; then solana-keygen new --no-bip39-passphrase --silent --force -o \"${FUNDER_KP}\"; fi",
   "FUNDER_PUBKEY=\"$(solana-keygen pubkey \"${FUNDER_KP}\")\"",
   "echo \"solana_funder_pubkey=${FUNDER_PUBKEY}\" >&2",
-  f"echo 'waiting for solana funder balance >= {min_sol} SOL (lamports={min_lamports})...' >&2",
-  f"bal=0; for i in $(seq 1 {attempts}); do bal=\"$(solana -u https://api.devnet.solana.com balance \"${{FUNDER_PUBKEY}}\" --lamports 2>/dev/null | python3 -c 'import re,sys; m=re.search(r\"(\\\\d+)\", sys.stdin.read()); print(m.group(1) if m else \"0\")')\"; if [ \"${{bal}}\" -ge {min_lamports} ]; then break; fi; if (( i % 6 == 0 )); then echo \"funder_balance_lamports=${{bal}}\" >&2; fi; sleep {poll_secs}; done; if [ \"${{bal}}\" -lt {min_lamports} ]; then echo \"solana funder not funded (pubkey=${{FUNDER_PUBKEY}})\" >&2; exit 1; fi",
   # Configure enclave allocator (the CLI package on AL2 doesn't include `nitro-cli configure`).
   f"sudo mkdir -p /etc/nitro_enclaves && "
   f"printf '%s\\n' '---' \"memory_mib: {int(mem)*2}\" \"cpu_count: {int(cpu)*2}\" | sudo tee /etc/nitro_enclaves/allocator.yaml >/dev/null && "

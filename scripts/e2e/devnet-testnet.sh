@@ -314,8 +314,49 @@ trap cleanup EXIT
 
 echo "workdir: ${WORKDIR}" >&2
 echo "base_deployment: ${BASE_DEPLOYMENT}" >&2
-echo "solana_rpc_url: ${SOLANA_RPC_URL}" >&2
+redact_url() {
+  python3 - "$1" <<'PY'
+import sys
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+raw = sys.argv[1]
+try:
+  p = urlsplit(raw)
+except Exception:
+  print(raw)
+  raise SystemExit(0)
+
+qs = parse_qsl(p.query, keep_blank_values=True)
+redacted = []
+for k, v in qs:
+  lk = (k or "").lower()
+  if lk in ("api-key", "api_key", "apikey", "token") or ("api" in lk and "key" in lk):
+    redacted.append((k, "[redacted]" if v else ""))
+  else:
+    redacted.append((k, v))
+
+query = urlencode(redacted)
+print(urlunsplit((p.scheme, p.netloc, p.path, query, p.fragment)))
+PY
+}
+echo "solana_rpc_url: $(redact_url "${SOLANA_RPC_URL}")" >&2
 echo "junocash_chain: ${JUNOCASH_CHAIN}" >&2
+
+echo "checking Solana RPC health..." >&2
+for _ in $(seq 1 5); do
+  if curl -fsS -X POST -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' \
+    "${SOLANA_RPC_URL}" >/dev/null; then
+    break
+  fi
+  sleep 2
+done
+if ! curl -fsS -X POST -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' \
+  "${SOLANA_RPC_URL}" >/dev/null; then
+  echo "Solana RPC health check failed; set SOLANA_RPC_URL/--rpc-url to a working endpoint and retry" >&2
+  exit 1
+fi
 
 airdrop() {
   local pubkey="$1"
@@ -435,12 +476,14 @@ if isinstance(v, int):
     sleep "${delay_secs}"
   done
 
-  raw="$(solana -u "${SOLANA_RPC_URL}" balance "${pubkey}" --lamports 2>/dev/null || true)"
-  python3 -c 'import re,sys
+  if raw="$(solana -u "${SOLANA_RPC_URL}" balance "${pubkey}" --lamports 2>/dev/null)"; then
+    python3 -c 'import re,sys
 raw=sys.stdin.read()
 m=re.search(r"(\\d+)", raw)
 print(m.group(1) if m else "")
 ' <<<"${raw}" 2>/dev/null || true
+  fi
+  return 0
 }
 
 parse_spl_address() {
@@ -625,9 +668,18 @@ echo "creator_pubkey=${CREATOR_PUBKEY}" >&2
 	  solver_balance_now="$(solana_balance_lamports "${SOLVER_PUBKEY}")"
 	  creator_balance_now="$(solana_balance_lamports "${CREATOR_PUBKEY}")"
 	  solver2_balance_now="$(solana_balance_lamports "${SOLVER2_PUBKEY}")"
-	  if [[ ! "${solver_balance_now}" =~ ^[0-9]+$ ]]; then solver_balance_now="0"; fi
-	  if [[ ! "${creator_balance_now}" =~ ^[0-9]+$ ]]; then creator_balance_now="0"; fi
-	  if [[ ! "${solver2_balance_now}" =~ ^[0-9]+$ ]]; then solver2_balance_now="0"; fi
+	  if [[ -z "${solver_balance_now}" || ! "${solver_balance_now}" =~ ^[0-9]+$ ]]; then
+	    echo "solver balance lookup failed; set SOLANA_RPC_URL to a reliable RPC and retry" >&2
+	    exit 1
+	  fi
+	  if [[ -z "${creator_balance_now}" || ! "${creator_balance_now}" =~ ^[0-9]+$ ]]; then
+	    echo "creator balance lookup failed; set SOLANA_RPC_URL to a reliable RPC and retry" >&2
+	    exit 1
+	  fi
+	  if [[ -z "${solver2_balance_now}" || ! "${solver2_balance_now}" =~ ^[0-9]+$ ]]; then
+	    echo "solver2 balance lookup failed; set SOLANA_RPC_URL to a reliable RPC and retry" >&2
+	    exit 1
+	  fi
 
 	  need_solver_lamports="0"
 	  need_creator_lamports="0"
@@ -662,6 +714,10 @@ echo "creator_pubkey=${CREATOR_PUBKEY}" >&2
 	    funder_progress_secs=60
 	    while [[ "${funder_elapsed}" -lt "${funder_wait_timeout_secs}" ]]; do
 	      funder_balance_now="$(solana_balance_lamports "${FUNDER_PUBKEY}")"
+	      if [[ -z "${funder_balance_now}" || ! "${funder_balance_now}" =~ ^[0-9]+$ ]]; then
+	        echo "solana funder balance lookup failed; set SOLANA_RPC_URL to a reliable RPC and retry" >&2
+	        exit 1
+	      fi
 	      if [[ "${funder_balance_now}" =~ ^[0-9]+$ ]] && [[ "${funder_balance_now}" -ge "${funder_min_lamports}" ]]; then
 	        break
 	      fi
