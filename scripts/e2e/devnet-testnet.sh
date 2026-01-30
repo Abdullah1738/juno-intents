@@ -848,8 +848,7 @@ z_sendmany_opid() {
 
   local opid
   opid="$(
-    python3 - <<'PY'
-import re,sys
+    python3 -c 'import re,sys
 raw=sys.stdin.read().strip()
 if not raw:
   raise SystemExit(1)
@@ -862,8 +861,7 @@ if raw.startswith("opid-"):
   print(raw)
   raise SystemExit(0)
 raise SystemExit(1)
-PY
-      <<<"${raw}" 2>/dev/null || true
+' <<<"${raw}" 2>/dev/null || true
   )"
   if [[ -z "${opid}" ]]; then
     echo "failed to parse opid from z_sendmany output:" >&2
