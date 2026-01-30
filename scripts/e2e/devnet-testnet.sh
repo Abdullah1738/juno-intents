@@ -148,6 +148,28 @@ if [[ -z "${CXX:-}" ]]; then
 fi
 export CC CXX
 
+if [[ -n "${RISC0_FEATURES}" && "${RISC0_FEATURES}" == *cuda* ]]; then
+  if command -v nvcc >/dev/null; then
+    NVCC="${NVCC:-$(command -v nvcc)}"
+    export NVCC
+  fi
+
+  if [[ -z "${NVCC_APPEND_FLAGS:-}" ]]; then
+    NVCC_APPEND_FLAGS="-DNDEBUG"
+    export NVCC_APPEND_FLAGS
+  fi
+
+  if [[ -z "${NVCC_PREPEND_FLAGS:-}" ]] && command -v nvidia-smi >/dev/null; then
+    ccap="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n 1 | tr -d ' \t\r\n' || true)"
+    if [[ "${ccap}" =~ ^[0-9]+\\.[0-9]+$ ]]; then
+      major="${ccap%.*}"
+      minor="${ccap#*.}"
+      NVCC_PREPEND_FLAGS="-arch=sm_${major}${minor}"
+      export NVCC_PREPEND_FLAGS
+    fi
+  fi
+fi
+
 retry() {
   local attempts="${1:-5}"
   local delay_secs="${2:-3}"
