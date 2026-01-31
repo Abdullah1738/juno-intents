@@ -407,6 +407,28 @@ wait_for_account() {
   return 1
 }
 
+wait_for_account_owner() {
+  local pubkey="$1"
+  local expected_owner="$2"
+  local attempts="${3:-60}"
+  local owner=""
+
+  for _ in $(seq 1 "${attempts}"); do
+    owner="$(
+      solana -u "${SOLANA_RPC_URL}" account "${pubkey}" --output json-compact 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("owner",""))' 2>/dev/null \
+        || true
+    )"
+    if [[ -n "${owner}" && "${owner}" == "${expected_owner}" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "account owner mismatch after waiting: pubkey=${pubkey} expected=${expected_owner} got=${owner}" >&2
+  return 1
+}
+
 	ensure_min_lamports() {
 	  local pubkey="$1"
 	  local min_lamports="$2"
@@ -1120,6 +1142,7 @@ retry 5 3 "${GO_INTENTS}" init-orp \
   --allowed-measurement "${OP_MEAS_2}" \
   --payer-keypair "${SOLVER_KEYPAIR}"
 wait_for_account "${ORP_CONFIG}" 60
+wait_for_account_owner "${ORP_CONFIG}" "${ORP_PROGRAM_ID}" 60
 
 retry 5 3 "${GO_INTENTS}" orp-register-operator \
   --orp-program-id "${ORP_PROGRAM_ID}" \
@@ -1146,6 +1169,7 @@ retry 5 3 "${GO_INTENTS}" init-crp \
   --payer-keypair "${SOLVER_KEYPAIR}"
 CRP_CONFIG="$("${GO_INTENTS}" pda --program-id "${CRP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
 wait_for_account "${CRP_CONFIG}" 60
+wait_for_account_owner "${CRP_CONFIG}" "${CRP_PROGRAM_ID}" 60
 
 retry 5 3 "${GO_INTENTS}" init-iep \
   --iep-program-id "${IEP_PROGRAM_ID}" \
@@ -1160,6 +1184,7 @@ retry 5 3 "${GO_INTENTS}" init-iep \
   --payer-keypair "${SOLVER_KEYPAIR}"
 IEP_CONFIG="$("${GO_INTENTS}" pda --program-id "${IEP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
 wait_for_account "${IEP_CONFIG}" 60
+wait_for_account_owner "${IEP_CONFIG}" "${IEP_PROGRAM_ID}" 60
 
 echo "starting solvernet solvers (auto-fill)..." >&2
 SOLVERNET1_LISTEN="${JUNO_E2E_SOLVERNET1_LISTEN:-127.0.0.1:8081}"
@@ -1250,7 +1275,7 @@ echo "solver_a_pubkey=${SOLVER_A_PUBKEY}" >&2
 echo "intent_a=${INTENT_A}" >&2
 echo "fill_a=${FILL_A}" >&2
 
-retry 5 3 "${GO_INTENTS}" iep-create-intent \
+retry 20 5 "${GO_INTENTS}" iep-create-intent \
   --iep-program-id "${IEP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --intent-nonce "${INTENT_NONCE_A}" \
@@ -1335,7 +1360,8 @@ elif command -v db5.3_dump >/dev/null; then
   db_dump_flag=(--db-dump "db5.3_dump")
 fi
 
-wallet_backup_file_a="walletwitness-a.dat"
+wallet_backup_file_a="walletwitnessadat"
+rm -f "${DATA_DIR}/${wallet_backup_file_a}" >/dev/null 2>&1 || true
 jcli backupwallet "${wallet_backup_file_a}" >/dev/null
 WALLET_WITNESS_DAT_A="${DATA_DIR}/${wallet_backup_file_a}"
 WITNESS_A="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wallet_witness_v1 -- \
@@ -1385,7 +1411,7 @@ echo "solver_b_pubkey=${SOLVER_B_PUBKEY}" >&2
 echo "intent_b=${INTENT_B}" >&2
 echo "fill_b=${FILL_B}" >&2
 
-retry 5 3 "${GO_INTENTS}" iep-create-intent \
+retry 20 5 "${GO_INTENTS}" iep-create-intent \
   --iep-program-id "${IEP_PROGRAM_ID}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --intent-nonce "${INTENT_NONCE_B}" \
@@ -1481,7 +1507,8 @@ sys.exit(1)
 )" || { echo "failed to find action index (B)" >&2; exit 1; }
 
 echo "generating witness (B, outgoing via solver ovk)..." >&2
-wallet_backup_file_b="walletwitness-b.dat"
+wallet_backup_file_b="walletwitnessbdat"
+rm -f "${DATA_DIR}/${wallet_backup_file_b}" >/dev/null 2>&1 || true
 jcli backupwallet "${wallet_backup_file_b}" >/dev/null
 WALLET_WITNESS_DAT_B="${DATA_DIR}/${wallet_backup_file_b}"
 WITNESS_B="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/host/Cargo.toml --bin wallet_witness_v1 -- \
