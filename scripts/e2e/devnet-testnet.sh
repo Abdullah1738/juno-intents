@@ -1354,12 +1354,15 @@ if [[ -z "${WALLET_DAT}" ]]; then echo "wallet.dat not found under ${DATA_DIR}" 
 db_dump_flag=()
 if [[ "${JUNO_DB_DUMP:-}" != "" ]]; then
   db_dump_flag=(--db-dump "${JUNO_DB_DUMP}")
+elif [[ "$(uname -s)" == "Linux" && -x "${ROOT}/scripts/berkeleydb/install-db-dump.sh" ]]; then
+  db_dump_path="$("${ROOT}/scripts/berkeleydb/install-db-dump.sh")"
+  db_dump_flag=(--db-dump "${db_dump_path}")
 elif [[ -x "/opt/homebrew/opt/berkeley-db/bin/db_dump" ]]; then
   db_dump_flag=(--db-dump "/opt/homebrew/opt/berkeley-db/bin/db_dump")
-elif command -v db_dump >/dev/null; then
-  db_dump_flag=(--db-dump "db_dump")
 elif command -v db5.3_dump >/dev/null; then
   db_dump_flag=(--db-dump "db5.3_dump")
+elif command -v db_dump >/dev/null; then
+  db_dump_flag=(--db-dump "db_dump")
 fi
 
 wallet_backup_file_a="walletwitnessadat"
