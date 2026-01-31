@@ -1424,6 +1424,13 @@ func base64Encode(encoding string, src []byte) string {
 	return string(dst)
 }
 
+func shouldSubmitOrchardRoot(last [32]byte, haveLast bool, current [32]byte) bool {
+	if !haveLast {
+		return true
+	}
+	return last != current
+}
+
 func cmdRun(argv []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -1639,6 +1646,8 @@ func cmdRun(argv []string) error {
 	var pending []pendingCheckpoint
 
 	nextHeight := startHeight
+	var lastSubmittedOrchardRoot [32]byte
+	haveLastSubmittedOrchardRoot := false
 
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -1700,6 +1709,11 @@ func cmdRun(argv []string) error {
 					cancel()
 					return fmt.Errorf("parse previousblockhash: %w", err)
 				}
+			}
+
+			if !shouldSubmitOrchardRoot(lastSubmittedOrchardRoot, haveLastSubmittedOrchardRoot, orchardRoot) {
+				nextHeight++
+				continue
 			}
 
 			obs := protocol.CheckpointObservation{
@@ -1821,6 +1835,9 @@ func cmdRun(argv []string) error {
 				}
 				fmt.Fprintf(os.Stderr, "tx %s\n", sigStr)
 			}
+
+			lastSubmittedOrchardRoot = orchardRoot
+			haveLastSubmittedOrchardRoot = true
 
 			if !submitOnly {
 				pending = append(pending, pendingCheckpoint{Height: nextHeight, OrchardRoot: orchardRoot})

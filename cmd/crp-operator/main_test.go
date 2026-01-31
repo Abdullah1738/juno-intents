@@ -36,6 +36,23 @@ func TestEncodeCrpFinalize_Golden(t *testing.T) {
 	}
 }
 
+func TestShouldSubmitOrchardRoot(t *testing.T) {
+	var r1 [32]byte
+	var r2 [32]byte
+	r1[0] = 0x01
+	r2[0] = 0x02
+
+	if !shouldSubmitOrchardRoot([32]byte{}, false, r1) {
+		t.Fatalf("expected first orchard root to be submitted")
+	}
+	if shouldSubmitOrchardRoot(r1, true, r1) {
+		t.Fatalf("expected consecutive duplicate orchard root to be skipped")
+	}
+	if !shouldSubmitOrchardRoot(r1, true, r2) {
+		t.Fatalf("expected changed orchard root to be submitted")
+	}
+}
+
 func TestDecodeCrpCheckpointV1_Golden(t *testing.T) {
 	var b [114]byte
 	b[0] = 1 // version
