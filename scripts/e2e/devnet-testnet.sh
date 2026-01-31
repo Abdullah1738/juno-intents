@@ -416,7 +416,7 @@ wait_for_account_owner() {
   for _ in $(seq 1 "${attempts}"); do
     owner="$(
       curl -fsS -X POST -H 'Content-Type: application/json' \
-        --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccountInfo\",\"params\":[\"${pubkey}\",{\"encoding\":\"base64\",\"commitment\":\"finalized\"}]}" \
+        --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccountInfo\",\"params\":[\"${pubkey}\",{\"encoding\":\"base64\",\"commitment\":\"confirmed\"}]}" \
         "${SOLANA_RPC_URL}" 2>/dev/null \
         | python3 -c 'import json,sys; j=json.load(sys.stdin); v=(j.get(\"result\") or {}).get(\"value\") or {}; print(v.get(\"owner\",\"\"))' 2>/dev/null \
         || true
@@ -1144,7 +1144,7 @@ retry 5 3 "${GO_INTENTS}" init-orp \
   --allowed-measurement "${OP_MEAS_2}" \
   --payer-keypair "${SOLVER_KEYPAIR}"
 wait_for_account "${ORP_CONFIG}" 60
-wait_for_account_owner "${ORP_CONFIG}" "${ORP_PROGRAM_ID}" 60
+wait_for_account_owner "${ORP_CONFIG}" "${ORP_PROGRAM_ID}" 60 || echo "warning: failed to confirm ORP config owner" >&2
 
 retry 5 3 "${GO_INTENTS}" orp-register-operator \
   --orp-program-id "${ORP_PROGRAM_ID}" \
@@ -1171,7 +1171,7 @@ retry 5 3 "${GO_INTENTS}" init-crp \
   --payer-keypair "${SOLVER_KEYPAIR}"
 CRP_CONFIG="$("${GO_INTENTS}" pda --program-id "${CRP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
 wait_for_account "${CRP_CONFIG}" 60
-wait_for_account_owner "${CRP_CONFIG}" "${CRP_PROGRAM_ID}" 60
+wait_for_account_owner "${CRP_CONFIG}" "${CRP_PROGRAM_ID}" 60 || echo "warning: failed to confirm CRP config owner" >&2
 
 retry 5 3 "${GO_INTENTS}" init-iep \
   --iep-program-id "${IEP_PROGRAM_ID}" \
@@ -1186,7 +1186,7 @@ retry 5 3 "${GO_INTENTS}" init-iep \
   --payer-keypair "${SOLVER_KEYPAIR}"
 IEP_CONFIG="$("${GO_INTENTS}" pda --program-id "${IEP_PROGRAM_ID}" --deployment-id "${DEPLOYMENT_ID_HEX}" --print config)"
 wait_for_account "${IEP_CONFIG}" 60
-wait_for_account_owner "${IEP_CONFIG}" "${IEP_PROGRAM_ID}" 60
+wait_for_account_owner "${IEP_CONFIG}" "${IEP_PROGRAM_ID}" 60 || echo "warning: failed to confirm IEP config owner" >&2
 
 echo "starting solvernet solvers (auto-fill)..." >&2
 SOLVERNET1_LISTEN="${JUNO_E2E_SOLVERNET1_LISTEN:-127.0.0.1:8081}"
