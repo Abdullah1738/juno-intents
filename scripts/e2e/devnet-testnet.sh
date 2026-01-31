@@ -415,8 +415,10 @@ wait_for_account_owner() {
 
   for _ in $(seq 1 "${attempts}"); do
     owner="$(
-      solana -u "${SOLANA_RPC_URL}" account "${pubkey}" --output json-compact 2>/dev/null \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("owner",""))' 2>/dev/null \
+      curl -fsS -X POST -H 'Content-Type: application/json' \
+        --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccountInfo\",\"params\":[\"${pubkey}\",{\"encoding\":\"base64\",\"commitment\":\"finalized\"}]}" \
+        "${SOLANA_RPC_URL}" 2>/dev/null \
+        | python3 -c 'import json,sys; j=json.load(sys.stdin); v=(j.get(\"result\") or {}).get(\"value\") or {}; print(v.get(\"owner\",\"\"))' 2>/dev/null \
         || true
     )"
     if [[ -n "${owner}" && "${owner}" == "${expected_owner}" ]]; then
