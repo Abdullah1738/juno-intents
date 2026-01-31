@@ -612,7 +612,7 @@ receiver_tag_for() {
   local fill_id_hex="$2"
   local receiver_bytes_hex="$3"
   python3 - "${deployment_hex}" "${fill_id_hex}" "${receiver_bytes_hex}" <<'PY'
- import hashlib,sys
+import hashlib,sys
 def strip0x(s: str) -> str:
   s=(s or "").strip()
   if s.lower().startswith("0x"):
