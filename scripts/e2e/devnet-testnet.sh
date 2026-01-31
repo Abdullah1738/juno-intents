@@ -929,6 +929,46 @@ print("0")
   return 1
 }
 
+orchard_action_index_for_txid() {
+  local txid="$1"
+  local account="$2"
+
+  jcli z_listunspent 0 9999999 false | python3 -c 'import json,sys
+notes=json.load(sys.stdin)
+txid=sys.argv[1].strip().lower()
+acct=int(sys.argv[2])
+for n in notes:
+  if str(n.get("pool"))!="orchard":
+    continue
+  if str(n.get("txid","")).strip().lower()!=txid:
+    continue
+  if n.get("account")!=acct:
+    continue
+  print(n.get("outindex")); sys.exit(0)
+sys.exit(1)
+' "${txid}" "${account}"
+}
+
+wait_for_orchard_action_index() {
+  local txid="$1"
+  local account="$2"
+  local attempts="${3:-120}"
+
+  local n=1
+  while true; do
+    if outindex="$(orchard_action_index_for_txid "${txid}" "${account}" 2>/dev/null)"; then
+      printf '%s\n' "${outindex}"
+      return 0
+    fi
+    if (( n >= attempts )); then
+      echo "failed to find action index: txid=${txid} account=${account}" >&2
+      return 1
+    fi
+    sleep 1
+    n="$((n + 1))"
+  done
+}
+
 echo "mining one block (sync + baseline)..." >&2
 scripts/junocash/testnet/mine.sh 1 >/dev/null
 
@@ -1332,22 +1372,8 @@ scripts/junocash/testnet/mine.sh 1 >/dev/null
 PAYMENT_HEIGHT_A="$(jcli getblockcount)"
 
 echo "finding solver note outindex (A)..." >&2
-ACTION_A="$(
-  jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys
-notes=json.load(sys.stdin)
-txid=sys.argv[1].strip().lower()
-acct=int(sys.argv[2])
-for n in notes:
-  if str(n.get("pool"))!="orchard":
-    continue
-  if str(n.get("txid","")).strip().lower()!=txid:
-    continue
-  if n.get("account")!=acct or not n.get("spendable"):
-    continue
-  print(n.get("outindex")); sys.exit(0)
-sys.exit(1)
-' "${txid_a}" "${SOLVER_A_ACCOUNT}"
-)" || { echo "failed to find action index (A)" >&2; exit 1; }
+wait_for_wallet_scan_complete "${JUNO_E2E_WALLET_SCAN_TIMEOUT_SECS:-3600}" || true
+ACTION_A="$(wait_for_orchard_action_index "${txid_a}" "${SOLVER_A_ACCOUNT}" 120)" || { echo "failed to find action index (A)" >&2; exit 1; }
 
 echo "generating witness (A)..." >&2
 DATA_DIR="${JUNO_TESTNET_DATA_DIR_A}"
@@ -1500,22 +1526,8 @@ scripts/junocash/testnet/mine.sh 1 >/dev/null
 PAYMENT_HEIGHT_B="$(jcli getblockcount)"
 
 echo "finding user note outindex (B)..." >&2
-ACTION_B="$(
-  jcli z_listunspent 1 9999999 false | python3 -c 'import json,sys
-notes=json.load(sys.stdin)
-txid=sys.argv[1].strip().lower()
-acct=int(sys.argv[2])
-for n in notes:
-  if str(n.get("pool"))!="orchard":
-    continue
-  if str(n.get("txid","")).strip().lower()!=txid:
-    continue
-  if n.get("account")!=acct or not n.get("spendable"):
-    continue
-  print(n.get("outindex")); sys.exit(0)
-sys.exit(1)
-' "${txid_b}" "${USER_ACCOUNT}"
-)" || { echo "failed to find action index (B)" >&2; exit 1; }
+wait_for_wallet_scan_complete "${JUNO_E2E_WALLET_SCAN_TIMEOUT_SECS:-3600}" || true
+ACTION_B="$(wait_for_orchard_action_index "${txid_b}" "${USER_ACCOUNT}" 120)" || { echo "failed to find action index (B)" >&2; exit 1; }
 
 echo "generating witness (B, outgoing via solver ovk)..." >&2
 wallet_backup_file_b="walletwitnessbdat"
