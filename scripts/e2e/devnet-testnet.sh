@@ -612,10 +612,16 @@ receiver_tag_for() {
   local fill_id_hex="$2"
   local receiver_bytes_hex="$3"
   python3 - "${deployment_hex}" "${fill_id_hex}" "${receiver_bytes_hex}" <<'PY'
-import hashlib,sys
-dep=bytes.fromhex(sys.argv[1].strip().removeprefix("0x"))
-fill=bytes.fromhex(sys.argv[2].strip().removeprefix("0x"))
-recv=bytes.fromhex(sys.argv[3].strip().removeprefix("0x"))
+ import hashlib,sys
+def strip0x(s: str) -> str:
+  s=(s or "").strip()
+  if s.lower().startswith("0x"):
+    return s[2:]
+  return s
+
+dep=bytes.fromhex(strip0x(sys.argv[1]))
+fill=bytes.fromhex(strip0x(sys.argv[2]))
+recv=bytes.fromhex(strip0x(sys.argv[3]))
 if len(dep)!=32 or len(fill)!=32 or len(recv)!=43:
   raise SystemExit("invalid input lengths")
 prefix=b"JUNO_INTENTS\x00iep_receiver_tag\x00"+(1).to_bytes(2,"little")
