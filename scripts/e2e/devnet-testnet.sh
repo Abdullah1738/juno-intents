@@ -1467,13 +1467,13 @@ retry 20 5 "${GO_INTENTS}" iep-create-intent \
 echo "waiting for solver fill (B)..." >&2
 wait_for_account "${FILL_B}" 120
 
-if [[ "${SOLVER_B_UA}" != "${SOLVER_A_UA}" ]]; then
-  echo "funding solver B so it can pay on JunoCash..." >&2
-  fund_zat="$((AMOUNT_B_ZAT + 20000000))"
-  fund_str="$(zat_to_junocash_amount "${fund_zat}")"
-  recipients_fund="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_B_UA}" "${fund_str}")"
-  opid_fund="$(retry 5 3 z_sendmany_opid "${USER_UA}" "${recipients_fund}" "${JUNOCASH_SEND_MINCONF}")"
-  python3 - <<PY >/dev/null || { echo "solver funding op failed" >&2; exit 1; }
+  if [[ "${SOLVER_B_UA}" != "${SOLVER_A_UA}" ]]; then
+    echo "funding solver B so it can pay on JunoCash..." >&2
+    fund_zat="$((AMOUNT_B_ZAT + 20000000))"
+    fund_str="$(zat_to_junocash_amount "${fund_zat}")"
+    recipients_fund="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${SOLVER_B_UA}" "${fund_str}")"
+    opid_fund="$(retry 5 3 z_sendmany_opid "${USER_UA}" "${recipients_fund}" 1)"
+    python3 - <<PY >/dev/null || { echo "solver funding op failed" >&2; exit 1; }
 import json,subprocess,sys,time
 opid='${opid_fund}'
 for _ in range(1800):
@@ -1488,12 +1488,12 @@ for _ in range(1800):
   if it.get('status')=='success':
     sys.exit(0)
   if it.get('status')=='failed':
-    sys.exit(1)
+    print(json.dumps(it)); sys.exit(1)
   time.sleep(1)
-sys.exit(1)
+print(''); sys.exit(1)
 PY
-  scripts/junocash/testnet/mine.sh "${JUNOCASH_SEND_MINCONF}" >/dev/null
-fi
+    scripts/junocash/testnet/mine.sh "${JUNOCASH_SEND_MINCONF}" >/dev/null
+  fi
 
 echo "sending JunoCash payment solver->user (amount=${PAYMENT_AMOUNT_B_STR})..." >&2
 recipients_b="$(python3 -c 'import json,sys; addr=sys.argv[1]; amt=sys.argv[2]; print(json.dumps([{"address":addr,"amount":float(amt)}]))' "${USER_UA}" "${PAYMENT_AMOUNT_B_STR}")"
