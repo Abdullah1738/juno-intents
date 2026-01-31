@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestClient_Slot(t *testing.T) {
@@ -89,6 +90,34 @@ func TestClient_BalanceLamports(t *testing.T) {
 	}
 	if got != 123 {
 		t.Fatalf("balance=%d, want 123", got)
+	}
+}
+
+func TestClient_RetryOnRateLimit(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","error":{"code":-32429,"message":"rate limited"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":123}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, &http.Client{Timeout: 10 * time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	got, err := c.Slot(ctx)
+	if err != nil {
+		t.Fatalf("Slot: %v", err)
+	}
+	if got != 123 {
+		t.Fatalf("slot=%d, want 123", got)
+	}
+	if attempts < 2 {
+		t.Fatalf("attempts=%d, want >=2", attempts)
 	}
 }
 

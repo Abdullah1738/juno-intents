@@ -90,6 +90,28 @@ type rpcResponse struct {
 	Error   *rpcError       `json:"error,omitempty"`
 }
 
+func isRateLimitedRPCError(code int, message string) bool {
+	if code == 429 || code == -32429 {
+		return true
+	}
+	msg := strings.ToLower(strings.TrimSpace(message))
+	return strings.Contains(msg, "rate") && strings.Contains(msg, "limit")
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
 func (c *Client) rpcCall(ctx context.Context, method string, params any, out any) error {
 	if c == nil {
 		return errors.New("nil rpc client")
@@ -108,40 +130,87 @@ func (c *Client) rpcCall(ctx context.Context, method string, params any, out any
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.rpcURL, bytes.NewReader(reqBody))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
+	backoff := 1 * time.Second
+	maxBackoff := 10 * time.Second
+	maxAttempts := 7
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.rpcURL, bytes.NewReader(reqBody))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return err
-	}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return err
+		}
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return readErr
+		}
 
-	var rr rpcResponse
-	if err := json.Unmarshal(raw, &rr); err != nil {
-		return fmt.Errorf("decode rpc response: %w", err)
-	}
-	if rr.Error != nil {
-		return &RPCError{Code: rr.Error.Code, Message: rr.Error.Message}
-	}
-	if out == nil {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			lastErr = fmt.Errorf("%w: http status=%d", ErrRPCError, resp.StatusCode)
+			if attempt < maxAttempts {
+				if err := sleepWithContext(ctx, backoff); err != nil {
+					return err
+				}
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+			return lastErr
+		}
+
+		var rr rpcResponse
+		if err := json.Unmarshal(raw, &rr); err != nil {
+			lastErr = fmt.Errorf("decode rpc response: %w", err)
+			if attempt < maxAttempts {
+				if err := sleepWithContext(ctx, backoff); err != nil {
+					return err
+				}
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+			return lastErr
+		}
+		if rr.Error != nil {
+			lastErr = &RPCError{Code: rr.Error.Code, Message: rr.Error.Message}
+			if isRateLimitedRPCError(rr.Error.Code, rr.Error.Message) && attempt < maxAttempts {
+				if err := sleepWithContext(ctx, backoff); err != nil {
+					return err
+				}
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+			return lastErr
+		}
+		if out == nil {
+			return nil
+		}
+		if len(rr.Result) == 0 {
+			return fmt.Errorf("%w: empty result", ErrRPCError)
+		}
+		if err := json.Unmarshal(rr.Result, out); err != nil {
+			return fmt.Errorf("decode result: %w", err)
+		}
 		return nil
 	}
-	if len(rr.Result) == 0 {
-		return fmt.Errorf("%w: empty result", ErrRPCError)
+	if lastErr != nil {
+		return lastErr
 	}
-	if err := json.Unmarshal(rr.Result, out); err != nil {
-		return fmt.Errorf("decode result: %w", err)
-	}
-	return nil
+	return fmt.Errorf("%w: no response", ErrRPCError)
 }
 
 func (c *Client) LatestBlockhash(ctx context.Context) ([32]byte, error) {
