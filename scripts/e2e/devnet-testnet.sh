@@ -1574,14 +1574,14 @@ for cid in "${NITRO_CID1}" "${NITRO_CID2}"; do
     --once --submit-only >/dev/null
 done
 
-"${GO_CRP}" finalize-pending \
-  --crp-program-id "${CRP_PROGRAM_ID}" \
-  --deployment-id "${DEPLOYMENT_ID_HEX}" \
-  --payer-keypair "${SOLVER_KEYPAIR}" \
-  --config-scan-limit 200 \
-  --scan-limit 300 \
-  --max-checkpoints 100 \
-  --priority-level "${PRIORITY_LEVEL}" >/dev/null
+  "${GO_CRP}" finalize-pending \
+    --crp-program-id "${CRP_PROGRAM_ID}" \
+    --deployment-id "${DEPLOYMENT_ID_HEX}" \
+    --payer-keypair "${SOLVER_KEYPAIR}" \
+    --config-scan-limit 200 \
+    --scan-limit 300 \
+    --max-checkpoints 10 \
+    --priority-level "${PRIORITY_LEVEL}" >/dev/null
 
 echo "proving receipt bundles (Groth16)..." >&2
 RAW_BUNDLE_A="$(risc0_prove_bundle risc0/receipt/host/Cargo.toml prove_bundle_v1 "${WITNESS_A}")"
