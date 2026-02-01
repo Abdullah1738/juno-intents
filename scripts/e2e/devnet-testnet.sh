@@ -19,13 +19,15 @@ JUNOCASH_TESTNET_MODE="${JUNO_E2E_JUNOCASH_TESTNET_MODE:-${JUNO_TESTNET_MODE:-pu
 PRIORITY_LEVEL="${JUNO_E2E_PRIORITY_LEVEL:-Medium}"
 
 # If explicitly set (even empty), honor it.
-# Otherwise: default to CUDA only when proving on-host.
+# Otherwise: default to CUDA when a GPU toolchain is available.
 if [[ -n "${JUNO_E2E_RISC0_FEATURES+set}" ]]; then
   RISC0_FEATURES="${JUNO_E2E_RISC0_FEATURES}"
-elif [[ "${JUNO_RISC0_USE_DOCKER:-0}" == "1" ]]; then
-  RISC0_FEATURES=""
 else
-  RISC0_FEATURES="cuda"
+  if command -v nvcc >/dev/null 2>&1 && command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    RISC0_FEATURES="cuda"
+  else
+    RISC0_FEATURES=""
+  fi
 fi
 
 risc0_prove_bundle() {

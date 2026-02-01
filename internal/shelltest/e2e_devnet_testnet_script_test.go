@@ -47,6 +47,24 @@ func TestE2EDevnetTestnetScriptDoesNotLeakWitnessOnCommandLine(t *testing.T) {
 	}
 }
 
+func TestE2EDevnetTestnetScriptDoesNotDisableCudaWhenUsingDockerGuestBuild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script tests are not supported on windows")
+	}
+
+	script := filepath.Clean(filepath.Join("..", "..", "scripts", "e2e", "devnet-testnet.sh"))
+	src, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+
+	// JUNO_RISC0_USE_DOCKER controls the *guest* build mode in build.rs on older distros;
+	// it should not force-disable CUDA proving on GPU hosts.
+	if bytes.Contains(src, []byte("JUNO_RISC0_USE_DOCKER")) {
+		t.Fatalf("devnet-testnet.sh should not special-case JUNO_RISC0_USE_DOCKER for RISC0_FEATURES defaults")
+	}
+}
+
 func TestAWSE2EDevnetTestnetScriptDetectsCudaArch(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script tests are not supported on windows")
