@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Abdullah1738/juno-intents/offchain/solana"
+	"github.com/Abdullah1738/juno-intents/offchain/solanarpc"
 )
 
 func TestEncodeCrpSubmitObservation_Golden(t *testing.T) {
@@ -335,5 +336,51 @@ func TestExtractCheckpointsFromSubmitTx(t *testing.T) {
 	}
 	if len(out3) != 0 {
 		t.Fatalf("len=%d, want 0", len(out3))
+	}
+}
+
+func TestParseSimulationErrorInstructionIndex(t *testing.T) {
+	idx, ok := parseSimulationErrorInstructionIndex("Transaction simulation failed: Error processing Instruction 3: custom program error: 0x6")
+	if !ok || idx != 3 {
+		t.Fatalf("idx=%d ok=%v", idx, ok)
+	}
+
+	if _, ok := parseSimulationErrorInstructionIndex("nope"); ok {
+		t.Fatalf("expected no match")
+	}
+}
+
+func TestParseCustomProgramErrorCode(t *testing.T) {
+	code, ok := parseCustomProgramErrorCode("Transaction simulation failed: Error processing Instruction 3: custom program error: 0x6")
+	if !ok || code != 6 {
+		t.Fatalf("code=%d ok=%v", code, ok)
+	}
+
+	code, ok = parseCustomProgramErrorCode("custom program error: 0x00000006")
+	if !ok || code != 6 {
+		t.Fatalf("code=%d ok=%v", code, ok)
+	}
+
+	if _, ok := parseCustomProgramErrorCode("custom program error: 0x"); ok {
+		t.Fatalf("expected no match")
+	}
+}
+
+func TestShouldRetryFinalizePreflight(t *testing.T) {
+	err := &solanarpc.RPCError{
+		Code:    -32002,
+		Message: "Transaction simulation failed: Error processing Instruction 3: custom program error: 0x6",
+	}
+	if !shouldRetryFinalizePreflight(err, 3) {
+		t.Fatalf("expected retryable")
+	}
+	if shouldRetryFinalizePreflight(err, 4) {
+		t.Fatalf("expected non-retryable due to instruction index mismatch")
+	}
+	if shouldRetryFinalizePreflight(&solanarpc.RPCError{Code: -32002, Message: "custom program error: 0x7"}, 3) {
+		t.Fatalf("expected non-retryable due to code mismatch")
+	}
+	if shouldRetryFinalizePreflight(&solanarpc.RPCError{Code: -123, Message: err.Message}, 3) {
+		t.Fatalf("expected non-retryable due to rpc code mismatch")
 	}
 }

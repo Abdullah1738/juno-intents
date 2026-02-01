@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -845,6 +846,7 @@ func cmdFinalizePending(argv []string) error {
 	}
 
 	var finalized uint
+	var failures uint
 	for _, c := range candidates {
 		if finalized >= maxCheckpoints {
 			break
@@ -865,6 +867,7 @@ func cmdFinalizePending(argv []string) error {
 
 		if err := finalizeCheckpointAuto(ctx, rpc, payerPriv, payerPub, crpProgram, deploymentID, cfg, crpCfg, c.Checkpoint, c.CP, scanLimit, cuLimit, priorityLevel, dryRun); err != nil {
 			fmt.Fprintf(os.Stderr, "finalize %s (height=%d): %v\n", c.Checkpoint.Base58(), c.Height, err)
+			failures++
 			continue
 		}
 		finalized++
@@ -873,10 +876,98 @@ func cmdFinalizePending(argv []string) error {
 		}
 	}
 
+	if failures > 0 {
+		return fmt.Errorf("failed to finalize %d checkpoints", failures)
+	}
 	if finalized == 0 {
 		fmt.Fprintln(os.Stderr, "no checkpoints eligible for finalization")
 	}
 	return nil
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+func parseSimulationErrorInstructionIndex(msg string) (int, bool) {
+	// Example: "Transaction simulation failed: Error processing Instruction 3: custom program error: 0x6"
+	const marker = "error processing instruction "
+	lower := strings.ToLower(msg)
+	i := strings.Index(lower, marker)
+	if i < 0 {
+		return 0, false
+	}
+	rest := lower[i+len(marker):]
+	j := 0
+	for j < len(rest) && rest[j] >= '0' && rest[j] <= '9' {
+		j++
+	}
+	if j == 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest[:j])
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+func parseCustomProgramErrorCode(msg string) (uint32, bool) {
+	const marker = "custom program error: 0x"
+	lower := strings.ToLower(msg)
+	i := strings.Index(lower, marker)
+	if i < 0 {
+		return 0, false
+	}
+	rest := lower[i+len(marker):]
+	j := 0
+	for j < len(rest) {
+		c := rest[j]
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') {
+			j++
+			continue
+		}
+		break
+	}
+	if j == 0 {
+		return 0, false
+	}
+	u, err := strconv.ParseUint(rest[:j], 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	return uint32(u), true
+}
+
+func shouldRetryFinalizePreflight(err error, finalizeIxIndex int) bool {
+	var rpcErr *solanarpc.RPCError
+	if !errors.As(err, &rpcErr) {
+		return false
+	}
+	if rpcErr.Code != -32002 {
+		return false
+	}
+	ixIndex, ok := parseSimulationErrorInstructionIndex(rpcErr.Message)
+	if !ok || ixIndex != finalizeIxIndex {
+		return false
+	}
+	code, ok := parseCustomProgramErrorCode(rpcErr.Message)
+	if !ok {
+		return false
+	}
+	// CRP error 6: InvalidCheckpointOwner. This is usually a transient preflight issue when using
+	// load-balanced RPCs right after the checkpoint PDA was created.
+	return code == 6
 }
 
 func finalizeCheckpointAuto(
@@ -1018,35 +1109,67 @@ func finalizeCheckpointAuto(
 	}
 	ixs = append(ixs, edIxs...)
 	ixs = append(ixs, finalizeIx)
-
-	bh, err := rpc.LatestBlockhash(ctx)
-	if err != nil {
-		return err
-	}
-	tx, err := solana.BuildAndSignLegacyTransaction(
-		bh,
-		solana.Pubkey(payerPub),
-		map[solana.Pubkey]ed25519.PrivateKey{solana.Pubkey(payerPub): payerPriv},
-		ixs,
-	)
-	if err != nil {
-		return err
-	}
+	finalizeIxIndex := len(ixs) - 1
 
 	if dryRun {
 		if microLamports != 0 {
 			fmt.Fprintf(os.Stderr, "priority_fee: cu_limit=%d microLamports=%d keys=%s\n", cuLimit, microLamports, strings.Join(feeKeys, ","))
 		}
+		bh, err := rpc.LatestBlockhash(ctx)
+		if err != nil {
+			return err
+		}
+		tx, err := solana.BuildAndSignLegacyTransaction(
+			bh,
+			solana.Pubkey(payerPub),
+			map[solana.Pubkey]ed25519.PrivateKey{solana.Pubkey(payerPub): payerPriv},
+			ixs,
+		)
+		if err != nil {
+			return err
+		}
 		fmt.Println(base64Std(tx))
 		return nil
 	}
 
-	sigStr, err := rpc.SendTransaction(ctx, tx, false)
-	if err != nil {
+	const maxAttempts = 6
+	backoff := 1 * time.Second
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		bh, err := rpc.LatestBlockhash(ctx)
+		if err != nil {
+			return err
+		}
+		tx, err := solana.BuildAndSignLegacyTransaction(
+			bh,
+			solana.Pubkey(payerPub),
+			map[solana.Pubkey]ed25519.PrivateKey{solana.Pubkey(payerPub): payerPriv},
+			ixs,
+		)
+		if err != nil {
+			return err
+		}
+
+		sigStr, err := rpc.SendTransaction(ctx, tx, false)
+		if err == nil {
+			fmt.Println(sigStr)
+			return nil
+		}
+		lastErr = err
+		if attempt < maxAttempts && shouldRetryFinalizePreflight(err, finalizeIxIndex) {
+			fmt.Fprintf(os.Stderr, "finalize preflight saw CRP InvalidCheckpointOwner; retrying in %s (%d/%d)\n", backoff, attempt, maxAttempts)
+			if err := sleepWithContext(ctx, backoff); err != nil {
+				return err
+			}
+			backoff *= 2
+			if backoff > 8*time.Second {
+				backoff = 8 * time.Second
+			}
+			continue
+		}
 		return err
 	}
-	fmt.Println(sigStr)
-	return nil
+	return lastErr
 }
 
 func extractCheckpointsFromSubmitTx(
