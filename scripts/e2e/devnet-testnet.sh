@@ -10,6 +10,7 @@ RPC_URL_OVERRIDE=""
 
 NET_AMOUNT_A="${JUNO_E2E_NET_AMOUNT_A:-1000}"
 NET_AMOUNT_B="${JUNO_E2E_NET_AMOUNT_B:-1000}"
+CRP_LAG="${JUNO_E2E_CRP_LAG:-1}"
 JUNOCASH_SEND_MINCONF="${JUNO_E2E_JUNOCASH_SEND_MINCONF:-10}"
 JUNOCASH_TESTNET_WALLET_DAT_GZ_B64="${JUNO_E2E_JUNOCASH_TESTNET_WALLET_DAT_GZ_B64:-}"
 JUNOCASH_TESTNET_PREFUND_AMOUNT="${JUNO_E2E_JUNOCASH_TESTNET_PREFUND_AMOUNT:-5.0}"
@@ -186,6 +187,11 @@ if [[ -n "${RISC0_FEATURES}" && "${RISC0_FEATURES}" == *cuda* ]]; then
     NVCC_PREPEND_FLAGS="-arch=native"
     export NVCC_PREPEND_FLAGS
   fi
+fi
+
+if ! [[ "${CRP_LAG}" =~ ^[0-9]+$ ]]; then
+  echo "invalid JUNO_E2E_CRP_LAG: ${CRP_LAG} (expected u64)" >&2
+  exit 2
 fi
 
 retry() {
@@ -1526,6 +1532,10 @@ PY
 echo "txid_b=${txid_b}" >&2
 scripts/junocash/testnet/mine.sh 1 >/dev/null
 PAYMENT_HEIGHT_B="$(jcli getblockcount)"
+if [[ "${CRP_LAG}" -gt 0 ]]; then
+  echo "mining ${CRP_LAG} blocks for CRP lag=${CRP_LAG}..." >&2
+  scripts/junocash/testnet/mine.sh "${CRP_LAG}" >/dev/null
+fi
 
 echo "finding user note outindex (B)..." >&2
 wait_for_wallet_scan_complete "${JUNO_E2E_WALLET_SCAN_TIMEOUT_SECS:-3600}" || true
@@ -1567,7 +1577,7 @@ for cid in "${NITRO_CID1}" "${NITRO_CID2}"; do
     --junocash-chain "${JUNOCASH_CHAIN}" \
     --junocash-genesis-hash "${JUNOCASH_GENESIS_EXPECTED}" \
     --start-height "${start_height}" \
-    --lag 1 \
+    --lag "${CRP_LAG}" \
     --poll-interval 1s \
     --payer-keypair "${SOLVER_KEYPAIR}" \
     --submit-operator-enclave-cid "${cid}" \
