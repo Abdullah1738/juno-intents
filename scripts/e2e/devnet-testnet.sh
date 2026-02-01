@@ -1415,6 +1415,7 @@ WITNESS_A="$(cd "${ROOT}" && cargo run --quiet --manifest-path risc0/receipt/hos
   "${db_dump_flag[@]}" \
   --txid "${txid_a}" \
   --action "${ACTION_A}" \
+  --unified-address "${SOLVER_A_UA}" \
   --deployment-id "${DEPLOYMENT_ID_HEX}" \
   --fill-id "${FILL_ID_A_HEX}")"
 
