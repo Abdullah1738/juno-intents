@@ -949,25 +949,31 @@ func parseCustomProgramErrorCode(msg string) (uint32, bool) {
 	return uint32(u), true
 }
 
-func shouldRetryFinalizePreflight(err error, finalizeIxIndex int) bool {
+func retryableFinalizePreflightErrorCode(err error, finalizeIxIndex int) (uint32, bool) {
 	var rpcErr *solanarpc.RPCError
 	if !errors.As(err, &rpcErr) {
-		return false
+		return 0, false
 	}
 	if rpcErr.Code != -32002 {
-		return false
+		return 0, false
 	}
 	ixIndex, ok := parseSimulationErrorInstructionIndex(rpcErr.Message)
 	if !ok || ixIndex != finalizeIxIndex {
-		return false
+		return 0, false
 	}
 	code, ok := parseCustomProgramErrorCode(rpcErr.Message)
 	if !ok {
-		return false
+		return 0, false
 	}
-	// CRP error 6: InvalidCheckpointOwner. This is usually a transient preflight issue when using
+	// CRP error 6: InvalidCheckpointOwner. Usually a transient preflight issue when using
 	// load-balanced RPCs right after the checkpoint PDA was created.
-	return code == 6
+	//
+	// CRP error 17: FinalizationDelayNotMet. Can also be transient under load-balanced RPCs where the
+	// simulator's bank slot lags the slot used for eligibility checks.
+	if code == 6 || code == 17 {
+		return code, true
+	}
+	return 0, false
 }
 
 func finalizeCheckpointAuto(
@@ -1156,16 +1162,25 @@ func finalizeCheckpointAuto(
 			return nil
 		}
 		lastErr = err
-		if attempt < maxAttempts && shouldRetryFinalizePreflight(err, finalizeIxIndex) {
-			fmt.Fprintf(os.Stderr, "finalize preflight saw CRP InvalidCheckpointOwner; retrying in %s (%d/%d)\n", backoff, attempt, maxAttempts)
-			if err := sleepWithContext(ctx, backoff); err != nil {
-				return err
+		if attempt < maxAttempts {
+			if code, ok := retryableFinalizePreflightErrorCode(err, finalizeIxIndex); ok {
+				reason := fmt.Sprintf("custom error 0x%x", code)
+				switch code {
+				case 6:
+					reason = "InvalidCheckpointOwner"
+				case 17:
+					reason = "FinalizationDelayNotMet"
+				}
+				fmt.Fprintf(os.Stderr, "finalize preflight saw CRP %s; retrying in %s (%d/%d)\n", reason, backoff, attempt, maxAttempts)
+				if err := sleepWithContext(ctx, backoff); err != nil {
+					return err
+				}
+				backoff *= 2
+				if backoff > 8*time.Second {
+					backoff = 8 * time.Second
+				}
+				continue
 			}
-			backoff *= 2
-			if backoff > 8*time.Second {
-				backoff = 8 * time.Second
-			}
-			continue
 		}
 		return err
 	}

@@ -366,21 +366,31 @@ func TestParseCustomProgramErrorCode(t *testing.T) {
 	}
 }
 
-func TestShouldRetryFinalizePreflight(t *testing.T) {
+func TestRetryableFinalizePreflightErrorCode(t *testing.T) {
 	err := &solanarpc.RPCError{
 		Code:    -32002,
 		Message: "Transaction simulation failed: Error processing Instruction 3: custom program error: 0x6",
 	}
-	if !shouldRetryFinalizePreflight(err, 3) {
+	code, ok := retryableFinalizePreflightErrorCode(err, 3)
+	if !ok || code != 6 {
 		t.Fatalf("expected retryable")
 	}
-	if shouldRetryFinalizePreflight(err, 4) {
+	if _, ok := retryableFinalizePreflightErrorCode(err, 4); ok {
 		t.Fatalf("expected non-retryable due to instruction index mismatch")
 	}
-	if shouldRetryFinalizePreflight(&solanarpc.RPCError{Code: -32002, Message: "custom program error: 0x7"}, 3) {
+	if _, ok := retryableFinalizePreflightErrorCode(&solanarpc.RPCError{Code: -32002, Message: "custom program error: 0x7"}, 3); ok {
 		t.Fatalf("expected non-retryable due to code mismatch")
 	}
-	if shouldRetryFinalizePreflight(&solanarpc.RPCError{Code: -123, Message: err.Message}, 3) {
+	if _, ok := retryableFinalizePreflightErrorCode(&solanarpc.RPCError{Code: -123, Message: err.Message}, 3); ok {
 		t.Fatalf("expected non-retryable due to rpc code mismatch")
+	}
+
+	err17 := &solanarpc.RPCError{
+		Code:    -32002,
+		Message: "Transaction simulation failed: Error processing Instruction 3: custom program error: 0x11",
+	}
+	code, ok = retryableFinalizePreflightErrorCode(err17, 3)
+	if !ok || code != 17 {
+		t.Fatalf("expected retryable for code 17; code=%d ok=%v", code, ok)
 	}
 }
